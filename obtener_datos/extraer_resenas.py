@@ -19,6 +19,7 @@ USO:
 import os
 import sys
 import time
+from pathlib import Path
 
 import pandas as pd
 import openpyxl
@@ -28,8 +29,10 @@ from outscraper import OutscraperClient
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
 
-INPUT_XLSX = "restaurantes_novia.xlsx"      # Excel con la columna "Nombre"
-OUTPUT_XLSX = "restaurantes_con_resenas.xlsx"
+EXCELS_DIR = Path(__file__).resolve().parent.parent / "excels"
+
+INPUT_XLSX = EXCELS_DIR / "restaurantes_novia.xlsx"      # Excel con la columna "Nombre"
+OUTPUT_XLSX = EXCELS_DIR / "restaurantes_con_resenas.xlsx"
 
 CIUDAD = "Madrid, España"   # se añade a cada nombre para desambiguar la búsqueda
 REVIEWS_LIMIT = 30          # reseñas por restaurante (entre 20 y 50 según lo hablado)

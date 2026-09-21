@@ -27,6 +27,7 @@ import re
 import sys
 import time
 import unicodedata
+from pathlib import Path
 from collections import defaultdict
 
 import pandas as pd
@@ -36,9 +37,11 @@ from openpyxl.styles import Font, Alignment, PatternFill
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
 
-INPUT_XLSX = "restaurantes_con_resenas.xlsx"     # salida del script anterior
+EXCELS_DIR = Path(__file__).resolve().parent.parent / "excels"
+
+INPUT_XLSX = EXCELS_DIR / "restaurantes_con_resenas.xlsx"     # salida del script anterior
 INPUT_SHEET = "Reseñas"
-OUTPUT_XLSX = "analisis_resenas.xlsx"
+OUTPUT_XLSX = EXCELS_DIR / "analisis_resenas.xlsx"
 
 LIMITE_RESENAS = None   # pon un número (ej. 50) para probar rápido con pocas reseñas antes de lanzar todo
 
@@ -220,7 +223,39 @@ def construir_resumen(filas_resenas, filas_platos):
     return filas_resumen
 
 
-def guardar_excel(filas_resenas, filas_platos, filas_resumen, ruta_salida):
+def construir_top_platos_global(filas_platos):
+    """
+    Ranking global (sin distinguir restaurante) de los platos que más se
+    repiten como destacados en las reseñas, separando cuántas veces se
+    valoran bien y cuántas mal.
+    """
+    conteo = defaultdict(lambda: {"bien": 0, "mal": 0, "neutro": 0})
+
+    for fila in filas_platos:
+        plato = fila["Plato"]
+        if fila["Sentimiento"] == "Buena":
+            conteo[plato]["bien"] += 1
+        elif fila["Sentimiento"] == "Mala":
+            conteo[plato]["mal"] += 1
+        else:
+            conteo[plato]["neutro"] += 1
+
+    filas = []
+    for plato, datos in conteo.items():
+        total = datos["bien"] + datos["mal"] + datos["neutro"]
+        filas.append({
+            "Plato": plato,
+            "Veces valorado bien": datos["bien"],
+            "Veces valorado mal": datos["mal"],
+            "Menciones totales": total,
+        })
+
+    # Orden principal: más mencionado primero (lo que más "destaca" en general)
+    filas.sort(key=lambda f: -f["Menciones totales"])
+    return filas
+
+
+def guardar_excel(filas_resenas, filas_platos, filas_resumen, filas_top_platos, ruta_salida):
     wb = openpyxl.Workbook()
 
     ws1 = wb.active
@@ -245,6 +280,13 @@ def guardar_excel(filas_resenas, filas_platos, filas_resumen, ruta_salida):
         for fila in filas_resumen:
             ws3.append([fila[h] for h in headers])
 
+    ws4 = wb.create_sheet("Top platos general")
+    if filas_top_platos:
+        headers = list(filas_top_platos[0].keys())
+        ws4.append(headers)
+        for fila in filas_top_platos:
+            ws4.append([fila[h] for h in headers])
+
     header_font = Font(name="Arial", bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
 
@@ -264,6 +306,7 @@ def guardar_excel(filas_resenas, filas_platos, filas_resumen, ruta_salida):
         ws1: {"A": 30, "B": 20, "C": 60, "D": 16, "E": 12},
         ws2: {"A": 30, "B": 18, "C": 14, "D": 60, "E": 20},
         ws3: {"A": 30, "B": 14, "C": 14, "D": 14, "E": 45, "F": 45},
+        ws4: {"A": 20, "B": 18, "C": 18, "D": 18},
     }
     for ws, widths in anchos.items():
         for col, w in widths.items():
@@ -274,6 +317,7 @@ def guardar_excel(filas_resenas, filas_platos, filas_resumen, ruta_salida):
     print(f"  - {len(filas_resenas)} reseñas analizadas")
     print(f"  - {len(filas_platos)} menciones de platos detectadas")
     print(f"  - {len(filas_resumen)} restaurantes resumidos")
+    print(f"  - {len(filas_top_platos)} platos distintos en el ranking global")
 
 
 def main():
@@ -284,8 +328,9 @@ def main():
 
     filas_resenas, filas_platos = analizar_resenas(df, analyzer)
     filas_resumen = construir_resumen(filas_resenas, filas_platos)
+    filas_top_platos = construir_top_platos_global(filas_platos)
 
-    guardar_excel(filas_resenas, filas_platos, filas_resumen, OUTPUT_XLSX)
+    guardar_excel(filas_resenas, filas_platos, filas_resumen, filas_top_platos, OUTPUT_XLSX)
 
 
 if __name__ == "__main__":

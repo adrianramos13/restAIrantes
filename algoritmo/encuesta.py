@@ -15,9 +15,21 @@ CRITERIOS:
         tener que pedir un mínimo arbitrario.
 
 USO:
-    1. Ejecuta primero (una sola vez): python unificar_excels.py
+    ESTRUCTURA DE CARPETAS ESPERADA (este archivo vive en algoritmo/):
+        proyecto/
+          excels/
+            restaurantes_maestro.xlsx
+          obtener_datos/
+            unificar_excels.py
+          algoritmo/
+            encuesta.py     <- este archivo
+            app.py
+
+    1. Ejecuta primero (una sola vez): python obtener_datos/unificar_excels.py
     2. pip install -r requirements.txt
-    3. python encuesta_y_recomendacion.py
+    3. python algoritmo/encuesta.py   (funciona igual desde cualquier
+       carpeta: la ruta al excel se calcula a partir de dónde está este
+       archivo, no de desde dónde se lanza el comando)
 
 NOTA sobre tiempos en coche: se calculan con el servidor demo gratuito de
 OSRM (router.project-osrm.org), sin necesidad de API key. Es un servicio
@@ -32,6 +44,7 @@ import re
 import sys
 import math
 import time
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -39,7 +52,7 @@ import requests
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
 
-MAESTRO_XLSX = "restaurantes_maestro.xlsx"
+MAESTRO_XLSX = Path(__file__).resolve().parent.parent / "excels" / "restaurantes_maestro.xlsx"
 
 # Pesos del algoritmo de puntuación (deben sumar 1.0 idealmente, pero no
 # es obligatorio; son pesos relativos)
@@ -367,7 +380,39 @@ def formatear_platos(texto):
     return re.sub(r"\s*\(\d+\)", "", texto).strip()
 
 
-def mostrar_resultados(df_top, r):
+def resumen_mencion_plato(id_restaurante, plato_deseado, df_platos):
+    """
+    A diferencia de 'Platos mejor valorados' (que son los platos más
+    destacados del restaurante EN GENERAL), esto busca específicamente
+    qué dicen las reseñas analizadas sobre EL PLATO QUE PEDISTE en la
+    encuesta, para ese restaurante. Es justo la misma información que usa
+    'puntuacion_plato' para calcular el Score, así que lo que ves aquí es
+    coherente con por qué ese restaurante ha subido (o no) en el ranking.
+    """
+    if df_platos.empty or "ID_Restaurante" not in df_platos.columns:
+        return "(sin datos de reseñas analizadas)"
+
+    menciones = df_platos[
+        (df_platos["ID_Restaurante"] == id_restaurante) &
+        (df_platos["Plato"].astype(str).str.contains(plato_deseado, case=False, na=False))
+    ]
+    if menciones.empty:
+        return f"no se menciona explícitamente en las reseñas analizadas"
+
+    buenas = (menciones["Sentimiento"] == "Buena").sum()
+    malas = (menciones["Sentimiento"] == "Mala").sum()
+    neutras = (menciones["Sentimiento"] == "Neutra").sum()
+    partes = []
+    if buenas:
+        partes.append(f"{buenas} bien")
+    if malas:
+        partes.append(f"{malas} mal")
+    if neutras:
+        partes.append(f"{neutras} neutra")
+    return f"mencionado {len(menciones)} veces en reseñas ({', '.join(partes)})"
+
+
+def mostrar_resultados(df_top, r, df_platos):
     if df_top.empty:
         print("\nNo hay ningún restaurante a menos de "
               f"{r['tiempo_maximo_min']:.0f} min en coche. Prueba a ampliar el tiempo.")
@@ -380,13 +425,13 @@ def mostrar_resultados(df_top, r):
               f"Rating: {fila['Puntuación']}  ({fila['Nº Reseñas']} reseñas)")
         print(f"   En coche: {fila['Tiempo en coche (min)']:.0f} min  |  Dirección: {fila.get('Dirección', 'N/D')}")
 
+        if r["plato_deseado"]:
+            resumen = resumen_mencion_plato(fila["ID"], r["plato_deseado"], df_platos)
+            print(f"   Sobre '{r['plato_deseado']}': {resumen}")
+
         valor = fila.get("Platos mejor valorados")
-        if pd.isna(valor):
-            print(f"   Platos destacados: (este restaurante aún no tiene reseñas analizadas)")
-        elif str(valor).strip() == "":
-            print(f"   Platos destacados: (no se detectó ningún plato destacado en sus reseñas)")
-        else:
-            print(f"   Platos destacados: {formatear_platos(valor)}")
+        if isinstance(valor, str) and valor.strip():
+            print(f"   Otros platos destacados del sitio: {formatear_platos(valor)}")
         print()
 
 
@@ -398,7 +443,7 @@ def main():
     df_puntuado = filtrar_y_puntuar(maestro, df_platos, respuestas)
     top5 = df_puntuado.head(TOP_N)
 
-    mostrar_resultados(top5, respuestas)
+    mostrar_resultados(top5, respuestas, df_platos)
 
 
 if __name__ == "__main__":

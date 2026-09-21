@@ -26,6 +26,7 @@ USO:
 
 import re
 import unicodedata
+from pathlib import Path
 
 import pandas as pd
 import openpyxl
@@ -34,11 +35,13 @@ from openpyxl.styles import Font, Alignment, PatternFill
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
 
-RESTAURANTES_XLSX = "restaurantes_novia.xlsx"
-RESENAS_XLSX = "restaurantes_con_resenas.xlsx"
-ANALISIS_XLSX = "analisis_resenas.xlsx"   # cambia a analisis_resenas_llm.xlsx si aplica
+EXCELS_DIR = Path(__file__).resolve().parent.parent / "excels"
 
-OUTPUT_MAESTRO = "restaurantes_maestro.xlsx"
+RESTAURANTES_XLSX = EXCELS_DIR / "restaurantes_novia.xlsx"
+RESENAS_XLSX = EXCELS_DIR / "restaurantes_con_resenas.xlsx"
+ANALISIS_XLSX = EXCELS_DIR / "analisis_resenas.xlsx"   # cambia a analisis_resenas_llm.xlsx si aplica
+
+OUTPUT_MAESTRO = EXCELS_DIR / "restaurantes_maestro.xlsx"
 
 # --------------------------------------------------------------- #
 

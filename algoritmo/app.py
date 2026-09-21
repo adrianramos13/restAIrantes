@@ -2,20 +2,33 @@
 App web (Streamlit) que convierte la encuesta + algoritmo de recomendación
 en una página que se abre desde el navegador del móvil.
 
-Reutiliza toda la lógica de encuesta_y_recomendacion.py (parseo de precios,
-scoring, geocoding, tiempos en coche vía OSRM) pero con un formulario web
-en vez de preguntas por terminal, y muestra el resultado en tarjetas + mapa.
+Reutiliza toda la lógica de encuesta.py (parseo de precios, scoring,
+geocoding, tiempos en coche vía OSRM) pero con un formulario web en vez de
+preguntas por terminal, y muestra el resultado en tarjetas + mapa.
+
+ESTRUCTURA DE CARPETAS ESPERADA (este archivo vive en algoritmo/):
+    proyecto/
+      excels/
+        restaurantes_maestro.xlsx
+      algoritmo/
+        app.py          <- este archivo
+        encuesta.py
 
 USO LOCAL (para probarlo antes de desplegar):
     pip install -r requirements.txt
-    streamlit run app.py
+    streamlit run algoritmo/app.py      (desde la raíz del proyecto)
+    -- o --
+    cd algoritmo && streamlit run app.py   (funciona igual, la ruta al
+    excel se calcula a partir de dónde está este archivo, no de desde
+    dónde se lanza el comando)
 
 DESPLIEGUE (para tener una URL pública desde el móvil):
-    1. Sube este archivo + requirements.txt + restaurantes_maestro.xlsx
-       a un repositorio de GitHub (puede ser privado).
+    1. Sube TODO el proyecto (carpetas excels/ y algoritmo/ incluidas,
+       con requirements.txt en la raíz) a un repositorio de GitHub
+       (puede ser privado).
     2. Ve a https://share.streamlit.io, entra con tu cuenta de GitHub.
-    3. "New app" -> selecciona el repo, la rama, y como archivo principal
-       "app.py". Despliega.
+    3. "New app" -> selecciona el repo, la rama, y como "Main file path"
+       escribe: algoritmo/app.py   (con la ruta de la subcarpeta)
     4. Te da una URL tipo https://tuapp.streamlit.app -> ábrela en el
        móvil y guárdala en la pantalla de inicio como acceso directo.
 """
@@ -23,6 +36,7 @@ DESPLIEGUE (para tener una URL pública desde el móvil):
 import re
 import math
 import time
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -32,7 +46,12 @@ import pydeck as pdk
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
 
-MAESTRO_XLSX = "restaurantes_maestro.xlsx"
+# Ruta calculada a partir de la ubicación de ESTE archivo (no de desde
+# dónde se ejecute el comando), para que funcione tanto si lanzas
+# `streamlit run algoritmo/app.py` desde la raíz como si haces `cd
+# algoritmo` primero.
+BASE_DIR = Path(__file__).resolve().parent
+MAESTRO_XLSX = BASE_DIR.parent / "excels" / "restaurantes_maestro.xlsx"
 
 PESO_PRECIO = 0.20
 PESO_COCINA = 0.20
