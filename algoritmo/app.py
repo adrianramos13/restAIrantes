@@ -53,17 +53,21 @@ import pydeck as pdk
 BASE_DIR = Path(__file__).resolve().parent
 MAESTRO_XLSX = BASE_DIR.parent / "excels" / "restaurantes_maestro.xlsx"
 
-PESO_PRECIO = 0.20
-PESO_COCINA = 0.20
-PESO_PLATO = 0.30
-PESO_CALIDAD = 0.25
+PESO_PRECIO = 0.15
+PESO_COCINA = 0.30
+PESO_PLATO = 0.20
+PESO_CALIDAD = 0.30
 PESO_NUM_RESENAS = 0.05
 
 TOP_N = 5
 
 OSRM_URL = "https://router.project-osrm.org/table/v1/driving/"
 OSRM_BATCH_SIZE = 100
-VELOCIDAD_RESPALDO_KMH = 30
+VELOCIDAD_RESPALDO_COCHE_KMH = 30
+
+ORS_URL = "https://api.openrouteservice.org/v2/matrix/foot-walking"
+ORS_BATCH_SIZE = 50
+VELOCIDAD_RESPALDO_ANDANDO_KMH = 5
 
 # --------------------------------------------------------------- #
 
@@ -159,10 +163,66 @@ def obtener_minutos_coche(ubicacion_usuario, maestro):
             for idx in lote_idx:
                 fila = maestro.iloc[idx]
                 dist_km = haversine_km(lat_u, lon_u, fila["Latitud"], fila["Longitud"])
-                minutos[idx] = (dist_km / VELOCIDAD_RESPALDO_KMH) * 60
+                minutos[idx] = (dist_km / VELOCIDAD_RESPALDO_COCHE_KMH) * 60
 
         if start + OSRM_BATCH_SIZE < len(indices_validos):
             time.sleep(1)
+
+    return minutos
+
+
+def obtener_minutos_a_pie(ubicacion_usuario, maestro):
+    """
+    Igual que obtener_minutos_coche pero vía OpenRouteService (perfil
+    foot-walking). El modo a pie de la matriz de ORS falla a veces con un
+    error 6099 ('Unable to compute a distance/duration matrix') en ciertas
+    coordenadas -es un bug conocido de su lado, no nuestro-, así que ante
+    cualquier fallo caemos también a una estimación por distancia en línea
+    recta a velocidad media andando (5 km/h).
+    """
+    lat_u, lon_u = ubicacion_usuario
+    minutos = [None] * len(maestro)
+
+    indices_validos = [
+        i for i in range(len(maestro))
+        if pd.notna(maestro.iloc[i]["Latitud"]) and pd.notna(maestro.iloc[i]["Longitud"])
+    ]
+
+    def respaldo_haversine(idx):
+        fila = maestro.iloc[idx]
+        dist_km = haversine_km(lat_u, lon_u, fila["Latitud"], fila["Longitud"])
+        return (dist_km / VELOCIDAD_RESPALDO_ANDANDO_KMH) * 60
+
+    api_key = st.secrets.get("ORS_API_KEY", "")
+    if not api_key:
+        st.warning("No hay configurada una clave de OpenRouteService (ORS_API_KEY) en los "
+                   "secretos de la app: se está estimando el tiempo a pie por distancia en "
+                   "línea recta, no por calles reales.")
+        for idx in indices_validos:
+            minutos[idx] = respaldo_haversine(idx)
+        return minutos
+
+    headers = {"Authorization": api_key, "Content-Type": "application/json"}
+
+    for start in range(0, len(indices_validos), ORS_BATCH_SIZE):
+        lote_idx = indices_validos[start:start + ORS_BATCH_SIZE]
+        locations = [[lon_u, lat_u]] + [
+            [maestro.iloc[i]["Longitud"], maestro.iloc[i]["Latitud"]] for i in lote_idx
+        ]
+        body = {"locations": locations, "sources": [0], "metrics": ["duration"]}
+        try:
+            resp = requests.post(ORS_URL, json=body, headers=headers, timeout=30)
+            resp.raise_for_status()
+            duraciones = resp.json()["durations"][0]
+            for j, idx in enumerate(lote_idx):
+                dur_seg = duraciones[j + 1]
+                minutos[idx] = dur_seg / 60.0 if dur_seg is not None else respaldo_haversine(idx)
+        except Exception:
+            for idx in lote_idx:
+                minutos[idx] = respaldo_haversine(idx)
+
+        if start + ORS_BATCH_SIZE < len(indices_validos):
+            time.sleep(2)
 
     return minutos
 
@@ -203,9 +263,12 @@ def calcular_score_calidad(fila):
 
 def filtrar_y_puntuar(maestro, df_platos, r):
     df = maestro.copy()
-    df["Tiempo en coche (min)"] = obtener_minutos_coche(r["ubicacion_usuario"], df)
+    if r["modo_transporte"] == "A pie":
+        df["Tiempo desplazamiento (min)"] = obtener_minutos_a_pie(r["ubicacion_usuario"], df)
+    else:
+        df["Tiempo desplazamiento (min)"] = obtener_minutos_coche(r["ubicacion_usuario"], df)
 
-    df = df[df["Tiempo en coche (min)"].notna() & (df["Tiempo en coche (min)"] <= r["tiempo_maximo_min"])]
+    df = df[df["Tiempo desplazamiento (min)"].notna() & (df["Tiempo desplazamiento (min)"] <= r["tiempo_maximo_min"])]
     if df.empty:
         return df
 
@@ -293,7 +356,12 @@ with st.form("encuesta"):
     cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_disponibles)
 
     direccion = st.text_input("¿Desde dónde salís?", placeholder="ej. Sol, Madrid")
-    tiempo_maximo_min = st.slider("Máximo en coche (minutos)", 5, 60, 20)
+
+    modo_transporte = st.radio("¿Cómo vais a ir?", ["En coche", "A pie"], horizontal=True)
+    etiqueta_tiempo = "Máximo en coche (minutos)" if modo_transporte == "En coche" else "Máximo andando (minutos)"
+    tiempo_maximo_min = st.number_input(
+        etiqueta_tiempo, min_value=5, max_value=60, value=20, step=1
+    )
     plato_deseado = st.text_input("¿Algún plato concreto?", placeholder="ej. sushi (opcional)")
 
     enviado = st.form_submit_button("🔍 Buscar restaurantes", use_container_width=True)
@@ -315,15 +383,19 @@ if enviado:
         "presupuesto_max": presupuesto_max,
         "cocina": "" if cocina == "Cualquiera" else cocina,
         "ubicacion_usuario": ubicacion_usuario,
+        "modo_transporte": modo_transporte,
         "tiempo_maximo_min": tiempo_maximo_min,
         "plato_deseado": plato_deseado.strip(),
     }
 
-    with st.spinner("Calculando tiempos en coche a los restaurantes..."):
+    texto_spinner = ("Calculando tiempos en coche a los restaurantes..." if modo_transporte == "En coche"
+                      else "Calculando tiempos andando a los restaurantes...")
+    with st.spinner(texto_spinner):
         df_puntuado = filtrar_y_puntuar(maestro, df_platos, respuestas)
 
     if df_puntuado.empty:
-        st.warning(f"No hay ningún restaurante a menos de {tiempo_maximo_min} min en coche. "
+        etiqueta_modo = "en coche" if modo_transporte == "En coche" else "andando"
+        st.warning(f"No hay ningún restaurante a menos de {tiempo_maximo_min} min {etiqueta_modo}. "
                    f"Prueba a ampliar el tiempo.")
         st.stop()
 
@@ -373,7 +445,8 @@ if enviado:
                 st.markdown(f"### {i}. {fila['Nombre']}")
                 st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
                          f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
-                st.write(f"**En coche:** {fila['Tiempo en coche (min)']:.0f} min  |  "
+                etiqueta_modo_tarjeta = "En coche" if respuestas["modo_transporte"] == "En coche" else "Andando"
+                st.write(f"**{etiqueta_modo_tarjeta}:** {fila['Tiempo desplazamiento (min)']:.0f} min  |  "
                          f"**Dirección:** {fila.get('Dirección', 'N/D')}")
 
                 if respuestas["plato_deseado"]:
