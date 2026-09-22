@@ -1,7 +1,6 @@
-requests
-outscraper
+streamlit
 pandas
 openpyxl
-pysentimiento
 geopy
-ollama
+requests
+pydeck
