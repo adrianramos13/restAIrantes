@@ -358,20 +358,28 @@ if enviado:
     st.subheader(f"Top {len(top)} para vosotros")
     for i, (_, fila) in enumerate(top.iterrows(), start=1):
         with st.container(border=True):
-            imagen_url = fila.get("Imagen URL")
-            if isinstance(imagen_url, str) and imagen_url.strip():
-                st.image(mejorar_resolucion_imagen(imagen_url), use_container_width=True)
+            col_img, col_info = st.columns([1, 3])
 
-            st.markdown(f"### {i}. {fila['Nombre']}")
-            st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
-                     f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
-            st.write(f"**En coche:** {fila['Tiempo en coche (min)']:.0f} min  |  "
-                     f"**Dirección:** {fila.get('Dirección', 'N/D')}")
+            with col_img:
+                imagen_url = fila.get("Imagen URL")
+                if isinstance(imagen_url, str) and imagen_url.strip():
+                    # Pedimos bastante más resolución de la que se va a
+                    # mostrar (la columna es estrecha) para que se vea
+                    # nítida incluso en pantallas retina/alta densidad.
+                    st.image(mejorar_resolucion_imagen(imagen_url, ancho=450, alto=450),
+                             use_container_width=True)
 
-            if respuestas["plato_deseado"]:
-                resumen = resumen_mencion_plato(fila["ID"], respuestas["plato_deseado"], df_platos)
-                st.write(f"**Sobre '{respuestas['plato_deseado']}':** {resumen}")
+            with col_info:
+                st.markdown(f"### {i}. {fila['Nombre']}")
+                st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
+                         f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
+                st.write(f"**En coche:** {fila['Tiempo en coche (min)']:.0f} min  |  "
+                         f"**Dirección:** {fila.get('Dirección', 'N/D')}")
 
-            valor = fila.get("Platos mejor valorados")
-            if isinstance(valor, str) and valor.strip():
-                st.write(f"**Otros platos destacados:** {formatear_platos(valor)}")
+                if respuestas["plato_deseado"]:
+                    resumen = resumen_mencion_plato(fila["ID"], respuestas["plato_deseado"], df_platos)
+                    st.write(f"**Sobre '{respuestas['plato_deseado']}':** {resumen}")
+
+                valor = fila.get("Platos mejor valorados")
+                if isinstance(valor, str) and valor.strip():
+                    st.write(f"**Otros platos destacados:** {formatear_platos(valor)}")
