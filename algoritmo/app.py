@@ -358,7 +358,7 @@ if enviado:
     st.subheader(f"Top {len(top)} para vosotros")
     for i, (_, fila) in enumerate(top.iterrows(), start=1):
         with st.container(border=True):
-            col_img, col_info = st.columns([1, 3])
+            col_img, col_info = st.columns([1, 3], vertical_alignment="center")
 
             with col_img:
                 imagen_url = fila.get("Imagen URL")
