@@ -5,3 +5,5 @@ openpyxl
 pysentimiento
 geopy
 ollama
+beautifulsoup4
+lxml

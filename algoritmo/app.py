@@ -345,7 +345,11 @@ if enviado:
     st.subheader(f"Top {len(top)} para vosotros")
     for i, (_, fila) in enumerate(top.iterrows(), start=1):
         with st.container(border=True):
-            st.markdown(f"### {i}. {fila['Nombre']}  ·  score {fila['Score']:.2f}")
+            imagen_url = fila.get("Imagen URL")
+            if isinstance(imagen_url, str) and imagen_url.strip():
+                st.image(imagen_url, use_container_width=True)
+
+            st.markdown(f"### {i}. {fila['Nombre']}")
             st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
                      f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
             st.write(f"**En coche:** {fila['Tiempo en coche (min)']:.0f} min  |  "

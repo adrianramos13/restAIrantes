@@ -1,5 +1,5 @@
 """
-Unifica los 3 excels que hemos ido generando (restaurantes_novia.xlsx,
+Unifica los 3 excels que hemos ido generando (restaurantes_v1.xlsx,
 restaurantes_con_resenas.xlsx, analisis_resenas.xlsx) en un único archivo
 `restaurantes_maestro.xlsx`, asignando un ID numérico fijo a cada
 restaurante.
@@ -37,7 +37,7 @@ from openpyxl.styles import Font, Alignment, PatternFill
 
 EXCELS_DIR = Path(__file__).resolve().parent.parent / "excels"
 
-RESTAURANTES_XLSX = EXCELS_DIR / "restaurantes_novia.xlsx"
+RESTAURANTES_XLSX = EXCELS_DIR / "restaurantes_v1.xlsx"
 RESENAS_XLSX = EXCELS_DIR / "restaurantes_con_resenas.xlsx"
 ANALISIS_XLSX = EXCELS_DIR / "analisis_resenas.xlsx"   # cambia a analisis_resenas_llm.xlsx si aplica
 
@@ -67,8 +67,18 @@ def construir_mapa_id(df_base):
 
 
 def construir_hoja_restaurantes(df_base, mapa_id):
-    resultado = df_base[["ID", "Nombre", "Puntuación", "Nº Reseñas",
-                          "Rango de precios", "Tipo de cocina"]].copy()
+    columnas = ["ID", "Nombre", "Puntuación", "Nº Reseñas",
+                "Rango de precios", "Tipo de cocina"]
+    # Columnas opcionales: solo si vienen en restaurantes_v1.xlsx (por si
+    # se generó con una versión más antigua de extraer_html.py)
+    for col_opcional in ["Imagen URL", "Estado"]:
+        if col_opcional in df_base.columns:
+            columnas.append(col_opcional)
+        else:
+            print(f"[AVISO] '{col_opcional}' no está en restaurantes_v1.xlsx; "
+                  f"vuelve a ejecutar extraer_html.py si la necesitas.")
+
+    resultado = df_base[columnas].copy()
 
     # --- Localización (restaurantes_con_resenas.xlsx, hoja Restaurantes) ---
     try:
