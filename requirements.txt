@@ -1,9 +1,9 @@
-requests
-outscraper
+streamlit
 pandas
 openpyxl
-pysentimiento
 geopy
 ollama
 beautifulsoup4
 lxml
+requests
+pydeck
