@@ -60,6 +60,7 @@ PESO_CALIDAD = 0.30
 PESO_NUM_RESENAS = 0.05
 
 TOP_N = 5
+TOP_N_MAX = 10
 
 OSRM_URL = "https://router.project-osrm.org/table/v1/driving/"
 OSRM_BATCH_SIZE = 100
@@ -428,14 +429,29 @@ if enviado:
     with st.spinner(texto_spinner):
         df_puntuado = filtrar_y_puntuar(maestro, df_platos, respuestas)
 
+    # Guardamos el resultado de esta búsqueda en la sesión: así el botón
+    # "Mostrar más" (que no está dentro del formulario) puede hacer que la
+    # página se vuelva a dibujar sin tener que repetir toda la búsqueda.
+    st.session_state["resultado"] = {"df_puntuado": df_puntuado, "respuestas": respuestas}
+    st.session_state["num_mostrados"] = TOP_N
+
+resultado = st.session_state.get("resultado")
+if resultado is not None:
+    df_puntuado = resultado["df_puntuado"]
+    respuestas = resultado["respuestas"]
+    ubicacion_usuario = respuestas["ubicacion_usuario"]
+    modo_transporte_resultado = respuestas["modo_transporte"]
+    tiempo_maximo_resultado = respuestas["tiempo_maximo_min"]
+
     if df_puntuado.empty:
-        etiqueta_modo = "en coche" if modo_transporte == "En coche" else "andando"
-        st.warning(f"No hay ningún restaurante a menos de {tiempo_maximo_min} min {etiqueta_modo}. "
+        etiqueta_modo = "en coche" if modo_transporte_resultado == "En coche" else "andando"
+        st.warning(f"No hay ningún restaurante a menos de {tiempo_maximo_resultado} min {etiqueta_modo}. "
                    f"Prueba a ampliar el tiempo.")
         mostrar_mapa(*ubicacion_usuario)
         st.stop()
 
-    top = df_puntuado.head(TOP_N)
+    num_mostrados = min(st.session_state.get("num_mostrados", TOP_N), TOP_N_MAX, len(df_puntuado))
+    top = df_puntuado.head(num_mostrados)
 
     # --- Mapa ---
     lat_u, lon_u = ubicacion_usuario
@@ -471,3 +487,9 @@ if enviado:
                 valor = fila.get("Platos mejor valorados")
                 if isinstance(valor, str) and valor.strip():
                     st.write(f"**Otros platos destacados:** {formatear_platos(valor)}")
+
+    # --- Botón "Mostrar más" (hasta un máximo de 10, siempre por score) ---
+    if num_mostrados < min(TOP_N_MAX, len(df_puntuado)):
+        if st.button("Mostrar más", use_container_width=True):
+            st.session_state["num_mostrados"] = min(num_mostrados + 5, TOP_N_MAX, len(df_puntuado))
+            st.rerun()
