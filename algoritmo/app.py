@@ -240,6 +240,19 @@ def formatear_platos(texto):
     return re.sub(r"\s*\(\d+\)", "", texto).strip()
 
 
+def mejorar_resolucion_imagen(url, ancho=600, alto=400):
+    """
+    Las URLs de imágenes de Google (googleusercontent.com) incluyen el
+    tamaño deseado al final (ej. '=w80-h142-k-no', el tamaño diminuto de
+    la miniatura del listado de Maps). Pedimos la misma foto pero a mayor
+    resolución cambiando esos números, en vez de estirar la miniatura
+    pequeña y verse pixelada.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return url
+    return re.sub(r"=w\d+-h\d+", f"=w{ancho}-h{alto}", url)
+
+
 def resumen_mencion_plato(id_restaurante, plato_deseado, df_platos):
     if df_platos.empty or "ID_Restaurante" not in df_platos.columns:
         return "(sin datos de reseñas analizadas)"
@@ -347,7 +360,7 @@ if enviado:
         with st.container(border=True):
             imagen_url = fila.get("Imagen URL")
             if isinstance(imagen_url, str) and imagen_url.strip():
-                st.image(imagen_url, use_container_width=True)
+                st.image(mejorar_resolucion_imagen(imagen_url), use_container_width=True)
 
             st.markdown(f"### {i}. {fila['Nombre']}")
             st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
