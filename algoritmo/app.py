@@ -338,6 +338,41 @@ def resumen_mencion_plato(id_restaurante, plato_deseado, df_platos):
     return f"mencionado {len(menciones)} veces en reseñas ({', '.join(partes)})"
 
 
+def mostrar_mapa(lat_u, lon_u, restaurantes=None):
+    """Pinta el mapa con la ubicación del usuario y, si hay, los restaurantes
+    recomendados. Se usa tanto en resultados normales como para que el
+    usuario pueda comprobar visualmente dónde se ha geocodificado su
+    dirección cuando no sale ningún restaurante (por si se ha ido a un
+    sitio equivocado, ej. un homónimo lejos de Madrid)."""
+    capas = []
+    if restaurantes is not None and not restaurantes.empty:
+        capas.append(pdk.Layer(
+            "ScatterplotLayer",
+            data=restaurantes.rename(columns={"Latitud": "lat", "Longitud": "lon"}),
+            get_position="[lon, lat]",
+            get_color="[200, 30, 0, 180]",
+            get_radius=120,
+            pickable=True,
+        ))
+    capas.append(pdk.Layer(
+        "ScatterplotLayer",
+        data=pd.DataFrame([{"lat": lat_u, "lon": lon_u}]),
+        get_position="[lon, lat]",
+        get_color="[0, 110, 220, 220]",
+        get_radius=160,
+    ))
+    vista = pdk.ViewState(latitude=lat_u, longitude=lon_u, zoom=12)
+    st.pydeck_chart(pdk.Deck(
+        layers=capas,
+        initial_view_state=vista,
+        tooltip={"text": "{Nombre}"},
+    ))
+    if restaurantes is not None and not restaurantes.empty:
+        st.caption("🔵 Tu ubicación · 🔴 Restaurantes recomendados")
+    else:
+        st.caption("🔵 Tu ubicación — comprueba que el mapa te sitúa donde esperabas.")
+
+
 # ----------------------- INTERFAZ ----------------------- #
 
 st.set_page_config(page_title="¿Dónde comemos?", page_icon="🍽️", layout="centered")
@@ -397,34 +432,14 @@ if enviado:
         etiqueta_modo = "en coche" if modo_transporte == "En coche" else "andando"
         st.warning(f"No hay ningún restaurante a menos de {tiempo_maximo_min} min {etiqueta_modo}. "
                    f"Prueba a ampliar el tiempo.")
+        mostrar_mapa(*ubicacion_usuario)
         st.stop()
 
     top = df_puntuado.head(TOP_N)
 
     # --- Mapa ---
     lat_u, lon_u = ubicacion_usuario
-    capa_restaurantes = pdk.Layer(
-        "ScatterplotLayer",
-        data=top.rename(columns={"Latitud": "lat", "Longitud": "lon"}),
-        get_position="[lon, lat]",
-        get_color="[200, 30, 0, 180]",
-        get_radius=120,
-        pickable=True,
-    )
-    capa_usuario = pdk.Layer(
-        "ScatterplotLayer",
-        data=pd.DataFrame([{"lat": lat_u, "lon": lon_u}]),
-        get_position="[lon, lat]",
-        get_color="[0, 110, 220, 220]",
-        get_radius=160,
-    )
-    vista = pdk.ViewState(latitude=lat_u, longitude=lon_u, zoom=12)
-    st.pydeck_chart(pdk.Deck(
-        layers=[capa_restaurantes, capa_usuario],
-        initial_view_state=vista,
-        tooltip={"text": "{Nombre}"},
-    ))
-    st.caption("🔵 Tu ubicación · 🔴 Restaurantes recomendados")
+    mostrar_mapa(lat_u, lon_u, top)
 
     # --- Tarjetas de resultados ---
     st.subheader(f"Top {len(top)} para vosotros")
