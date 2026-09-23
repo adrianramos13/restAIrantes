@@ -1,5 +1,5 @@
 """
-Unifica los 3 excels que hemos ido generando (restaurantes_v1.xlsx,
+Unifica los 3 excels que hemos ido generando (restaurantes_novia.xlsx,
 restaurantes_con_resenas.xlsx, analisis_resenas.xlsx) en un único archivo
 `restaurantes_maestro.xlsx`, asignando un ID numérico fijo a cada
 restaurante.
@@ -69,13 +69,13 @@ def construir_mapa_id(df_base):
 def construir_hoja_restaurantes(df_base, mapa_id):
     columnas = ["ID", "Nombre", "Puntuación", "Nº Reseñas",
                 "Rango de precios", "Tipo de cocina"]
-    # Columnas opcionales: solo si vienen en restaurantes_v1.xlsx (por si
+    # Columnas opcionales: solo si vienen en restaurantes_novia.xlsx (por si
     # se generó con una versión más antigua de extraer_html.py)
     for col_opcional in ["Imagen URL", "Estado"]:
         if col_opcional in df_base.columns:
             columnas.append(col_opcional)
         else:
-            print(f"[AVISO] '{col_opcional}' no está en restaurantes_v1.xlsx; "
+            print(f"[AVISO] '{col_opcional}' no está en restaurantes_novia.xlsx; "
                   f"vuelve a ejecutar extraer_html.py si la necesitas.")
 
     resultado = df_base[columnas].copy()
@@ -110,6 +110,14 @@ def construir_hoja_restaurantes(df_base, mapa_id):
         resultado = resultado.merge(df_resumen, on="ID", how="left")
     except Exception as e:
         print(f"[AVISO] No se pudo leer resumen de reseñas de '{ANALISIS_XLSX}': {e}")
+
+    if "Dirección" in resultado.columns:
+        sin_direccion = resultado["Dirección"].isna().sum()
+        if sin_direccion:
+            print(f"[AVISO] {sin_direccion} de {len(resultado)} restaurantes se han quedado sin "
+                  f"Dirección tras el cruce (o no se cruzó el nombre con "
+                  f"restaurantes_con_resenas.xlsx, o esa fila no tenía dirección guardada). "
+                  f"La app los mostrará como 'N/D'.")
 
     return resultado
 

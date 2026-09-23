@@ -36,6 +36,7 @@ DESPLIEGUE (para tener una URL pública desde el móvil):
 import re
 import math
 import time
+import urllib.parse
 from pathlib import Path
 
 import pandas as pd
@@ -304,6 +305,20 @@ def formatear_platos(texto):
     return re.sub(r"\s*\(\d+\)", "", texto).strip()
 
 
+def valor_o(fila, campo, defecto="N/D"):
+    """Como fila.get(campo, defecto), pero también cae al valor por defecto
+    cuando la columna existe pero el valor es NaN o una cadena vacía
+    (fila.get() por sí solo NO cubre el caso NaN: solo usa el defecto si
+    la columna no existe, así que un hueco de datos real se acababa
+    mostrando como el texto "nan")."""
+    valor = fila.get(campo)
+    if pd.isna(valor):
+        return defecto
+    if isinstance(valor, str) and not valor.strip():
+        return defecto
+    return valor
+
+
 def mejorar_resolucion_imagen(url, ancho=600, alto=400):
     """
     Las URLs de imágenes de Google (googleusercontent.com) incluyen el
@@ -473,12 +488,14 @@ if resultado is not None:
                              use_container_width=True)
 
             with col_info:
-                st.markdown(f"### {i}. {fila['Nombre']}")
+                consulta_busqueda = urllib.parse.quote(f"{fila['Nombre']} Madrid")
+                url_busqueda = f"https://www.google.com/search?q={consulta_busqueda}"
+                st.markdown(f"### {i}. [{fila['Nombre']}]({url_busqueda})")
                 st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
                          f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
                 etiqueta_modo_tarjeta = "En coche" if respuestas["modo_transporte"] == "En coche" else "Andando"
                 st.write(f"**{etiqueta_modo_tarjeta}:** {fila['Tiempo desplazamiento (min)']:.0f} min  |  "
-                         f"**Dirección:** {fila.get('Dirección', 'N/D')}")
+                         f"**Dirección:** {valor_o(fila, 'Dirección')}")
 
                 if respuestas["plato_deseado"]:
                     resumen = resumen_mencion_plato(fila["ID"], respuestas["plato_deseado"], df_platos)
