@@ -491,6 +491,16 @@ if resultado is not None:
                 consulta_busqueda = urllib.parse.quote(f"{fila['Nombre']} Madrid")
                 url_busqueda = f"https://www.google.com/search?q={consulta_busqueda}"
                 st.markdown(f"### {i}. [{fila['Nombre']}]({url_busqueda})")
+
+                # Instagram/TikTok no tienen una búsqueda por palabra clave
+                # fiable sin iniciar sesión (Instagram redirige a login), así
+                # que usamos el operador site: de Google, que sí funciona sin
+                # cuenta y solo devuelve contenido público.
+                consulta_ig = urllib.parse.quote(f'site:instagram.com "{fila["Nombre"]}" Madrid')
+                consulta_tt = urllib.parse.quote(f'site:tiktok.com "{fila["Nombre"]}" Madrid')
+                url_ig = f"https://www.google.com/search?q={consulta_ig}"
+                url_tt = f"https://www.google.com/search?q={consulta_tt}"
+                st.markdown(f"📷 [Instagram]({url_ig})  ·  🎵 [TikTok]({url_tt})")
                 st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
                          f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
                 etiqueta_modo_tarjeta = "En coche" if respuestas["modo_transporte"] == "En coche" else "Andando"
