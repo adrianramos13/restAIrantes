@@ -492,15 +492,6 @@ if resultado is not None:
                 url_busqueda = f"https://www.google.com/search?q={consulta_busqueda}"
                 st.markdown(f"### {i}. [{fila['Nombre']}]({url_busqueda})")
 
-                # Instagram/TikTok no tienen una búsqueda por palabra clave
-                # fiable sin iniciar sesión (Instagram redirige a login), así
-                # que usamos el operador site: de Google, que sí funciona sin
-                # cuenta y solo devuelve contenido público.
-                consulta_ig = urllib.parse.quote(f'site:instagram.com "{fila["Nombre"]}" Madrid')
-                consulta_tt = urllib.parse.quote(f'site:tiktok.com "{fila["Nombre"]}" Madrid')
-                url_ig = f"https://www.google.com/search?q={consulta_ig}"
-                url_tt = f"https://www.google.com/search?q={consulta_tt}"
-                st.markdown(f"📷 [Instagram]({url_ig})  ·  🎵 [TikTok]({url_tt})")
                 st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
                          f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
                 etiqueta_modo_tarjeta = "En coche" if respuestas["modo_transporte"] == "En coche" else "Andando"
@@ -514,6 +505,27 @@ if resultado is not None:
                 valor = fila.get("Platos mejor valorados")
                 if isinstance(valor, str) and valor.strip():
                     st.write(f"**Otros platos destacados:** {formatear_platos(valor)}")
+
+                # Instagram/TikTok no tienen una búsqueda por palabra clave
+                # fiable sin iniciar sesión (Instagram redirige a login), así
+                # que usamos el operador site: de Google, que sí funciona sin
+                # cuenta y solo devuelve contenido público. Los logos vienen
+                # de Simple Icons (cdn.simpleicons.org), gratuito y sin login.
+                consulta_ig = urllib.parse.quote(f'site:instagram.com "{fila["Nombre"]}" Madrid')
+                consulta_tt = urllib.parse.quote(f'site:tiktok.com "{fila["Nombre"]}" Madrid')
+                url_ig = f"https://www.google.com/search?q={consulta_ig}"
+                url_tt = f"https://www.google.com/search?q={consulta_tt}"
+                logo_ig = "https://cdn.simpleicons.org/instagram/E4405F"
+                logo_tt = "https://cdn.simpleicons.org/tiktok/000000"
+                st.markdown(
+                    f'<a href="{url_ig}" target="_blank" style="margin-right:16px; text-decoration:none;">'
+                    f'<img src="{logo_ig}" width="16" style="vertical-align:middle; margin-right:4px;">'
+                    f'<span style="vertical-align:middle;">Instagram</span></a>'
+                    f'<a href="{url_tt}" target="_blank" style="text-decoration:none;">'
+                    f'<img src="{logo_tt}" width="16" style="vertical-align:middle; margin-right:4px;">'
+                    f'<span style="vertical-align:middle;">TikTok</span></a>',
+                    unsafe_allow_html=True,
+                )
 
     # --- Botón "Mostrar más" (hasta un máximo de 10, siempre por score) ---
     if num_mostrados < min(TOP_N_MAX, len(df_puntuado)):
