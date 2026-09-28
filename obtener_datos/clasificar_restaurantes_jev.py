@@ -310,11 +310,12 @@ def cargar_restaurantes_base():
               f"el resultado se genera sin Dirección/Latitud/Longitud/Teléfono/Web.")
         return rest
 
-    columna_nombre = "Nombre (excel original)" if "Nombre (excel original)" in loc.columns else "Nombre"
-    if columna_nombre not in loc.columns:
+    columna_nombre = next((c for c in ("Nombre (Google Maps)", "Nombre (excel original)", "Nombre") if c in loc.columns), None)
+    if columna_nombre is None:
         print(f"[AVISO] La hoja 'Restaurantes' de {RESENAS_XLSX.name} no tiene una columna de nombre "
               f"reconocible; el resultado se genera sin datos de localización.")
         return rest
+    print(f"  - Localización cruzada por la columna '{columna_nombre}' de {RESENAS_XLSX.name}.")
 
     exacto = dict(zip(rest["Nombre"].apply(_clave_nombre), rest["ID"]))
     loc = loc.rename(columns={columna_nombre: "_nombre_loc"})
@@ -722,6 +723,20 @@ def guardar_excel(ruta, *, rest, resenas, resultados, por_restaurante, extra_con
     df_rest = rest.reset_index(drop=True).copy()
     df_agg = pd.DataFrame(por_restaurante)
     df_rest = pd.concat([df_rest, df_agg], axis=1)
+
+    # Sin categoría de Jev (pocas o ninguna reseña informativa): se usa el tipo de cocina de
+    # Google tal cual, en vez de dejarlo vacío. OJO: ese campo de Google a veces no es una
+    # cocina (puede ser "Restaurante", "Bar de tapas"...), así que puede que no encaje del todo
+    # con las demás categorías, pero es mejor que no tener nada.
+    if "Tipo de cocina" in df_rest.columns:
+        sin_categoria = df_rest["Categoría (Jev)"].isna()
+        google_valido = df_rest["Tipo de cocina"].apply(lambda v: isinstance(v, str) and v.strip() != "")
+        usar_google = sin_categoria & google_valido
+        if usar_google.any():
+            df_rest.loc[usar_google, "Categoría (Jev)"] = df_rest.loc[usar_google, "Tipo de cocina"]
+            nombres_rellenados = ", ".join(df_rest.loc[usar_google, "Nombre"].astype(str))
+            print(f"[AVISO] {int(usar_google.sum())} restaurantes sin categoría de Jev: se ha usado su "
+                  f"'Tipo de cocina' de Google en su lugar ({nombres_rellenados}).")
 
     # --- Reseñas ---
     filas_r = []
