@@ -864,4 +864,4 @@ if resultado is not None:
     if num_mostrados < min(TOP_N_MAX, len(df_puntuado)):
         if st.button("Mostrar más", width="stretch"):
             st.session_state["num_mostrados"] = min(num_mostrados + 5, TOP_N_MAX, len(df_puntuado))
-            st.rerun()
+            st.rerun() 
