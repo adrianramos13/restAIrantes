@@ -308,21 +308,21 @@ def leer_secreto(nombre, defecto=""):
 
 
 def configuracion_mapa_base():
-    """Mosaicos del mapa. Con CARTO_API_KEY en los secretos usa CARTO (gratis con clave
-    para uso no comercial); sin ella cae a OpenStreetMap, que no necesita clave. Sin
-    clave CARTO estampa "API KEY REQUIRED" sobre todos sus mosaicos."""
-    clave = str(leer_secreto("CARTO_API_KEY")).strip()
-    if clave:
-        return {
-            "url": f"https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png?key={clave}",
-            "subdominios": "abcd", "maxZoom": 20,
-            "atribucion": '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors '
-                          '&copy; <a href="https://carto.com/attributions">CARTO</a>',
-        }
+    """Mapa base: OpenFreeMap "Positron" (vectorial, gris claro, sin clave ni límites), para que
+    las fotos destaquen. Si el navegador no puede dibujarlo (sin WebGL, sin acceso a
+    OpenFreeMap...), el componente cae automáticamente a OpenStreetMap (raster, sin clave)."""
     return {
-        "url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        "subdominios": "abc", "maxZoom": 19,
-        "atribucion": '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        "vectorial": {
+            "style": "https://tiles.openfreemap.org/styles/positron",
+            "atribucion": '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> '
+                          '<a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">&copy; OpenMapTiles</a> '
+                          'Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+        },
+        "respaldo": {
+            "url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "subdominios": "abc", "maxZoom": 19,
+            "atribucion": '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        },
     }
 
 
@@ -441,7 +441,7 @@ def mostrar_tarjeta(fila, respuestas, df_platos, numero=None):
 # Componente propio (st.components.v2) con Leaflet: cada restaurante es su foto
 # redonda con el número de posición (el mismo que en la lista). Al pinchar una
 # foto se avisa a Python para mostrar su ficha debajo. Leaflet y los mosaicos del
-# mapa se cargan desde internet (jsDelivr y CARTO u OpenStreetMap).
+# mapa se cargan desde internet (jsDelivr y OpenFreeMap; OpenStreetMap de respaldo).
 
 _HTML_MAPA = """
 <div class="fm-mapa"></div>
@@ -487,23 +487,47 @@ _CSS_MAPA = """
 _JS_MAPA = r"""
 const LEAFLET_CSS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
 const LEAFLET_JS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
+const MAPLIBRE_CSS = 'https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css';
+const MAPLIBRE_JS = 'https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js';
+const PLUGIN_JS = 'https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js';
+const TIEMPO_MAX_VECTORIAL_MS = 12000;
+
+function cargarCss(href) {
+  return new Promise((ok, fallo) => {
+    const l = document.createElement('link');
+    l.rel = 'stylesheet'; l.href = href; l.onload = ok; l.onerror = fallo;
+    document.head.appendChild(l);
+  });
+}
+
+function cargarScript(src) {
+  return new Promise((ok, fallo) => {
+    const sc = document.createElement('script');
+    sc.src = src; sc.onload = ok; sc.onerror = fallo;
+    document.head.appendChild(sc);
+  });
+}
 
 function cargarLeaflet() {
   if (window.L && window.L.map) return Promise.resolve(window.L);
   if (!window.__fmLeaflet) {
-    const css = new Promise((ok, fallo) => {
-      const l = document.createElement('link');
-      l.rel = 'stylesheet'; l.href = LEAFLET_CSS; l.onload = ok; l.onerror = fallo;
-      document.head.appendChild(l);
-    });
-    const js = new Promise((ok, fallo) => {
-      const sc = document.createElement('script');
-      sc.src = LEAFLET_JS; sc.onload = ok; sc.onerror = fallo;
-      document.head.appendChild(sc);
-    });
-    window.__fmLeaflet = Promise.all([css, js]).then(() => window.L).catch((e) => { window.__fmLeaflet = null; throw e; });
+    window.__fmLeaflet = Promise.all([cargarCss(LEAFLET_CSS), cargarScript(LEAFLET_JS)])
+      .then(() => window.L)
+      .catch((e) => { window.__fmLeaflet = null; throw e; });
   }
   return window.__fmLeaflet;
+}
+
+// MapLibre GL + su plugin para Leaflet (mapa vectorial). Se cargan solo si hacen falta.
+function cargarMapLibre() {
+  if (window.L && window.L.maplibreGL) return Promise.resolve();
+  if (!window.__fmMapLibre) {
+    window.__fmMapLibre = Promise.all([
+      cargarCss(MAPLIBRE_CSS),
+      cargarScript(MAPLIBRE_JS).then(() => cargarScript(PLUGIN_JS)),
+    ]).then(() => undefined).catch((e) => { window.__fmMapLibre = null; throw e; });
+  }
+  return window.__fmMapLibre;
 }
 
 function crearPin(r, seleccionado) {
@@ -538,6 +562,51 @@ function crearPuntoUsuario() {
   return yo;
 }
 
+function quitarBase(estado) {
+  if (estado.temporizador) { clearTimeout(estado.temporizador); estado.temporizador = null; }
+  if (estado.capaBase) { try { estado.capaBase.remove(); } catch (e) { /* ya no estaba */ } estado.capaBase = null; }
+  // Restos de una capa vectorial que no llegó a montarse del todo (p. ej. sin WebGL).
+  estado.contenedor.querySelectorAll('.leaflet-gl-layer').forEach((el) => el.remove());
+}
+
+function ponerRespaldo(L, estado) {
+  const r = estado.datos.base.respaldo;
+  quitarBase(estado);
+  estado.capaBase = L.tileLayer(r.url, { subdomains: r.subdominios, maxZoom: r.maxZoom, attribution: r.atribucion }).addTo(estado.mapa);
+  estado.baseClave = 'respaldo';
+}
+
+// Mapa vectorial (OpenFreeMap). Si algo falla (sin WebGL, sin red, tarda demasiado) se usa el respaldo.
+function ponerVectorial(L, estado) {
+  const v = estado.datos.base.vectorial;
+  const clave = 'vectorial:' + v.style;
+  if (estado.baseClave === clave || estado.baseClave === 'respaldo') return;
+  quitarBase(estado);
+  estado.baseClave = clave;
+
+  cargarMapLibre().then(() => {
+    if (estado.baseClave !== clave || !estado.mapa) return;
+    const capa = L.maplibreGL({ style: v.style, attributionControl: { customAttribution: v.atribucion } });
+    estado.capaBase = capa;   // antes de añadirla: si addTo falla (p. ej. sin WebGL), quitarBase() puede limpiarla
+    capa.addTo(estado.mapa);
+    let cargado = false;
+    capa.getMaplibreMap().on('styledata', () => { cargado = true; });
+    estado.temporizador = setTimeout(() => {
+      if (!cargado && estado.baseClave === clave) ponerRespaldo(L, estado);
+    }, TIEMPO_MAX_VECTORIAL_MS);
+  }).catch(() => {
+    if (estado.baseClave === clave) ponerRespaldo(L, estado);
+  });
+}
+
+function aplicarBase(L, estado) {
+  // Limpia capas de mosaicos que no sean las nuestras (p. ej. de una versión anterior con la página abierta).
+  estado.mapa.eachLayer((capa) => {
+    if (capa instanceof L.TileLayer && capa !== estado.capaBase) capa.remove();
+  });
+  ponerVectorial(L, estado);
+}
+
 function pintar(L, estado) {
   const { usuario, restaurantes, seleccionado } = estado.datos;
 
@@ -551,15 +620,7 @@ function pintar(L, estado) {
     estado.mapa.on('click', () => { if (estado.seleccionado != null) estado.setTrigger('seleccion', -1); });
   }
 
-  // Mosaicos del mapa base (los define Python; se recrean solo si cambia la URL).
-  const base = estado.datos.base;
-  if (estado.baseUrl !== base.url) {
-    if (estado.capaBase) estado.capaBase.remove();
-    estado.capaBase = L.tileLayer(base.url, {
-      subdomains: base.subdominios, maxZoom: base.maxZoom, attribution: base.atribucion,
-    }).addTo(estado.mapa);
-    estado.baseUrl = base.url;
-  }
+  aplicarBase(L, estado);
 
   estado.seleccionado = seleccionado;
   estado.capa.clearLayers();
