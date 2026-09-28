@@ -9,7 +9,7 @@ preguntas por terminal, y muestra el resultado en tarjetas + mapa.
 ESTRUCTURA DE CARPETAS ESPERADA (este archivo vive en algoritmo/):
     proyecto/
       excels/
-        restaurantes_maestro.xlsx
+        clasificacion_jev.xlsx   <- lo genera obtener_datos/clasificar_restaurantes_jev.py
       algoritmo/
         app.py          <- este archivo
         encuesta.py
@@ -36,6 +36,7 @@ DESPLIEGUE (para tener una URL pública desde el móvil):
 import re
 import math
 import time
+import unicodedata
 import urllib.parse
 from pathlib import Path
 
@@ -51,7 +52,7 @@ import streamlit as st
 # `streamlit run algoritmo/app.py` desde la raíz como si haces `cd
 # algoritmo` primero.
 BASE_DIR = Path(__file__).resolve().parent
-MAESTRO_XLSX = BASE_DIR.parent / "excels" / "restaurantes_maestro.xlsx"
+MAESTRO_XLSX = BASE_DIR.parent / "excels" / "clasificacion_jev.xlsx"
 
 PESO_PRECIO = 0.15
 PESO_COCINA = 0.30
@@ -61,6 +62,15 @@ PESO_NUM_RESENAS = 0.05
 
 TOP_N = 5
 TOP_N_MAX = 10
+
+# Categoría de cocina calculada con Jev (columnas que trae clasificacion_jev.xlsx).
+COL_CATEGORIA = "Categoría (Jev)"
+COL_CATEGORIA_2 = "Categoría 2ª (Jev)"
+COL_VOTOS_1 = "% votos categoría (Jev)"
+COL_VOTOS_2 = "% votos 2ª (Jev)"
+SCORE_COCINA_SECUNDARIA = 0.6    # el restaurante tiene la cocina elegida como segunda categoría
+SCORE_COCINA_DESCONOCIDA = 0.3   # Jev no pudo clasificarlo (pocas reseñas informativas): ni sí ni no
+VOTOS_MIN_SECUNDARIA = 0.25      # la segunda categoría solo cuenta si tiene al menos este % de los votos
 
 OSRM_URL = "https://router.project-osrm.org/table/v1/driving/"
 OSRM_BATCH_SIZE = 100
@@ -262,6 +272,79 @@ def calcular_score_calidad(fila):
     return score_estrellas
 
 
+def tiene_categorias_jev(maestro):
+    """¿Trae el maestro la categoría de cocina de Jev? Si no (maestro antiguo), se usa la de Google."""
+    return COL_CATEGORIA in maestro.columns and maestro[COL_CATEGORIA].notna().any()
+
+
+def _sin_tildes(texto):
+    if not isinstance(texto, str):
+        return ""
+    return "".join(c for c in unicodedata.normalize("NFKD", texto.lower()) if not unicodedata.combining(c))
+
+
+_STOPWORDS_COCINA = {"y", "de", "del", "la", "el", "las", "los", "otras", "otra"}
+_RAIZ_MIN = 5   # comparamos por raíz de palabra: "arroces"/"arrocería" o "vegana"/"vegano"
+                # no coinciden letra por letra, pero sus 5 primeras letras sí
+
+
+def _palabras_significativas(texto):
+    """Raíces de las palabras de 4+ letras de `texto`, sin tildes ni conectores ('y', 'de',
+    'otras'...). Se usa para comparar una etiqueta de Jev tipo "Asiática (otras)" contra el
+    texto libre de Google: comparar la frase completa casi nunca coincide, y comparar palabra
+    a palabra tampoco (género/número distintos), así que se compara por raíz."""
+    palabras = [p for p in re.findall(r"[a-z]+", _sin_tildes(texto)) if len(p) >= 4 and p not in _STOPWORDS_COCINA]
+    return [p[:_RAIZ_MIN] for p in palabras]
+
+
+def _coincide_con_google(etiqueta_elegida, texto_google):
+    palabras = _palabras_significativas(etiqueta_elegida)
+    if not palabras:
+        return False
+    texto_norm = _sin_tildes(texto_google)
+    return any(p in texto_norm for p in palabras)
+
+
+def puntuacion_cocina(fila, cocina_elegida, con_jev):
+    """
+    Encaje (0-1) entre la cocina elegida y la del restaurante.
+    Con categorías de Jev: 1 si es su categoría principal (o hay empate con la segunda), 0.6 si es
+    la segunda con peso suficiente, 0 si tiene otra cocina, y 0.3 si Jev no pudo clasificarlo
+    (salvo que la etiqueta de Google contenga esa cocina, que cuenta como 1).
+    Sin categorías de Jev (maestro antiguo): coincidencia de texto con el tipo de Google, como antes.
+    """
+    if not cocina_elegida:
+        return 0.5
+    if not con_jev:
+        return 1.0 if cocina_elegida.lower() in str(fila["Tipo de cocina"]).lower() else 0.0
+
+    principal = fila.get(COL_CATEGORIA)
+    if isinstance(principal, str) and principal.strip():
+        if principal == cocina_elegida:
+            return 1.0
+        if fila.get(COL_CATEGORIA_2) == cocina_elegida:
+            v1, v2 = fila.get(COL_VOTOS_1), fila.get(COL_VOTOS_2)
+            if pd.notna(v1) and pd.notna(v2) and v2 >= v1:
+                return 1.0                     # empate: la "segunda" es tan buena como la principal
+            if pd.notna(v2) and v2 >= VOTOS_MIN_SECUNDARIA:
+                return SCORE_COCINA_SECUNDARIA
+        return 0.0
+
+    return 1.0 if _coincide_con_google(cocina_elegida, fila.get("Tipo de cocina")) else SCORE_COCINA_DESCONOCIDA
+
+
+def etiqueta_cocina(fila):
+    """Cocina que se muestra en la tarjeta: la de Jev (con la segunda si pesa lo suficiente, para
+    explicar por qué sale al buscar esa cocina) o, si no hay, la de Google."""
+    principal = fila.get(COL_CATEGORIA)
+    if isinstance(principal, str) and principal.strip():
+        segunda, v2 = fila.get(COL_CATEGORIA_2), fila.get(COL_VOTOS_2)
+        if isinstance(segunda, str) and segunda.strip() and pd.notna(v2) and v2 >= VOTOS_MIN_SECUNDARIA:
+            return f"{principal} · también {segunda}"
+        return principal
+    return valor_o(fila, "Tipo de cocina")
+
+
 def filtrar_y_puntuar(maestro, df_platos, r):
     df = maestro.copy()
     if r["modo_transporte"] == "A pie":
@@ -274,15 +357,13 @@ def filtrar_y_puntuar(maestro, df_platos, r):
         return df
 
     max_resenas = maestro["Nº Reseñas"].max() or 1
+    con_jev = tiene_categorias_jev(maestro)
 
     def puntuar_fila(fila):
         min_r, max_r = parsear_rango_precio(fila["Rango de precios"])
         score_precio = solapamiento(min_r, max_r, r["presupuesto_min"], r["presupuesto_max"])
 
-        if r["cocina"]:
-            score_cocina = 1.0 if r["cocina"].lower() in str(fila["Tipo de cocina"]).lower() else 0.0
-        else:
-            score_cocina = 0.5
+        score_cocina = puntuacion_cocina(fila, r["cocina"], con_jev)
 
         score_plato = puntuacion_plato(fila["ID"], r["plato_deseado"], df_platos)
         score_calidad = calcular_score_calidad(fila)
@@ -401,7 +482,7 @@ def mostrar_tarjeta(fila, respuestas, df_platos, numero=None):
         prefijo = f"{numero}. " if numero is not None else ""
         st.markdown(f"### {prefijo}[{fila['Nombre']}]({url_busqueda})")
 
-        st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
+        st.write(f"**Cocina:** {etiqueta_cocina(fila)}  |  **Precio:** {fila['Rango de precios']}  |  "
                  f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
         etiqueta_modo_tarjeta = "En coche" if respuestas["modo_transporte"] == "En coche" else "Andando"
         st.write(f"**{etiqueta_modo_tarjeta}:** {fila['Tiempo desplazamiento (min)']:.0f} min  |  "
@@ -825,12 +906,19 @@ maestro, df_platos = cargar_datos()
 
 col1, col2 = st.columns(2)
 with col1:
-    presupuesto_min = st.number_input("Presupuesto mín. (€/persona)", min_value=0, value=10, step=5)
+    presupuesto_min = st.number_input("Presupuesto mín. (€/persona)", min_value=0, value=0, step=5)
 with col2:
     presupuesto_max = st.number_input("Presupuesto máx. (€/persona)", min_value=0, value=30, step=5)
 
-cocinas_disponibles = sorted(maestro["Tipo de cocina"].dropna().unique().tolist())
-cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_disponibles)
+if tiene_categorias_jev(maestro):
+    conteo_cocinas = maestro[COL_CATEGORIA].dropna().value_counts()
+    cocina = st.selectbox(
+        "Tipo de cocina", ["Cualquiera"] + sorted(conteo_cocinas.index),
+        format_func=lambda c: c if c == "Cualquiera" else f"{c} ({conteo_cocinas[c]})",
+    )
+else:   # maestro sin categorías de Jev: se usa el tipo de Google
+    cocinas_disponibles = sorted(maestro["Tipo de cocina"].dropna().unique().tolist())
+    cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_disponibles)
 
 # Caja de dirección y, justo debajo, el botón "Ubicación actual". Reservamos primero
 # el hueco de la caja y lo rellenamos después de procesar el clic del botón: así la
