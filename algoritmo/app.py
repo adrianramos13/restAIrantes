@@ -194,7 +194,7 @@ def obtener_minutos_a_pie(ubicacion_usuario, maestro):
         dist_km = haversine_km(lat_u, lon_u, fila["Latitud"], fila["Longitud"])
         return (dist_km / VELOCIDAD_RESPALDO_ANDANDO_KMH) * 60
 
-    api_key = st.secrets.get("ORS_API_KEY", "")
+    api_key = leer_secreto("ORS_API_KEY")
     if not api_key:
         st.warning("No hay configurada una clave de OpenRouteService (ORS_API_KEY) en los "
                    "secretos de la app: se está estimando el tiempo a pie por distancia en "
@@ -296,6 +296,34 @@ def filtrar_y_puntuar(maestro, df_platos, r):
 
     df["Score"] = df.apply(puntuar_fila, axis=1)
     return df.sort_values("Score", ascending=False)
+
+
+def leer_secreto(nombre, defecto=""):
+    """Lee un secreto de Streamlit sin romper si no existe (st.secrets.get lanza
+    StreamlitSecretNotFoundError cuando no hay ningún archivo secrets.toml)."""
+    try:
+        return st.secrets.get(nombre, defecto)
+    except Exception:
+        return defecto
+
+
+def configuracion_mapa_base():
+    """Mosaicos del mapa. Con CARTO_API_KEY en los secretos usa CARTO (gratis con clave
+    para uso no comercial); sin ella cae a OpenStreetMap, que no necesita clave. Sin
+    clave CARTO estampa "API KEY REQUIRED" sobre todos sus mosaicos."""
+    clave = str(leer_secreto("CARTO_API_KEY")).strip()
+    if clave:
+        return {
+            "url": f"https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png?key={clave}",
+            "subdominios": "abcd", "maxZoom": 20,
+            "atribucion": '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors '
+                          '&copy; <a href="https://carto.com/attributions">CARTO</a>',
+        }
+    return {
+        "url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "subdominios": "abc", "maxZoom": 19,
+        "atribucion": '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }
 
 
 def formatear_platos(texto):
@@ -413,7 +441,7 @@ def mostrar_tarjeta(fila, respuestas, df_platos, numero=None):
 # Componente propio (st.components.v2) con Leaflet: cada restaurante es su foto
 # redonda con el número de posición (el mismo que en la lista). Al pinchar una
 # foto se avisa a Python para mostrar su ficha debajo. Leaflet y los mosaicos del
-# mapa se cargan desde internet (jsDelivr y CARTO/OpenStreetMap).
+# mapa se cargan desde internet (jsDelivr y CARTO u OpenStreetMap).
 
 _HTML_MAPA = """
 <div class="fm-mapa"></div>
@@ -515,16 +543,22 @@ function pintar(L, estado) {
 
   if (!estado.mapa) {
     estado.mapa = L.map(estado.contenedor, { scrollWheelZoom: false });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-      subdomains: 'abcd', maxZoom: 20,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    }).addTo(estado.mapa);
     estado.capa = L.layerGroup().addTo(estado.mapa);
     // La rueda del ratón solo hace zoom tras pinchar dentro del mapa (así no secuestra el scroll de la página).
     estado.mapa.on('mousedown', () => estado.mapa.scrollWheelZoom.enable());
     estado.contenedor.addEventListener('mouseleave', () => estado.mapa.scrollWheelZoom.disable());
     // Pinchar en un hueco del mapa quita la selección.
     estado.mapa.on('click', () => { if (estado.seleccionado != null) estado.setTrigger('seleccion', -1); });
+  }
+
+  // Mosaicos del mapa base (los define Python; se recrean solo si cambia la URL).
+  const base = estado.datos.base;
+  if (estado.baseUrl !== base.url) {
+    if (estado.capaBase) estado.capaBase.remove();
+    estado.capaBase = L.tileLayer(base.url, {
+      subdomains: base.subdominios, maxZoom: base.maxZoom, attribution: base.atribucion,
+    }).addTo(estado.mapa);
+    estado.baseUrl = base.url;
   }
 
   estado.seleccionado = seleccionado;
@@ -632,7 +666,7 @@ def mostrar_mapa(lat_u, lon_u, restaurantes=None, seleccionado_id=None):
 
     _MAPA_FOTOS(
         data={"usuario": {"lat": float(lat_u), "lon": float(lon_u)}, "restaurantes": lista,
-              "seleccionado": seleccionado_id},
+              "seleccionado": seleccionado_id, "base": configuracion_mapa_base()},
         key="mapa_fotos",
         on_seleccion_change=_al_seleccionar_en_mapa,
     )
@@ -864,4 +898,4 @@ if resultado is not None:
     if num_mostrados < min(TOP_N_MAX, len(df_puntuado)):
         if st.button("Mostrar más", width="stretch"):
             st.session_state["num_mostrados"] = min(num_mostrados + 5, TOP_N_MAX, len(df_puntuado))
-            st.rerun() 
+            st.rerun()
