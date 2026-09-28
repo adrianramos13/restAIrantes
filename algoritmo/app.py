@@ -54,10 +54,10 @@ import pydeck as pdk
 BASE_DIR = Path(__file__).resolve().parent
 MAESTRO_XLSX = BASE_DIR.parent / "excels" / "restaurantes_maestro.xlsx"
 
-PESO_PRECIO = 0.15
-PESO_COCINA = 0.30
+PESO_PRECIO = 0.25
+PESO_COCINA = 0.40
 PESO_PLATO = 0.20
-PESO_CALIDAD = 0.30
+PESO_CALIDAD = 0.10
 PESO_NUM_RESENAS = 0.05
 
 TOP_N = 5

@@ -31,8 +31,8 @@ from outscraper import OutscraperClient
 
 EXCELS_DIR = Path(__file__).resolve().parent.parent / "excels"
 
-INPUT_XLSX = EXCELS_DIR / "restaurantes_novia.xlsx"      # Excel con la columna "Nombre"
-OUTPUT_XLSX = EXCELS_DIR / "restaurantes_con_resenas.xlsx"
+INPUT_XLSX = EXCELS_DIR / "restaurantes_v1.xlsx"      # Excel con la columna "Nombre"
+OUTPUT_XLSX = EXCELS_DIR / "restaurantes_con_resenas_aux.xlsx"
 
 CIUDAD = "Madrid, España"   # se añade a cada nombre para desambiguar la búsqueda
 REVIEWS_LIMIT = 30          # reseñas por restaurante (entre 20 y 50 según lo hablado)
@@ -133,10 +133,20 @@ def procesar_resultados(nombres_originales, resultados):
 
         lugar = resultados[i]
 
+        # Diagnóstico de una sola vez: mostramos las claves reales que
+        # devuelve Outscraper para el primer restaurante encontrado, para
+        # poder confirmar (o corregir) el nombre exacto de cada campo si
+        # algo viene vacío inesperadamente (ej. Dirección).
+        if not filas_restaurantes and not no_encontrados:
+            print(f"[DEBUG] Claves disponibles en la respuesta de Outscraper: {sorted(lugar.keys())}")
+
+        direccion = (lugar.get("full_address") or lugar.get("address")
+                     or lugar.get("formatted_address") or "")
+
         filas_restaurantes.append({
             "Nombre (excel original)": nombre_original,
             "Nombre (Google Maps)": lugar.get("name", ""),
-            "Dirección": lugar.get("full_address", ""),
+            "Dirección": direccion,
             "Latitud": lugar.get("latitude", ""),
             "Longitud": lugar.get("longitude", ""),
             "Rating global": lugar.get("rating", ""),
