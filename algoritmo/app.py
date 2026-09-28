@@ -44,6 +44,14 @@ import requests
 import streamlit as st
 import pydeck as pdk
 
+# Componente de terceros para "usar mi ubicación actual" (pip install
+# streamlit-geolocation). Si no está instalado, la app funciona igual pero
+# sin ese botón.
+try:
+    from streamlit_geolocation import streamlit_geolocation
+except ImportError:
+    streamlit_geolocation = None
+
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
 
@@ -354,39 +362,129 @@ def resumen_mencion_plato(id_restaurante, plato_deseado, df_platos):
     return f"mencionado {len(menciones)} veces en reseñas ({', '.join(partes)})"
 
 
+def mostrar_tarjeta(fila, respuestas, df_platos, numero=None):
+    """Dibuja la tarjeta de un restaurante (foto a la izquierda, datos a la
+    derecha). Se usa tanto en la lista de resultados como en la ficha que
+    aparece al pinchar un punto del mapa."""
+    col_img, col_info = st.columns([1, 3], vertical_alignment="center")
+
+    with col_img:
+        imagen_url = fila.get("Imagen URL")
+        if isinstance(imagen_url, str) and imagen_url.strip():
+            # Pedimos bastante más resolución de la que se va a mostrar (la
+            # columna es estrecha) para que se vea nítida en pantallas retina.
+            st.image(mejorar_resolucion_imagen(imagen_url, ancho=450, alto=450),
+                     width="stretch")
+
+    with col_info:
+        consulta_busqueda = urllib.parse.quote(f"{fila['Nombre']} Madrid")
+        url_busqueda = f"https://www.google.com/search?q={consulta_busqueda}"
+        prefijo = f"{numero}. " if numero is not None else ""
+        st.markdown(f"### {prefijo}[{fila['Nombre']}]({url_busqueda})")
+
+        st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
+                 f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
+        etiqueta_modo_tarjeta = "En coche" if respuestas["modo_transporte"] == "En coche" else "Andando"
+        st.write(f"**{etiqueta_modo_tarjeta}:** {fila['Tiempo desplazamiento (min)']:.0f} min  |  "
+                 f"**Dirección:** {valor_o(fila, 'Dirección')}")
+
+        if respuestas["plato_deseado"]:
+            resumen = resumen_mencion_plato(fila["ID"], respuestas["plato_deseado"], df_platos)
+            st.write(f"**Sobre '{respuestas['plato_deseado']}':** {resumen}")
+
+        valor = fila.get("Platos mejor valorados")
+        if isinstance(valor, str) and valor.strip():
+            st.write(f"**Otros platos destacados:** {formatear_platos(valor)}")
+
+        # Instagram/TikTok no tienen una búsqueda por palabra clave fiable
+        # sin iniciar sesión (Instagram redirige a login), así que usamos el
+        # operador site: de Google, que sí funciona sin cuenta y solo
+        # devuelve contenido público. Los logos vienen de Simple Icons
+        # (cdn.simpleicons.org), gratuito y sin login.
+        consulta_ig = urllib.parse.quote(f'site:instagram.com "{fila["Nombre"]}" Madrid')
+        consulta_tt = urllib.parse.quote(f'site:tiktok.com "{fila["Nombre"]}" Madrid')
+        url_ig = f"https://www.google.com/search?q={consulta_ig}"
+        url_tt = f"https://www.google.com/search?q={consulta_tt}"
+        logo_ig = "https://cdn.simpleicons.org/instagram/E4405F"
+        logo_tt = "https://cdn.simpleicons.org/tiktok/000000"
+        st.markdown(
+            f'<a href="{url_ig}" target="_blank" style="margin-right:16px; text-decoration:none;">'
+            f'<img src="{logo_ig}" width="16" style="vertical-align:middle; margin-right:4px;">'
+            f'<span style="vertical-align:middle;">Instagram</span></a>'
+            f'<a href="{url_tt}" target="_blank" style="text-decoration:none;">'
+            f'<img src="{logo_tt}" width="16" style="vertical-align:middle; margin-right:4px;">'
+            f'<span style="vertical-align:middle;">TikTok</span></a>',
+            unsafe_allow_html=True,
+        )
+
+
+def id_restaurante_seleccionado(evento):
+    """Extrae el ID del restaurante pinchado en el mapa a partir de lo que
+    devuelve st.pydeck_chart(on_select=...). Devuelve None si no hay ninguno."""
+    try:
+        objetos = evento.selection.objects.get("restaurantes", [])
+    except Exception:
+        return None
+    if not objetos:
+        return None
+    return objetos[0].get("ID")
+
+
 def mostrar_mapa(lat_u, lon_u, restaurantes=None):
     """Pinta el mapa con la ubicación del usuario y, si hay, los restaurantes
-    recomendados. Se usa tanto en resultados normales como para que el
-    usuario pueda comprobar visualmente dónde se ha geocodificado su
-    dirección cuando no sale ningún restaurante (por si se ha ido a un
-    sitio equivocado, ej. un homónimo lejos de Madrid)."""
+    recomendados. Los puntos tienen tamaño fijo en píxeles (no crecen al
+    hacer zoom). Si hay restaurantes, se puede pinchar en uno y la función
+    devuelve su ID (o None si no hay ninguno seleccionado).
+
+    Sin restaurantes (búsqueda sin resultados) solo se dibuja la ubicación
+    del usuario, para poder comprobar visualmente dónde se ha geocodificado
+    la dirección (por si se ha ido a un sitio equivocado)."""
+    hay_restaurantes = restaurantes is not None and not restaurantes.empty
+
     capas = []
-    if restaurantes is not None and not restaurantes.empty:
+    if hay_restaurantes:
+        datos = restaurantes[["ID", "Nombre", "Latitud", "Longitud"]].rename(
+            columns={"Latitud": "lat", "Longitud": "lon"})
         capas.append(pdk.Layer(
             "ScatterplotLayer",
-            data=restaurantes.rename(columns={"Latitud": "lat", "Longitud": "lon"}),
+            id="restaurantes",
+            data=datos,
             get_position="[lon, lat]",
-            get_color="[200, 30, 0, 180]",
-            get_radius=120,
+            get_color="[200, 30, 0, 220]",
+            # Tamaño fijo en píxeles (min = max): no crece al hacer zoom.
+            # (No usamos radius_units="pixels": pydeck trata los strings
+            # como expresiones JS y lo dejaría sin efecto.)
+            get_radius=1,
+            radius_min_pixels=5,
+            radius_max_pixels=5,
             pickable=True,
+            auto_highlight=True,
         ))
     capas.append(pdk.Layer(
         "ScatterplotLayer",
+        id="usuario",
         data=pd.DataFrame([{"lat": lat_u, "lon": lon_u}]),
         get_position="[lon, lat]",
-        get_color="[0, 110, 220, 220]",
-        get_radius=160,
+        get_color="[0, 110, 220, 230]",
+        get_radius=1,
+        radius_min_pixels=6,
+        radius_max_pixels=6,
     ))
-    vista = pdk.ViewState(latitude=lat_u, longitude=lon_u, zoom=12)
-    st.pydeck_chart(pdk.Deck(
+    mapa = pdk.Deck(
         layers=capas,
-        initial_view_state=vista,
+        initial_view_state=pdk.ViewState(latitude=lat_u, longitude=lon_u, zoom=12),
         tooltip={"text": "{Nombre}"},
-    ))
-    if restaurantes is not None and not restaurantes.empty:
-        st.caption("🔵 Tu ubicación · 🔴 Restaurantes recomendados")
-    else:
+    )
+
+    if not hay_restaurantes:
+        st.pydeck_chart(mapa)
         st.caption("🔵 Tu ubicación — comprueba que el mapa te sitúa donde esperabas.")
+        return None
+
+    evento = st.pydeck_chart(mapa, on_select="rerun", selection_mode="single-object",
+                             key="mapa_resultados")
+    st.caption("🔵 Tu ubicación · 🔴 Restaurantes recomendados — pincha un punto rojo para ver su ficha.")
+    return id_restaurante_seleccionado(evento)
 
 
 # ----------------------- INTERFAZ ----------------------- #
@@ -395,6 +493,39 @@ st.set_page_config(page_title="¿Dónde comemos?", page_icon="🍽️", layout="
 st.title("🍽️ ¿Dónde comemos hoy?")
 
 maestro, df_platos = cargar_datos()
+
+# --- Ubicación actual (fuera del formulario: los componentes personalizados
+# no actualizan su valor dentro de un st.form hasta que se envía) ---
+ubicacion_actual = None
+usar_ubicacion_actual = False
+if streamlit_geolocation is not None:
+    col_loc, col_txt = st.columns([1, 4], vertical_alignment="center")
+    with col_loc:
+        loc = streamlit_geolocation()
+    with col_txt:
+        st.caption("📍 Pulsa el botón para usar tu ubicación actual "
+                   "(el navegador te pedirá permiso).")
+
+    if isinstance(loc, dict) and loc.get("latitude") is not None and loc.get("longitude") is not None:
+        nueva = (loc["latitude"], loc["longitude"])
+        if st.session_state.get("ubicacion_actual") != nueva:
+            # Ubicación recién detectada: la activamos por defecto.
+            st.session_state["ubicacion_actual"] = nueva
+            st.session_state["precision_ubicacion"] = loc.get("accuracy")
+            st.session_state["usar_ubicacion_actual"] = True
+
+    ubicacion_actual = st.session_state.get("ubicacion_actual")
+    if ubicacion_actual:
+        usar_ubicacion_actual = st.checkbox(
+            "Usar mi ubicación actual (en vez de la dirección escrita)",
+            key="usar_ubicacion_actual",
+        )
+        precision = st.session_state.get("precision_ubicacion")
+        if usar_ubicacion_actual and precision:
+            aviso = f"Precisión aproximada: {precision:.0f} m."
+            if precision > 1000:
+                aviso += " Es poco precisa (habitual en ordenador); si no cuadra, escribe la dirección."
+            st.caption(aviso)
 
 with st.form("encuesta"):
     col1, col2 = st.columns(2)
@@ -406,7 +537,11 @@ with st.form("encuesta"):
     cocinas_disponibles = sorted(maestro["Tipo de cocina"].dropna().unique().tolist())
     cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_disponibles)
 
-    direccion = st.text_input("¿Desde dónde salís?", placeholder="ej. Sol, Madrid")
+    direccion = st.text_input(
+        "¿Desde dónde salís?",
+        placeholder=("Usando tu ubicación actual" if usar_ubicacion_actual else "ej. Sol, Madrid"),
+        disabled=usar_ubicacion_actual,
+    )
 
     modo_transporte = st.radio("¿Cómo vais a ir?", ["En coche", "A pie"], horizontal=True)
     etiqueta_tiempo = "Máximo en coche (minutos)" if modo_transporte == "En coche" else "Máximo andando (minutos)"
@@ -415,19 +550,22 @@ with st.form("encuesta"):
     )
     plato_deseado = st.text_input("¿Algún plato concreto?", placeholder="ej. sushi (opcional)")
 
-    enviado = st.form_submit_button("🔍 Buscar restaurantes", use_container_width=True)
+    enviado = st.form_submit_button("🔍 Buscar restaurantes", width="stretch")
 
 if enviado:
-    if not direccion.strip():
-        st.error("Necesito una dirección o zona desde donde salís.")
-        st.stop()
+    if usar_ubicacion_actual and ubicacion_actual:
+        ubicacion_usuario = ubicacion_actual
+    else:
+        if not direccion.strip():
+            st.error("Necesito una dirección o zona desde donde salís (o usa tu ubicación actual).")
+            st.stop()
 
-    with st.spinner("Localizando tu dirección..."):
-        ubicacion_usuario = geocodificar_direccion(direccion)
+        with st.spinner("Localizando tu dirección..."):
+            ubicacion_usuario = geocodificar_direccion(direccion)
 
-    if ubicacion_usuario is None:
-        st.error("No he podido localizar esa dirección. Prueba a ser más específico (calle + ciudad).")
-        st.stop()
+        if ubicacion_usuario is None:
+            st.error("No he podido localizar esa dirección. Prueba a ser más específico (calle + ciudad).")
+            st.stop()
 
     respuestas = {
         "presupuesto_min": presupuesto_min,
@@ -468,67 +606,26 @@ if resultado is not None:
     num_mostrados = min(st.session_state.get("num_mostrados", TOP_N), TOP_N_MAX, len(df_puntuado))
     top = df_puntuado.head(num_mostrados)
 
-    # --- Mapa ---
+    # --- Mapa (al pinchar un punto rojo, aparece su ficha debajo) ---
     lat_u, lon_u = ubicacion_usuario
-    mostrar_mapa(lat_u, lon_u, top)
+    id_seleccionado = mostrar_mapa(lat_u, lon_u, top)
+
+    if id_seleccionado is not None:
+        ids_top = top["ID"].astype(str).tolist()
+        if str(id_seleccionado) in ids_top:
+            posicion = ids_top.index(str(id_seleccionado))
+            st.markdown("#### 📍 Restaurante seleccionado")
+            with st.container(border=True):
+                mostrar_tarjeta(top.iloc[posicion], respuestas, df_platos, numero=posicion + 1)
 
     # --- Tarjetas de resultados ---
     st.subheader(f"Top {len(top)} para vosotros")
     for i, (_, fila) in enumerate(top.iterrows(), start=1):
         with st.container(border=True):
-            col_img, col_info = st.columns([1, 3], vertical_alignment="center")
-
-            with col_img:
-                imagen_url = fila.get("Imagen URL")
-                if isinstance(imagen_url, str) and imagen_url.strip():
-                    # Pedimos bastante más resolución de la que se va a
-                    # mostrar (la columna es estrecha) para que se vea
-                    # nítida incluso en pantallas retina/alta densidad.
-                    st.image(mejorar_resolucion_imagen(imagen_url, ancho=450, alto=450),
-                             use_container_width=True)
-
-            with col_info:
-                consulta_busqueda = urllib.parse.quote(f"{fila['Nombre']} Madrid")
-                url_busqueda = f"https://www.google.com/search?q={consulta_busqueda}"
-                st.markdown(f"### {i}. [{fila['Nombre']}]({url_busqueda})")
-
-                st.write(f"**Cocina:** {fila['Tipo de cocina']}  |  **Precio:** {fila['Rango de precios']}  |  "
-                         f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
-                etiqueta_modo_tarjeta = "En coche" if respuestas["modo_transporte"] == "En coche" else "Andando"
-                st.write(f"**{etiqueta_modo_tarjeta}:** {fila['Tiempo desplazamiento (min)']:.0f} min  |  "
-                         f"**Dirección:** {valor_o(fila, 'Dirección')}")
-
-                if respuestas["plato_deseado"]:
-                    resumen = resumen_mencion_plato(fila["ID"], respuestas["plato_deseado"], df_platos)
-                    st.write(f"**Sobre '{respuestas['plato_deseado']}':** {resumen}")
-
-                valor = fila.get("Platos mejor valorados")
-                if isinstance(valor, str) and valor.strip():
-                    st.write(f"**Otros platos destacados:** {formatear_platos(valor)}")
-
-                # Instagram/TikTok no tienen una búsqueda por palabra clave
-                # fiable sin iniciar sesión (Instagram redirige a login), así
-                # que usamos el operador site: de Google, que sí funciona sin
-                # cuenta y solo devuelve contenido público. Los logos vienen
-                # de Simple Icons (cdn.simpleicons.org), gratuito y sin login.
-                consulta_ig = urllib.parse.quote(f'site:instagram.com "{fila["Nombre"]}" Madrid')
-                consulta_tt = urllib.parse.quote(f'site:tiktok.com "{fila["Nombre"]}" Madrid')
-                url_ig = f"https://www.google.com/search?q={consulta_ig}"
-                url_tt = f"https://www.google.com/search?q={consulta_tt}"
-                logo_ig = "https://cdn.simpleicons.org/instagram/E4405F"
-                logo_tt = "https://cdn.simpleicons.org/tiktok/000000"
-                st.markdown(
-                    f'<a href="{url_ig}" target="_blank" style="margin-right:16px; text-decoration:none;">'
-                    f'<img src="{logo_ig}" width="16" style="vertical-align:middle; margin-right:4px;">'
-                    f'<span style="vertical-align:middle;">Instagram</span></a>'
-                    f'<a href="{url_tt}" target="_blank" style="text-decoration:none;">'
-                    f'<img src="{logo_tt}" width="16" style="vertical-align:middle; margin-right:4px;">'
-                    f'<span style="vertical-align:middle;">TikTok</span></a>',
-                    unsafe_allow_html=True,
-                )
+            mostrar_tarjeta(fila, respuestas, df_platos, numero=i)
 
     # --- Botón "Mostrar más" (hasta un máximo de 10, siempre por score) ---
     if num_mostrados < min(TOP_N_MAX, len(df_puntuado)):
-        if st.button("Mostrar más", use_container_width=True):
+        if st.button("Mostrar más", width="stretch"):
             st.session_state["num_mostrados"] = min(num_mostrados + 5, TOP_N_MAX, len(df_puntuado))
             st.rerun()
