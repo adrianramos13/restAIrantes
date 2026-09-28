@@ -42,15 +42,6 @@ from pathlib import Path
 import pandas as pd
 import requests
 import streamlit as st
-import pydeck as pdk
-
-# Componente de terceros para "usar mi ubicación actual" (pip install
-# streamlit-geolocation). Si no está instalado, la app funciona igual pero
-# sin ese botón.
-try:
-    from streamlit_geolocation import streamlit_geolocation
-except ImportError:
-    streamlit_geolocation = None
 
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
@@ -62,10 +53,10 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 MAESTRO_XLSX = BASE_DIR.parent / "excels" / "restaurantes_maestro.xlsx"
 
-PESO_PRECIO = 0.25
-PESO_COCINA = 0.40
+PESO_PRECIO = 0.15
+PESO_COCINA = 0.30
 PESO_PLATO = 0.20
-PESO_CALIDAD = 0.10
+PESO_CALIDAD = 0.30
 PESO_NUM_RESENAS = 0.05
 
 TOP_N = 5
@@ -418,73 +409,316 @@ def mostrar_tarjeta(fila, respuestas, df_platos, numero=None):
         )
 
 
-def id_restaurante_seleccionado(evento):
-    """Extrae el ID del restaurante pinchado en el mapa a partir de lo que
-    devuelve st.pydeck_chart(on_select=...). Devuelve None si no hay ninguno."""
-    try:
-        objetos = evento.selection.objects.get("restaurantes", [])
-    except Exception:
-        return None
-    if not objetos:
-        return None
-    return objetos[0].get("ID")
+# ----------------------- MAPA CON FOTOS REDONDAS ----------------------- #
+# Componente propio (st.components.v2) con Leaflet: cada restaurante es su foto
+# redonda con el número de posición (el mismo que en la lista). Al pinchar una
+# foto se avisa a Python para mostrar su ficha debajo. Leaflet y los mosaicos del
+# mapa se cargan desde internet (jsDelivr y CARTO/OpenStreetMap).
+
+_HTML_MAPA = """
+<div class="fm-mapa"></div>
+"""
+
+_CSS_MAPA = """
+.fm-mapa {
+  height: 420px; width: 100%; position: relative; z-index: 0; overflow: hidden;
+  border: 1px solid var(--st-border-color, rgba(49, 51, 63, 0.2));
+  border-radius: var(--st-base-radius, 0.5rem);
+  font-family: var(--st-font, sans-serif);
+}
+.fm-icono { background: transparent; border: none; }
+.fm-pin { position: relative; width: 46px; height: 56px; transform-origin: 50% 100%; transition: transform 0.12s ease-out; cursor: pointer; }
+.fm-pin.fm-sel { transform: scale(1.22); }
+.fm-foto {
+  position: absolute; left: 0; top: 0; width: 40px; height: 40px;
+  border: 3px solid #fff; border-radius: 50%; overflow: hidden; background: #e6e6ea;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
+  display: flex; align-items: center; justify-content: center; font-size: 20px;
+}
+.fm-foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fm-sel .fm-foto { border-color: var(--st-primary-color, #ff4b4b); }
+.fm-punta {
+  position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+  width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent;
+  border-top: 12px solid #fff; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+}
+.fm-sel .fm-punta { border-top-color: var(--st-primary-color, #ff4b4b); }
+.fm-num {
+  position: absolute; right: -7px; top: -7px; min-width: 20px; height: 20px; padding: 0 4px; box-sizing: border-box;
+  border-radius: 10px; background: var(--st-primary-color, #ff4b4b); color: #fff;
+  font: 700 12px/20px var(--st-font, sans-serif); text-align: center; box-shadow: 0 0 0 2px #fff;
+}
+.fm-top .fm-num { background: #f5b301; color: #3b2a00; }
+.fm-yo { position: relative; width: 22px; height: 22px; }
+.fm-yo-pulso { position: absolute; inset: 0; border-radius: 50%; background: #1a73e8; animation: fm-pulso 2s ease-out infinite; }
+.fm-yo-punto { position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border: 3px solid #fff; border-radius: 50%; background: #1a73e8; box-shadow: 0 0 3px rgba(0, 0, 0, 0.45); }
+@keyframes fm-pulso { 0% { transform: scale(0.6); opacity: 0.55; } 100% { transform: scale(2.3); opacity: 0; } }
+.fm-mensaje { padding: 1rem; color: var(--st-text-color); }
+"""
+
+_JS_MAPA = r"""
+const LEAFLET_CSS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
+const LEAFLET_JS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
+
+function cargarLeaflet() {
+  if (window.L && window.L.map) return Promise.resolve(window.L);
+  if (!window.__fmLeaflet) {
+    const css = new Promise((ok, fallo) => {
+      const l = document.createElement('link');
+      l.rel = 'stylesheet'; l.href = LEAFLET_CSS; l.onload = ok; l.onerror = fallo;
+      document.head.appendChild(l);
+    });
+    const js = new Promise((ok, fallo) => {
+      const sc = document.createElement('script');
+      sc.src = LEAFLET_JS; sc.onload = ok; sc.onerror = fallo;
+      document.head.appendChild(sc);
+    });
+    window.__fmLeaflet = Promise.all([css, js]).then(() => window.L).catch((e) => { window.__fmLeaflet = null; throw e; });
+  }
+  return window.__fmLeaflet;
+}
+
+function crearPin(r, seleccionado) {
+  const pin = document.createElement('div');
+  pin.className = 'fm-pin' + (seleccionado ? ' fm-sel' : '') + (r.n === 1 ? ' fm-top' : '');
+  const foto = document.createElement('div');
+  foto.className = 'fm-foto';
+  const sinFoto = () => { foto.textContent = '🍽️'; };
+  if (r.foto) {
+    const img = document.createElement('img');
+    img.alt = ''; img.referrerPolicy = 'no-referrer';
+    img.onerror = () => { img.remove(); sinFoto(); };
+    img.src = r.foto;
+    foto.appendChild(img);
+  } else {
+    sinFoto();
+  }
+  const num = document.createElement('span');
+  num.className = 'fm-num'; num.textContent = String(r.n);
+  const punta = document.createElement('span');
+  punta.className = 'fm-punta';
+  pin.append(foto, num, punta);
+  return pin;
+}
+
+function crearPuntoUsuario() {
+  const yo = document.createElement('div');
+  yo.className = 'fm-yo';
+  const pulso = document.createElement('span'); pulso.className = 'fm-yo-pulso';
+  const punto = document.createElement('span'); punto.className = 'fm-yo-punto';
+  yo.append(pulso, punto);
+  return yo;
+}
+
+function pintar(L, estado) {
+  const { usuario, restaurantes, seleccionado } = estado.datos;
+
+  if (!estado.mapa) {
+    estado.mapa = L.map(estado.contenedor, { scrollWheelZoom: false });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      subdomains: 'abcd', maxZoom: 20,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    }).addTo(estado.mapa);
+    estado.capa = L.layerGroup().addTo(estado.mapa);
+    // La rueda del ratón solo hace zoom tras pinchar dentro del mapa (así no secuestra el scroll de la página).
+    estado.mapa.on('mousedown', () => estado.mapa.scrollWheelZoom.enable());
+    estado.contenedor.addEventListener('mouseleave', () => estado.mapa.scrollWheelZoom.disable());
+    // Pinchar en un hueco del mapa quita la selección.
+    estado.mapa.on('click', () => { if (estado.seleccionado != null) estado.setTrigger('seleccion', -1); });
+  }
+
+  estado.seleccionado = seleccionado;
+  estado.capa.clearLayers();
+
+  L.marker([usuario.lat, usuario.lon], {
+    icon: L.divIcon({ className: 'fm-icono', html: crearPuntoUsuario(), iconSize: [22, 22], iconAnchor: [11, 11] }),
+    interactive: false, keyboard: false, zIndexOffset: -1000,
+  }).addTo(estado.capa);
+
+  restaurantes.forEach((r) => {
+    const marcador = L.marker([r.lat, r.lon], {
+      icon: L.divIcon({ className: 'fm-icono', html: crearPin(r, r.id === seleccionado), iconSize: [46, 56], iconAnchor: [23, 56] }),
+      zIndexOffset: r.id === seleccionado ? 1000 : 100 - r.n,
+    });
+    const nombre = document.createElement('span');
+    nombre.textContent = r.nombre;
+    marcador.bindTooltip(nombre, { direction: 'top', offset: [0, -50], opacity: 0.95 });
+    marcador.on('click', () => estado.setTrigger('seleccion', r.id));
+    marcador.addTo(estado.capa);
+  });
+
+  // Encuadre: solo cuando cambia el conjunto de restaurantes (no al seleccionar uno),
+  // para no perder el zoom/posición que haya puesto la persona.
+  const clave = usuario.lat + ',' + usuario.lon + '|' + restaurantes.map((r) => r.id).join(',');
+  if (clave !== estado.clave) {
+    estado.clave = clave;
+    if (restaurantes.length) {
+      const puntos = restaurantes.map((r) => [r.lat, r.lon]).concat([[usuario.lat, usuario.lon]]);
+      estado.mapa.fitBounds(L.latLngBounds(puntos), { paddingTopLeft: [40, 75], paddingBottomRight: [40, 35], maxZoom: 16 });
+    } else {
+      estado.mapa.setView([usuario.lat, usuario.lon], 15);
+    }
+  }
+  estado.mapa.invalidateSize();
+}
+
+export default function (component) {
+  const { parentElement, data, setTriggerValue } = component;
+  const contenedor = parentElement.querySelector('.fm-mapa');
+  if (!contenedor) return;
+
+  // El estado vive en el propio elemento: así sobrevive a las recargas de Streamlit
+  // (el JS se vuelve a ejecutar con datos nuevos) sin recrear el mapa ni perder el zoom.
+  let estado = contenedor.__fmEstado;
+  if (!estado) {
+    estado = { contenedor, mapa: null, capa: null, clave: null, seleccionado: null };
+    contenedor.__fmEstado = estado;
+  }
+  estado.setTrigger = setTriggerValue;
+  estado.datos = data;
+
+  cargarLeaflet()
+    .then((L) => pintar(L, estado))
+    .catch(() => {
+      contenedor.textContent = '';
+      const aviso = document.createElement('div');
+      aviso.className = 'fm-mensaje';
+      aviso.textContent = 'No se ha podido cargar el mapa. Comprueba tu conexión y recarga la página.';
+      contenedor.appendChild(aviso);
+    });
+
+  return () => {
+    // Solo destruimos el mapa si el elemento ya no está en la página (no en cada recarga).
+    setTimeout(() => {
+      if (!parentElement.isConnected && estado.mapa) {
+        estado.mapa.remove(); estado.mapa = null; contenedor.__fmEstado = null;
+      }
+    }, 0);
+  };
+}
+"""
+
+_MAPA_FOTOS = st.components.v2.component(
+    "mapa_fotos_restaurantes",
+    html=_HTML_MAPA, css=_CSS_MAPA, js=_JS_MAPA, isolate_styles=False,
+)
 
 
-def mostrar_mapa(lat_u, lon_u, restaurantes=None):
-    """Pinta el mapa con la ubicación del usuario y, si hay, los restaurantes
-    recomendados. Los puntos tienen tamaño fijo en píxeles (no crecen al
-    hacer zoom). Si hay restaurantes, se puede pinchar en uno y la función
-    devuelve su ID (o None si no hay ninguno seleccionado).
+def _al_seleccionar_en_mapa():
+    """Callback del mapa: se ejecuta ANTES de la recarga del script, así que la
+    selección ya está actualizada cuando se vuelve a dibujar la página."""
+    valor = st.session_state["mapa_fotos"].seleccion
+    if valor is None:
+        return
+    st.session_state["restaurante_seleccionado"] = None if int(valor) == -1 else int(valor)
 
-    Sin restaurantes (búsqueda sin resultados) solo se dibuja la ubicación
-    del usuario, para poder comprobar visualmente dónde se ha geocodificado
-    la dirección (por si se ha ido a un sitio equivocado)."""
-    hay_restaurantes = restaurantes is not None and not restaurantes.empty
 
-    capas = []
-    if hay_restaurantes:
-        datos = restaurantes[["ID", "Nombre", "Latitud", "Longitud"]].rename(
-            columns={"Latitud": "lat", "Longitud": "lon"})
-        capas.append(pdk.Layer(
-            "ScatterplotLayer",
-            id="restaurantes",
-            data=datos,
-            get_position="[lon, lat]",
-            get_color="[200, 30, 0, 220]",
-            # Tamaño fijo en píxeles (min = max): no crece al hacer zoom.
-            # (No usamos radius_units="pixels": pydeck trata los strings
-            # como expresiones JS y lo dejaría sin efecto.)
-            get_radius=1,
-            radius_min_pixels=5,
-            radius_max_pixels=5,
-            pickable=True,
-            auto_highlight=True,
-        ))
-    capas.append(pdk.Layer(
-        "ScatterplotLayer",
-        id="usuario",
-        data=pd.DataFrame([{"lat": lat_u, "lon": lon_u}]),
-        get_position="[lon, lat]",
-        get_color="[0, 110, 220, 230]",
-        get_radius=1,
-        radius_min_pixels=6,
-        radius_max_pixels=6,
-    ))
-    mapa = pdk.Deck(
-        layers=capas,
-        initial_view_state=pdk.ViewState(latitude=lat_u, longitude=lon_u, zoom=12),
-        tooltip={"text": "{Nombre}"},
+def mostrar_mapa(lat_u, lon_u, restaurantes=None, seleccionado_id=None):
+    """Dibuja el mapa con tu ubicación (punto azul) y cada restaurante recomendado como
+    su foto redonda con el número de posición. Sin restaurantes (búsqueda sin
+    resultados) solo se ve tu ubicación, para comprobar que la app te sitúa donde
+    esperabas (por si la dirección se ha ido a un sitio equivocado)."""
+    lista = []
+    if restaurantes is not None and not restaurantes.empty:
+        for n, (_, fila) in enumerate(restaurantes.iterrows(), start=1):
+            if pd.isna(fila["Latitud"]) or pd.isna(fila["Longitud"]):
+                continue
+            url = fila.get("Imagen URL")
+            foto = mejorar_resolucion_imagen(url, ancho=160, alto=160) if isinstance(url, str) and url.strip() else None
+            lista.append({
+                "id": int(fila["ID"]), "n": n, "nombre": str(fila["Nombre"]),
+                "lat": float(fila["Latitud"]), "lon": float(fila["Longitud"]), "foto": foto,
+            })
+
+    _MAPA_FOTOS(
+        data={"usuario": {"lat": float(lat_u), "lon": float(lon_u)}, "restaurantes": lista,
+              "seleccionado": seleccionado_id},
+        key="mapa_fotos",
+        on_seleccion_change=_al_seleccionar_en_mapa,
     )
-
-    if not hay_restaurantes:
-        st.pydeck_chart(mapa)
+    if lista:
+        st.caption("🔵 Tu ubicación · Pincha la foto de un restaurante para ver su ficha.")
+    else:
         st.caption("🔵 Tu ubicación — comprueba que el mapa te sitúa donde esperabas.")
-        return None
 
-    evento = st.pydeck_chart(mapa, on_select="rerun", selection_mode="single-object",
-                             key="mapa_resultados")
-    st.caption("🔵 Tu ubicación · 🔴 Restaurantes recomendados — pincha un punto rojo para ver su ficha.")
-    return id_restaurante_seleccionado(evento)
+
+# ----------------------- BOTÓN "UBICACIÓN ACTUAL" ----------------------- #
+# Componente propio (st.components.v2, sin paquetes externos). Al pulsarlo, el
+# navegador pide permiso y devuelve las coordenadas a Python. Se ejecuta en la
+# propia página (no en un iframe), así que usa el permiso normal del navegador.
+# Requiere HTTPS (Streamlit Cloud lo es) o localhost.
+
+_HTML_UBICACION = """
+<button type="button" id="boton">
+  <span class="icono">📍</span><span class="etiqueta">Ubicación actual</span>
+</button>
+"""
+
+_CSS_UBICACION = """
+button {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-family: var(--st-font, inherit); font-size: calc(var(--st-base-font-size, 16px) * 0.875);
+  font-weight: 400; line-height: 1.6;
+  color: var(--st-text-color); background: var(--st-background-color);
+  border: 1px solid var(--st-border-color);
+  border-radius: var(--st-button-radius, 0.5rem);
+  padding: 0.25rem 0.75rem; min-height: 2.5rem; cursor: pointer;
+}
+button:hover { border-color: var(--st-primary-color); color: var(--st-primary-color); }
+button:disabled { opacity: 0.6; cursor: progress; }
+"""
+
+_JS_UBICACION = """
+export default function (component) {
+  const { parentElement, setTriggerValue } = component;
+  const boton = parentElement.querySelector('#boton');
+  const etiqueta = boton.querySelector('.etiqueta');
+  const textoNormal = 'Ubicación actual';
+
+  boton.onclick = () => {
+    if (!navigator.geolocation) { setTriggerValue('error', 'no_soportado'); return; }
+    boton.disabled = true;
+    etiqueta.textContent = 'Buscando tu ubicación…';
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        boton.disabled = false; etiqueta.textContent = textoNormal;
+        setTriggerValue('ubicacion', {
+          lat: pos.coords.latitude, lon: pos.coords.longitude, precision: pos.coords.accuracy,
+        });
+      },
+      (err) => {
+        boton.disabled = false; etiqueta.textContent = textoNormal;
+        setTriggerValue('error', String(err.code));  // 1 denegado, 2 no disponible, 3 tiempo agotado
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+    );
+  };
+}
+"""
+
+_BOTON_UBICACION = st.components.v2.component(
+    "boton_ubicacion_actual",
+    html=_HTML_UBICACION, css=_CSS_UBICACION, js=_JS_UBICACION,
+)
+
+MENSAJES_ERROR_UBICACION = {
+    "1": "No has dado permiso al navegador para ver tu ubicación. Actívalo (icono del candado "
+         "junto a la dirección web) o escribe la dirección.",
+    "2": "No he podido determinar tu ubicación. Prueba otra vez o escribe la dirección.",
+    "3": "Se ha agotado el tiempo esperando tu ubicación. Prueba otra vez o escribe la dirección.",
+    "no_soportado": "Tu navegador no permite obtener la ubicación. Escribe la dirección.",
+}
+
+
+def boton_ubicacion_actual(key):
+    """Muestra el botón y devuelve el resultado del clic (atributos .ubicacion o .error,
+    que solo tienen valor en la ejecución inmediatamente posterior al clic)."""
+    return _BOTON_UBICACION(key=key, on_ubicacion_change=lambda: None, on_error_change=lambda: None)
+
+
+def quitar_ubicacion_actual():
+    for clave in ("ubicacion_actual", "precision_ubicacion", "error_ubicacion"):
+        st.session_state.pop(clave, None)
 
 
 # ----------------------- INTERFAZ ----------------------- #
@@ -494,63 +728,62 @@ st.title("🍽️ ¿Dónde comemos hoy?")
 
 maestro, df_platos = cargar_datos()
 
-# --- Ubicación actual (fuera del formulario: los componentes personalizados
-# no actualizan su valor dentro de un st.form hasta que se envía) ---
-ubicacion_actual = None
-usar_ubicacion_actual = False
-if streamlit_geolocation is not None:
-    col_loc, col_txt = st.columns([1, 4], vertical_alignment="center")
-    with col_loc:
-        loc = streamlit_geolocation()
-    with col_txt:
-        st.caption("📍 Pulsa el botón para usar tu ubicación actual "
-                   "(el navegador te pedirá permiso).")
+col1, col2 = st.columns(2)
+with col1:
+    presupuesto_min = st.number_input("Presupuesto mín. (€/persona)", min_value=0, value=10, step=5)
+with col2:
+    presupuesto_max = st.number_input("Presupuesto máx. (€/persona)", min_value=0, value=30, step=5)
 
-    if isinstance(loc, dict) and loc.get("latitude") is not None and loc.get("longitude") is not None:
-        nueva = (loc["latitude"], loc["longitude"])
-        if st.session_state.get("ubicacion_actual") != nueva:
-            # Ubicación recién detectada: la activamos por defecto.
-            st.session_state["ubicacion_actual"] = nueva
-            st.session_state["precision_ubicacion"] = loc.get("accuracy")
-            st.session_state["usar_ubicacion_actual"] = True
+cocinas_disponibles = sorted(maestro["Tipo de cocina"].dropna().unique().tolist())
+cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_disponibles)
 
-    ubicacion_actual = st.session_state.get("ubicacion_actual")
-    if ubicacion_actual:
-        usar_ubicacion_actual = st.checkbox(
-            "Usar mi ubicación actual (en vez de la dirección escrita)",
-            key="usar_ubicacion_actual",
-        )
-        precision = st.session_state.get("precision_ubicacion")
-        if usar_ubicacion_actual and precision:
-            aviso = f"Precisión aproximada: {precision:.0f} m."
-            if precision > 1000:
-                aviso += " Es poco precisa (habitual en ordenador); si no cuadra, escribe la dirección."
-            st.caption(aviso)
+# Caja de dirección y, justo debajo, el botón "Ubicación actual". Reservamos primero
+# el hueco de la caja y lo rellenamos después de procesar el clic del botón: así la
+# caja ya refleja (desactivada) que se está usando la ubicación en ese mismo ciclo.
+caja_direccion = st.container()
+zona_ubicacion = st.container()
 
-with st.form("encuesta"):
-    col1, col2 = st.columns(2)
-    with col1:
-        presupuesto_min = st.number_input("Presupuesto mín. (€/persona)", min_value=0, value=10, step=5)
-    with col2:
-        presupuesto_max = st.number_input("Presupuesto máx. (€/persona)", min_value=0, value=30, step=5)
+with zona_ubicacion:
+    lectura = boton_ubicacion_actual(key="boton_ubicacion")
+    if lectura.ubicacion:
+        st.session_state["ubicacion_actual"] = (lectura.ubicacion["lat"], lectura.ubicacion["lon"])
+        st.session_state["precision_ubicacion"] = lectura.ubicacion.get("precision")
+        st.session_state.pop("error_ubicacion", None)
+    elif lectura.error is not None:
+        st.session_state["error_ubicacion"] = str(lectura.error)
 
-    cocinas_disponibles = sorted(maestro["Tipo de cocina"].dropna().unique().tolist())
-    cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_disponibles)
+    if st.session_state.get("ubicacion_actual"):
+        col_estado, col_quitar = st.columns([3, 1], vertical_alignment="center")
+        with col_estado:
+            precision = st.session_state.get("precision_ubicacion")
+            detalle = f" (precisión ≈ {precision:.0f} m)" if precision else ""
+            st.caption(f"✅ Usando tu ubicación actual{detalle}")
+            if precision and precision > 1000:
+                st.caption("⚠️ Es poco precisa (habitual en ordenador). Si no cuadra, quítala y escribe la dirección.")
+        with col_quitar:
+            st.button("✖ Quitar", on_click=quitar_ubicacion_actual, width="stretch")
+    elif st.session_state.get("error_ubicacion"):
+        clave = st.session_state["error_ubicacion"]
+        st.warning(MENSAJES_ERROR_UBICACION.get(clave, MENSAJES_ERROR_UBICACION["2"]))
 
+ubicacion_actual = st.session_state.get("ubicacion_actual")
+usar_ubicacion_actual = ubicacion_actual is not None
+
+with caja_direccion:
     direccion = st.text_input(
         "¿Desde dónde salís?",
         placeholder=("Usando tu ubicación actual" if usar_ubicacion_actual else "ej. Sol, Madrid"),
         disabled=usar_ubicacion_actual,
     )
 
-    modo_transporte = st.radio("¿Cómo vais a ir?", ["En coche", "A pie"], horizontal=True)
-    etiqueta_tiempo = "Máximo en coche (minutos)" if modo_transporte == "En coche" else "Máximo andando (minutos)"
-    tiempo_maximo_min = st.number_input(
-        etiqueta_tiempo, min_value=5, max_value=60, value=20, step=1
-    )
-    plato_deseado = st.text_input("¿Algún plato concreto?", placeholder="ej. sushi (opcional)")
+modo_transporte = st.radio("¿Cómo vais a ir?", ["En coche", "A pie"], horizontal=True)
+etiqueta_tiempo = "Máximo en coche (minutos)" if modo_transporte == "En coche" else "Máximo andando (minutos)"
+tiempo_maximo_min = st.number_input(
+    etiqueta_tiempo, min_value=5, max_value=60, value=20, step=1
+)
+plato_deseado = st.text_input("¿Algún plato concreto?", placeholder="ej. sushi (opcional)")
 
-    enviado = st.form_submit_button("🔍 Buscar restaurantes", width="stretch")
+enviado = st.button("🔍 Buscar restaurantes", width="stretch")
 
 if enviado:
     if usar_ubicacion_actual and ubicacion_actual:
@@ -587,6 +820,7 @@ if enviado:
     # página se vuelva a dibujar sin tener que repetir toda la búsqueda.
     st.session_state["resultado"] = {"df_puntuado": df_puntuado, "respuestas": respuestas}
     st.session_state["num_mostrados"] = TOP_N
+    st.session_state["restaurante_seleccionado"] = None
 
 resultado = st.session_state.get("resultado")
 if resultado is not None:
@@ -606,17 +840,19 @@ if resultado is not None:
     num_mostrados = min(st.session_state.get("num_mostrados", TOP_N), TOP_N_MAX, len(df_puntuado))
     top = df_puntuado.head(num_mostrados)
 
-    # --- Mapa (al pinchar un punto rojo, aparece su ficha debajo) ---
+    # --- Mapa (al pinchar una foto, aparece su ficha debajo) ---
     lat_u, lon_u = ubicacion_usuario
-    id_seleccionado = mostrar_mapa(lat_u, lon_u, top)
+    ids_top = [int(x) for x in top["ID"].tolist()]
+    seleccionado = st.session_state.get("restaurante_seleccionado")
+    if seleccionado not in ids_top:
+        seleccionado = None
+    mostrar_mapa(lat_u, lon_u, top, seleccionado)
 
-    if id_seleccionado is not None:
-        ids_top = top["ID"].astype(str).tolist()
-        if str(id_seleccionado) in ids_top:
-            posicion = ids_top.index(str(id_seleccionado))
-            st.markdown("#### 📍 Restaurante seleccionado")
-            with st.container(border=True):
-                mostrar_tarjeta(top.iloc[posicion], respuestas, df_platos, numero=posicion + 1)
+    if seleccionado is not None:
+        posicion = ids_top.index(seleccionado)
+        st.markdown("#### 📍 Restaurante seleccionado")
+        with st.container(border=True):
+            mostrar_tarjeta(top.iloc[posicion], respuestas, df_platos, numero=posicion + 1)
 
     # --- Tarjetas de resultados ---
     st.subheader(f"Top {len(top)} para vosotros")
