@@ -147,26 +147,6 @@ def geocodificar_direccion(direccion):
     return ubicacion.latitude, ubicacion.longitude
 
 
-def geocodificar_inversa(lat, lon):
-    """Coordenadas -> dirección legible (geocodificación inversa). Se usa para mostrar una
-    dirección de verdad en la caja cuando se activa "Ubicación actual", en vez de dejarla con
-    un texto genérico. Si falla (sin red, Nominatim no responde, la bloquea...), devuelve None
-    -pero deja constancia en los logs del servidor de POR QUÉ ha fallado, para poder saber la
-    causa real en vez de que la caja simplemente se quede con el texto de repuesto sin más."""
-    from geopy.geocoders import Nominatim
-
-    geolocalizador = Nominatim(user_agent="app_restaurantes_pareja")
-    try:
-        ubicacion = geolocalizador.reverse((lat, lon), timeout=10, language="es")
-    except Exception as e:  # noqa: BLE001 - es una mejora de la caja, nunca debe tumbar la app
-        print(f"[AVISO] Geocodificación inversa ({lat}, {lon}) ha fallado: {type(e).__name__}: {e}")
-        return None
-    if not ubicacion:
-        print(f"[AVISO] Nominatim no ha devuelto ninguna dirección para ({lat}, {lon}).")
-        return None
-    return ubicacion.address
-
-
 def obtener_minutos_coche(ubicacion_usuario, maestro):
     lat_u, lon_u = ubicacion_usuario
     minutos = [None] * len(maestro)
@@ -921,7 +901,7 @@ def boton_ubicacion_actual(key):
 
 
 def quitar_ubicacion_actual():
-    for clave in ("ubicacion_actual", "precision_ubicacion", "error_ubicacion", "direccion_ubicacion_actual"):
+    for clave in ("ubicacion_actual", "precision_ubicacion", "error_ubicacion"):
         st.session_state.pop(clave, None)
 
 
@@ -954,12 +934,9 @@ zona_ubicacion = st.container()
 with zona_ubicacion:
     lectura = boton_ubicacion_actual(key="boton_ubicacion")
     if lectura.ubicacion:
-        nueva = (lectura.ubicacion["lat"], lectura.ubicacion["lon"])
-        st.session_state["ubicacion_actual"] = nueva
+        st.session_state["ubicacion_actual"] = (lectura.ubicacion["lat"], lectura.ubicacion["lon"])
         st.session_state["precision_ubicacion"] = lectura.ubicacion.get("precision")
         st.session_state.pop("error_ubicacion", None)
-        with st.spinner("Buscando tu dirección..."):
-            st.session_state["direccion_ubicacion_actual"] = geocodificar_inversa(*nueva)
     elif lectura.error is not None:
         st.session_state["error_ubicacion"] = str(lectura.error)
 
@@ -971,9 +948,6 @@ with zona_ubicacion:
             st.caption(f"✅ Usando tu ubicación actual{detalle}")
             if precision and precision > 1000:
                 st.caption("⚠️ Es poco precisa (habitual en ordenador). Si no cuadra, quítala y escribe la dirección.")
-            if not st.session_state.get("direccion_ubicacion_actual"):
-                st.caption("ℹ️ No se ha podido averiguar el nombre de la calle, pero la búsqueda usará igualmente "
-                          "tus coordenadas exactas.")
         with col_quitar:
             st.button("✖ Quitar", on_click=quitar_ubicacion_actual, width="stretch")
     elif st.session_state.get("error_ubicacion"):
@@ -984,14 +958,11 @@ ubicacion_actual = st.session_state.get("ubicacion_actual")
 usar_ubicacion_actual = ubicacion_actual is not None
 
 with caja_direccion:
-    if usar_ubicacion_actual:
-        direccion = st.text_input(
-            "¿Desde dónde salís?",
-            value=st.session_state.get("direccion_ubicacion_actual") or "Ubicación actual",
-            disabled=True,
-        )
-    else:
-        direccion = st.text_input("¿Desde dónde salís?", placeholder="ej. Sol, Madrid")
+    direccion = st.text_input(
+        "¿Desde dónde salís?",
+        placeholder=("Usando tu ubicación actual" if usar_ubicacion_actual else "ej. Sol, Madrid"),
+        disabled=usar_ubicacion_actual,
+    )
 
 modo_transporte = st.radio("¿Cómo vais a ir?", ["En coche", "A pie"], horizontal=True)
 etiqueta_tiempo = "Máximo en coche (minutos)" if modo_transporte == "En coche" else "Máximo andando (minutos)"
