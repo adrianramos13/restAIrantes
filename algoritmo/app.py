@@ -150,16 +150,21 @@ def geocodificar_direccion(direccion):
 def geocodificar_inversa(lat, lon):
     """Coordenadas -> dirección legible (geocodificación inversa). Se usa para mostrar una
     dirección de verdad en la caja cuando se activa "Ubicación actual", en vez de dejarla con
-    un texto genérico. Si falla (sin red, Nominatim no responde...), devuelve None."""
+    un texto genérico. Si falla (sin red, Nominatim no responde, la bloquea...), devuelve None
+    -pero deja constancia en los logs del servidor de POR QUÉ ha fallado, para poder saber la
+    causa real en vez de que la caja simplemente se quede con el texto de repuesto sin más."""
     from geopy.geocoders import Nominatim
-    from geopy.exc import GeocoderServiceError, GeocoderTimedOut
 
     geolocalizador = Nominatim(user_agent="app_restaurantes_pareja")
     try:
         ubicacion = geolocalizador.reverse((lat, lon), timeout=10, language="es")
-    except (GeocoderServiceError, GeocoderTimedOut):
+    except Exception as e:  # noqa: BLE001 - es una mejora de la caja, nunca debe tumbar la app
+        print(f"[AVISO] Geocodificación inversa ({lat}, {lon}) ha fallado: {type(e).__name__}: {e}")
         return None
-    return ubicacion.address if ubicacion else None
+    if not ubicacion:
+        print(f"[AVISO] Nominatim no ha devuelto ninguna dirección para ({lat}, {lon}).")
+        return None
+    return ubicacion.address
 
 
 def obtener_minutos_coche(ubicacion_usuario, maestro):
@@ -966,6 +971,9 @@ with zona_ubicacion:
             st.caption(f"✅ Usando tu ubicación actual{detalle}")
             if precision and precision > 1000:
                 st.caption("⚠️ Es poco precisa (habitual en ordenador). Si no cuadra, quítala y escribe la dirección.")
+            if not st.session_state.get("direccion_ubicacion_actual"):
+                st.caption("ℹ️ No se ha podido averiguar el nombre de la calle, pero la búsqueda usará igualmente "
+                          "tus coordenadas exactas.")
         with col_quitar:
             st.button("✖ Quitar", on_click=quitar_ubicacion_actual, width="stretch")
     elif st.session_state.get("error_ubicacion"):
