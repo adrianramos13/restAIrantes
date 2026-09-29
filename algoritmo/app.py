@@ -147,6 +147,21 @@ def geocodificar_direccion(direccion):
     return ubicacion.latitude, ubicacion.longitude
 
 
+def geocodificar_inversa(lat, lon):
+    """Coordenadas -> dirección legible (geocodificación inversa). Se usa para mostrar una
+    dirección de verdad en la caja cuando se activa "Ubicación actual", en vez de dejarla con
+    un texto genérico. Si falla (sin red, Nominatim no responde...), devuelve None."""
+    from geopy.geocoders import Nominatim
+    from geopy.exc import GeocoderServiceError, GeocoderTimedOut
+
+    geolocalizador = Nominatim(user_agent="app_restaurantes_pareja")
+    try:
+        ubicacion = geolocalizador.reverse((lat, lon), timeout=10, language="es")
+    except (GeocoderServiceError, GeocoderTimedOut):
+        return None
+    return ubicacion.address if ubicacion else None
+
+
 def obtener_minutos_coche(ubicacion_usuario, maestro):
     lat_u, lon_u = ubicacion_usuario
     minutos = [None] * len(maestro)
@@ -359,6 +374,14 @@ def filtrar_y_puntuar(maestro, df_platos, r):
     max_resenas = maestro["Nº Reseñas"].max() or 1
     con_jev = tiene_categorias_jev(maestro)
 
+    # Sin plato concreto, puntuacion_plato() da 0.0 a todos por igual (no discrimina nada), así
+    # que ese 20% de PESO_PLATO se perdería sin más. En ese caso lo pasamos a la cocina, que pasa
+    # de 0.30 a 0.50; los pesos siguen sumando 1.0 en los dos casos.
+    if r["plato_deseado"]:
+        peso_cocina_efectivo, peso_plato_efectivo = PESO_COCINA, PESO_PLATO
+    else:
+        peso_cocina_efectivo, peso_plato_efectivo = PESO_COCINA + PESO_PLATO, 0.0
+
     def puntuar_fila(fila):
         min_r, max_r = parsear_rango_precio(fila["Rango de precios"])
         score_precio = solapamiento(min_r, max_r, r["presupuesto_min"], r["presupuesto_max"])
@@ -371,7 +394,7 @@ def filtrar_y_puntuar(maestro, df_platos, r):
         score_resenas = min(1.0, num_resenas / max_resenas)
 
         return (
-            PESO_PRECIO * score_precio + PESO_COCINA * score_cocina + PESO_PLATO * score_plato +
+            PESO_PRECIO * score_precio + peso_cocina_efectivo * score_cocina + peso_plato_efectivo * score_plato +
             PESO_CALIDAD * score_calidad + PESO_NUM_RESENAS * score_resenas
         )
 
@@ -893,7 +916,7 @@ def boton_ubicacion_actual(key):
 
 
 def quitar_ubicacion_actual():
-    for clave in ("ubicacion_actual", "precision_ubicacion", "error_ubicacion"):
+    for clave in ("ubicacion_actual", "precision_ubicacion", "error_ubicacion", "direccion_ubicacion_actual"):
         st.session_state.pop(clave, None)
 
 
@@ -906,16 +929,13 @@ maestro, df_platos = cargar_datos()
 
 col1, col2 = st.columns(2)
 with col1:
-    presupuesto_min = st.number_input("Presupuesto mín. (€/persona)", min_value=0, value=0, step=5)
+    presupuesto_min = st.number_input("Presupuesto mín. (€/persona)", min_value=0, value=10, step=5)
 with col2:
     presupuesto_max = st.number_input("Presupuesto máx. (€/persona)", min_value=0, value=30, step=5)
 
 if tiene_categorias_jev(maestro):
-    conteo_cocinas = maestro[COL_CATEGORIA].dropna().value_counts()
-    cocina = st.selectbox(
-        "Tipo de cocina", ["Cualquiera"] + sorted(conteo_cocinas.index),
-        format_func=lambda c: c if c == "Cualquiera" else f"{c} ({conteo_cocinas[c]})",
-    )
+    cocinas_jev = sorted(maestro[COL_CATEGORIA].dropna().unique())
+    cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_jev)
 else:   # maestro sin categorías de Jev: se usa el tipo de Google
     cocinas_disponibles = sorted(maestro["Tipo de cocina"].dropna().unique().tolist())
     cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_disponibles)
@@ -929,9 +949,12 @@ zona_ubicacion = st.container()
 with zona_ubicacion:
     lectura = boton_ubicacion_actual(key="boton_ubicacion")
     if lectura.ubicacion:
-        st.session_state["ubicacion_actual"] = (lectura.ubicacion["lat"], lectura.ubicacion["lon"])
+        nueva = (lectura.ubicacion["lat"], lectura.ubicacion["lon"])
+        st.session_state["ubicacion_actual"] = nueva
         st.session_state["precision_ubicacion"] = lectura.ubicacion.get("precision")
         st.session_state.pop("error_ubicacion", None)
+        with st.spinner("Buscando tu dirección..."):
+            st.session_state["direccion_ubicacion_actual"] = geocodificar_inversa(*nueva)
     elif lectura.error is not None:
         st.session_state["error_ubicacion"] = str(lectura.error)
 
@@ -953,11 +976,14 @@ ubicacion_actual = st.session_state.get("ubicacion_actual")
 usar_ubicacion_actual = ubicacion_actual is not None
 
 with caja_direccion:
-    direccion = st.text_input(
-        "¿Desde dónde salís?",
-        placeholder=("Usando tu ubicación actual" if usar_ubicacion_actual else "ej. Sol, Madrid"),
-        disabled=usar_ubicacion_actual,
-    )
+    if usar_ubicacion_actual:
+        direccion = st.text_input(
+            "¿Desde dónde salís?",
+            value=st.session_state.get("direccion_ubicacion_actual") or "Ubicación actual",
+            disabled=True,
+        )
+    else:
+        direccion = st.text_input("¿Desde dónde salís?", placeholder="ej. Sol, Madrid")
 
 modo_transporte = st.radio("¿Cómo vais a ir?", ["En coche", "A pie"], horizontal=True)
 etiqueta_tiempo = "Máximo en coche (minutos)" if modo_transporte == "En coche" else "Máximo andando (minutos)"
