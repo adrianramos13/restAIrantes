@@ -914,7 +914,7 @@ maestro, df_platos = cargar_datos()
 
 col1, col2 = st.columns(2)
 with col1:
-    presupuesto_min = st.number_input("Presupuesto mín. (€/persona)", min_value=0, value=10, step=5)
+    presupuesto_min = st.number_input("Presupuesto mín. (€/persona)", min_value=0, value=0, step=5)
 with col2:
     presupuesto_max = st.number_input("Presupuesto máx. (€/persona)", min_value=0, value=30, step=5)
 

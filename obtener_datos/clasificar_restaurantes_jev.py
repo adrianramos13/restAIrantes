@@ -4,16 +4,18 @@ clasificar cada reseña por TIPO DE COCINA y por SENTIMIENTO en la misma llamada
 
 Sustituye a extraer_resenas.py -> analizar_resenas.py -> unificar_excels.py en la parte
 de análisis: este script lee directamente restaurantes_v1.xlsx (lista + imagen + precio +
-rating) y restaurantes_con_resenas.xlsx (localización + reseñas), y escribe
-excels/clasificacion_jev.xlsx listo para que la app lo use tal cual. Ya no hace falta
-restaurantes_maestro.xlsx ni unificar_excels.py.
+rating) y restaurantes_v2.xlsx (localización + reseñas, generado con el scraper gratuito
+de Playwright), y escribe excels/clasificacion_jev.xlsx listo para que la app lo use tal
+cual. Ya no hace falta restaurantes_maestro.xlsx ni unificar_excels.py.
 
 CÓMO FUNCIONA
   1. Lee restaurantes_v1.xlsx (Nombre, Puntuación, Nº Reseñas, Rango de precios, Tipo de
      cocina, Estado, Imagen URL) y le asigna un ID por posición (igual que hacía antes
-     unificar_excels.py). Le añade Dirección/Latitud/Longitud/Teléfono/Web cruzando por
-     nombre con la hoja "Restaurantes" de restaurantes_con_resenas.xlsx.
-  2. Para CADA reseña (hoja "Reseñas" de restaurantes_con_resenas.xlsx), UNA sola llamada a
+     unificar_excels.py). Le añade Latitud/Longitud cruzando por nombre con
+     restaurantes_v2.xlsx (esas coordenadas salen de la URL de la ficha de Google Maps, no
+     hace falta ningún scraping aparte). No trae Dirección/Teléfono/Web -restaurantes_v2.xlsx
+     no las captura-, pero no pasa nada: la app muestra "N/D" cuando faltan.
+  2. Para CADA reseña (restaurantes_v2.xlsx, una fila por reseña), UNA sola llamada a
      Jev responde DOS preguntas a la vez:
        - "cocina": una de las categorías de CATEGORIAS.
        - "sentimiento": Buena / Mala / Neutra.
@@ -43,8 +45,8 @@ USO (desde la carpeta obtener_datos/):
 
 SALIDA: excels/clasificacion_jev.xlsx, con las hojas:
     - Restaurantes: TODO lo que usa la app (ID, Nombre, Puntuación, Nº Reseñas, Rango de
-      precios, Tipo de cocina (Google), Imagen URL, Estado, Dirección, Latitud, Longitud,
-      Teléfono, Web, Categoría (Jev), Categoría 2ª (Jev), % votos, confianza, Reseñas
+      precios, Tipo de cocina (Google), Imagen URL, Estado, Latitud, Longitud,
+      Categoría (Jev), Categoría 2ª (Jev), % votos, confianza, Reseñas
       buenas/malas/neutras, Platos mejor/peor valorados).
     - Reseñas: categoría, sentimiento, probabilidades y confianza de cada reseña.
     - Platos mencionados: una fila por cada plato de ejemplo detectado en una reseña
@@ -100,7 +102,7 @@ EXCELS_DIR = BASE_DIR.parent / "excels"
 CACHE_DIR = BASE_DIR / ".cache"            # resultados ya calculados (permite reanudar). No subir a GitHub.
 
 RESTAURANTES_XLSX = EXCELS_DIR / "restaurantes_v1.xlsx"           # lista de restaurantes (de aquí salen ID, imagen, precio, rating)
-RESENAS_XLSX = EXCELS_DIR / "restaurantes_con_resenas.xlsx"       # localización (hoja Restaurantes) + reseñas (hoja Reseñas)
+RESENAS_XLSX = EXCELS_DIR / "restaurantes_v2.xlsx"                # localización (Latitud/Longitud) + reseñas, todo en una sola hoja
 SALIDA_XLSX = EXCELS_DIR / "clasificacion_jev.xlsx"
 
 MODELO_DEFECTO = "jev-1.13.0"     # versión fija (el alias "jev-latest" puede cambiar de modelo sin aviso)
@@ -279,8 +281,15 @@ def _clave_aproximada(texto):
 def cargar_restaurantes_base():
     """
     Lee restaurantes_v1.xlsx y le asigna un ID por posición (1..N, igual que hacía antes
-    unificar_excels.py). Le añade Dirección/Latitud/Longitud/Teléfono/Web cruzando por
-    nombre con la hoja "Restaurantes" de restaurantes_con_resenas.xlsx (si existe).
+    unificar_excels.py). Le añade Latitud/Longitud cruzando por nombre con
+    restaurantes_v2.xlsx (si existe).
+
+    restaurantes_v2.xlsx es UNA sola hoja con una fila por reseña (el nombre, la URL de
+    Google Maps y las coordenadas se repiten en cada fila de un mismo restaurante), tal
+    como la genera extraer_resenas.py con Playwright. No incluye Dirección/Teléfono/Web
+    -no pasa nada: la app ya muestra "N/D" cuando faltan-, pero SÍ necesita Latitud/Longitud
+    para poder calcular tiempos de desplazamiento; sin ellas, ese restaurante no puede
+    aparecer en ningún resultado.
     """
     try:
         rest = pd.read_excel(RESTAURANTES_XLSX)
@@ -304,46 +313,40 @@ def cargar_restaurantes_base():
               f"extraer_html.py) y regenera este excel.")
 
     try:
-        loc = pd.read_excel(RESENAS_XLSX, sheet_name="Restaurantes")
+        v2 = pd.read_excel(RESENAS_XLSX)
     except Exception as e:
-        print(f"[AVISO] No se pudo leer la hoja 'Restaurantes' de {RESENAS_XLSX.name} ({e}); "
-              f"el resultado se genera sin Dirección/Latitud/Longitud/Teléfono/Web.")
+        print(f"[AVISO] No se pudo leer {RESENAS_XLSX.name} ({e}); el resultado se genera sin Latitud/Longitud.")
         return rest
 
-    columna_nombre = next((c for c in ("Nombre (Google Maps)", "Nombre (excel original)", "Nombre") if c in loc.columns), None)
-    if columna_nombre is None:
-        print(f"[AVISO] La hoja 'Restaurantes' de {RESENAS_XLSX.name} no tiene una columna de nombre "
-              f"reconocible; el resultado se genera sin datos de localización.")
+    faltan = {"Restaurante", "Latitud", "Longitud"} - set(v2.columns)
+    if faltan:
+        print(f"[AVISO] A {RESENAS_XLSX.name} le faltan las columnas {sorted(faltan)}; el resultado "
+              f"se genera sin Latitud/Longitud.")
         return rest
-    print(f"  - Localización cruzada por la columna '{columna_nombre}' de {RESENAS_XLSX.name}.")
 
     exacto = dict(zip(rest["Nombre"].apply(_clave_nombre), rest["ID"]))
-    loc = loc.rename(columns={columna_nombre: "_nombre_loc"})
-    loc["ID"] = loc["_nombre_loc"].apply(_clave_nombre).map(exacto)
-    no_cruzados = int(loc["ID"].isna().sum())
-    if no_cruzados:
-        print(f"[AVISO] {no_cruzados} filas de localización no se pudieron cruzar por nombre con "
-              f"{RESTAURANTES_XLSX.name}.")
-    loc = loc.dropna(subset=["ID"])
-    duplicados = int(loc.duplicated(subset="ID").sum())
-    if duplicados:
-        print(f"[AVISO] {duplicados} restaurantes aparecen repetidos en la localización; se conserva "
-              f"la primera fila de cada uno.")
-        loc = loc.drop_duplicates(subset="ID", keep="first")
+    v2 = v2.copy()
+    v2["ID"] = v2["Restaurante"].apply(_clave_nombre).map(exacto)
 
-    columnas_loc = [c for c in ["Dirección", "Latitud", "Longitud", "Teléfono", "Web"] if c in loc.columns]
-    if not columnas_loc:
-        print(f"[AVISO] La hoja 'Restaurantes' de {RESENAS_XLSX.name} no tiene columnas de dirección/"
-              f"coordenadas reconocibles.")
-        return rest
+    sin_cruzar = sorted(v2.loc[v2["ID"].isna(), "Restaurante"].dropna().unique())
+    if sin_cruzar:
+        print(f"[AVISO] {len(sin_cruzar)} restaurantes de {RESENAS_XLSX.name} no se pudieron cruzar "
+              f"por nombre con {RESTAURANTES_XLSX.name}: {sin_cruzar[:8]}{'...' if len(sin_cruzar) > 8 else ''}.")
 
-    rest = rest.merge(loc[["ID"] + columnas_loc], on="ID", how="left")
-    if "Dirección" in rest.columns:
-        sin_direccion = int(rest["Dirección"].isna().sum())
-        if sin_direccion:
-            print(f"[AVISO] {sin_direccion} de {len(rest)} restaurantes se han quedado sin Dirección "
-                  f"(no se cruzó el nombre, o esa fila no tenía dirección guardada). La app los mostrará "
-                  f"como 'N/D'.")
+    # Localización: una fila por restaurante (la primera que tenga coordenadas válidas).
+    # No hace falta avisar aparte de "repetidos" aquí: tener varias filas por restaurante
+    # es NORMAL en este archivo (una por reseña), a diferencia del excel de localización
+    # de Outscraper, donde sí era una señal de duplicado real.
+    con_coords = v2.dropna(subset=["ID", "Latitud", "Longitud"])
+    loc = con_coords.drop_duplicates(subset="ID", keep="first")[["ID", "Latitud", "Longitud"]]
+
+    rest = rest.merge(loc, on="ID", how="left")
+    sin_coords = int(rest["Latitud"].isna().sum())
+    if sin_coords:
+        print(f"[AVISO] {sin_coords} de {len(rest)} restaurantes se han quedado sin Latitud/Longitud "
+              f"(no se cruzó el nombre, no se consiguieron reseñas de ese restaurante, o no se pudieron "
+              f"sacar coordenadas de su URL de Google Maps). La app no podrá calcular tiempos de "
+              f"desplazamiento para ellos, así que no aparecerán en ningún resultado.")
     return rest
 
 
@@ -356,11 +359,11 @@ def cargar_datos(limite_restaurantes=None):
     """
     rest = cargar_restaurantes_base()
     try:
-        res = pd.read_excel(RESENAS_XLSX, sheet_name="Reseñas")
+        res = pd.read_excel(RESENAS_XLSX)
     except Exception as e:
-        raise SystemExit(f"ERROR: no puedo leer la hoja 'Reseñas' de {RESENAS_XLSX}: {e}")
+        raise SystemExit(f"ERROR: no puedo leer {RESENAS_XLSX}: {e}")
     if "Restaurante" not in res.columns or "Texto" not in res.columns:
-        raise SystemExit(f"ERROR: a la hoja 'Reseñas' de {RESENAS_XLSX.name} le faltan las columnas "
+        raise SystemExit(f"ERROR: a {RESENAS_XLSX.name} le faltan las columnas "
                          f"'Restaurante' y/o 'Texto'.")
 
     exacto = dict(zip(rest["Nombre"].apply(_clave_nombre), rest["ID"]))
@@ -405,14 +408,14 @@ def explicar_sin_resenas(d, limite):
         "ERROR: no hay ninguna reseña que clasificar; no se ha guardado ningún excel.",
         f"  Diagnóstico ({RESENAS_XLSX.name} + {RESTAURANTES_XLSX.name}):",
         f"    - {d['restaurantes']} restaurantes en {RESTAURANTES_XLSX.name}",
-        f"    - {d['filas_resenas']} filas en la hoja 'Reseñas' ({d['nombres_distintos']} nombres de restaurante distintos)",
+        f"    - {d['filas_resenas']} filas en {RESENAS_XLSX.name} ({d['nombres_distintos']} nombres de restaurante distintos)",
         f"    - {d['con_texto_util']} con texto de al menos {MIN_CARACTERES_RESENA} caracteres",
         f"    - {d['cruzadas_exacto'] + d['cruzadas_aproximado']} asociadas a un restaurante por nombre "
         f"({d['cruzadas_exacto']} exactas, {d['cruzadas_aproximado']} aproximadas) · {d['sin_cruce']} sin asociar",
         "  Causa probable:",
     ]
     if d["filas_resenas"] == 0:
-        lineas.append(f"    La hoja 'Reseñas' de {RESENAS_XLSX.name} está vacía. Comprueba ese archivo.")
+        lineas.append(f"    {RESENAS_XLSX.name} está vacío. Comprueba ese archivo.")
     elif d["con_texto_util"] == 0:
         lineas.append("    Hay filas pero ninguna con texto en la columna 'Texto'. Revisa esa columna.")
     elif d["cruzadas_exacto"] + d["cruzadas_aproximado"] == 0:
@@ -805,6 +808,10 @@ def parsear_argumentos():
     p.add_argument("--modelo", default=MODELO_DEFECTO, help=f"modelo a usar (por defecto: {MODELO_DEFECTO})")
     p.add_argument("--hilos", type=int, default=HILOS_DEFECTO, help=f"peticiones en paralelo (por defecto: {HILOS_DEFECTO})")
     p.add_argument("--reiniciar", action="store_true", help="ignorar y borrar la caché")
+    p.add_argument("--verbose", action="store_true",
+                   help="imprime por pantalla, restaurante a restaurante, la clasificación de cada una de sus "
+                       "reseñas (cocina, sentimiento, confianza) y el resultado final agregado. Solo IMPRIME: "
+                       "no cambia ningún cálculo ni lo que se guarda en el excel.")
     p.add_argument("--probar", metavar="TEXTO", default=None,
                    help='clasifica solo este texto y lo imprime, sin tocar ningún excel. Ej.: --probar "cachopo y cecina espectacular"')
     return p.parse_args()
@@ -821,6 +828,24 @@ def imprimir_prueba(salida):
             print(f"   {cat:22s} {p:.3f}")
 
 
+def imprimir_detalle_restaurante(nombre, id_r, pares, fila):
+    """Solo IMPRIME. Recibe exactamente los mismos `pares` (texto, resultado) y la misma `fila`
+    ya agregada que usa ejecutar() para construir el excel -no repite ni recalcula nada-, así que
+    lo que se ve aquí es siempre igual a lo que acaba en la hoja Restaurantes."""
+    print(f"\n{'─' * 70}\n[{id_r}] {nombre}  ({len(pares)} reseñas leídas)")
+    for texto, res in pares:
+        extracto = (texto[:70] + "…") if len(texto) > 70 else texto
+        if res["estado"] != "ok":
+            print(f"  ERROR: {res.get('error', '')}  | {extracto!r}")
+            continue
+        print(f"  cocina={res['categoria']:22s} (conf. {res['categoria_confianza']:.2f})  "
+              f"sentimiento={res['sentimiento']:6s} (conf. {res['sentimiento_confianza']:.2f})  | {extracto!r}")
+    print(f"  -> RESULTADO AGREGADO: Categoría (Jev) = {fila.get('Categoría (Jev)')!r} "
+          f"(% votos {fila.get('% votos categoría (Jev)')}, empate={fila.get('Empate') or 'no'}) "
+          f"| Votos: {fila.get('Votos')} "
+          f"| Reseñas buenas/malas/neutras: {fila.get('Reseñas buenas')}/{fila.get('Reseñas malas')}/{fila.get('Reseñas neutras')}")
+
+
 def ejecutar(args, rest, resenas):
     """Flujo completo: clasificar cada reseña -> agrupar por restaurante -> guardar excel."""
     print(f"\n=== Clasificación con Jev ({_modelo}) · huella de categorías: {HUELLA} ===")
@@ -835,12 +860,15 @@ def ejecutar(args, rest, resenas):
         por_id[r["id"]].append((r["texto"], res_))
 
     por_restaurante = []
+    nombres_por_id = dict(zip(rest["ID"], rest["Nombre"]))
     for id_r in rest["ID"]:
         pares = por_id[id_r]
         fila = agregar_restaurante([res for _, res in pares])
         fila["Platos mejor valorados"], fila["Platos peor valorados"] = agregar_platos(
             [(t, res) for t, res in pares if res["estado"] == "ok"])
         por_restaurante.append(fila)
+        if args.verbose:
+            imprimir_detalle_restaurante(nombres_por_id[id_r], id_r, pares, fila)
 
     coste = _tokens_entrada / 1_000_000 * PRECIO_USD_POR_MILLON_TOKENS
     print(f"  - Tokens de entrada consumidos en esta ejecución: {_tokens_entrada:,} "
