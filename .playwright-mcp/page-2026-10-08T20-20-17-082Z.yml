@@ -1,0 +1,76 @@
+- generic [ref=e3]:
+  - banner [ref=e6]:
+    - generic [ref=e9]:
+      - button "Deploy" [ref=e11] [cursor=pointer]
+      - button "Main menu" [ref=e15] [cursor=pointer]
+  - generic [ref=e21]:
+    - generic [ref=e24]:
+      - paragraph [ref=e27]: 🌙 Jueves noche
+      - heading "¿Dónde cenamos?" [level=1] [ref=e28]
+      - paragraph [ref=e29]: 226 sitios vuestros. Decid desde dónde salís y os digo cuál.
+    - generic [ref=e37]:
+      - generic [ref=e38]: ¿Desde dónde salís?
+      - combobox "¿Desde dónde salís?" [ref=e40]
+    - button "📍 Usar mi ubicación" [ref=e49] [cursor=pointer]:
+      - generic [ref=e50]: 📍
+      - generic [ref=e51]: Usar mi ubicación
+    - generic [ref=e53]:
+      - paragraph [ref=e57]: ¿Cómo vais?
+      - radiogroup "¿Cómo vais?" [ref=e58]:
+        - radio [checked] [ref=e59] [cursor=pointer]:
+          - generic [ref=e61]:
+            - generic [aria-hidden] [ref=e63]: 🚗
+            - paragraph [ref=e66]: Coche
+        - radio [ref=e67] [cursor=pointer]:
+          - generic [ref=e69]:
+            - generic [aria-hidden] [ref=e71]: 🚶
+            - paragraph [ref=e74]: A pie
+    - generic [ref=e77]:
+      - paragraph [ref=e81]: Tiempo máximo
+      - group "Tiempo máximo" [ref=e82]:
+        - generic [ref=e83]:
+          - generic [ref=e84]:
+            - slider "Tiempo máximo Tiempo máximo" [ref=e86]: "20"
+            - generic:
+              - generic:
+                - paragraph: 20 min
+          - generic:
+            - generic:
+              - paragraph: 5 min
+            - generic:
+              - paragraph: 60 min
+    - generic [ref=e88]:
+      - paragraph [ref=e92]: Cocina
+      - group [ref=e94]:
+        - combobox "Cocina" [ref=e95]: Cualquiera
+        - button "Open" [ref=e96] [cursor=pointer]
+    - generic [ref=e102]:
+      - generic [ref=e103]:
+        - paragraph [ref=e106]: Presupuesto por persona
+        - button "Help for Presupuesto por persona" [ref=e110] [cursor=pointer]
+      - group "Presupuesto por persona" [ref=e114]:
+        - generic [ref=e115]:
+          - generic [ref=e116]:
+            - slider "Presupuesto por persona — start Presupuesto por persona" [ref=e118]: "0"
+            - generic:
+              - generic:
+                - paragraph: 0 €
+          - generic [ref=e119]:
+            - slider "Presupuesto por persona — end Presupuesto por persona" [ref=e121]: "30"
+            - generic:
+              - generic:
+                - paragraph: 30 €
+          - generic:
+            - generic:
+              - paragraph: 0 €
+            - generic:
+              - paragraph: 100 €
+    - group [ref=e124]:
+      - generic "keyboard_arrow_right Más opciones" [ref=e125] [cursor=pointer]:
+        - generic [ref=e126]:
+          - generic [ref=e127]: keyboard_arrow_right
+          - paragraph [ref=e131]: Más opciones
+    - button "search Buscar restaurantes" [ref=e134] [cursor=pointer]:
+      - generic [ref=e136]:
+        - generic [ref=e137]: search
+        - paragraph [ref=e141]: Buscar restaurantes

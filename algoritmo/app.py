@@ -33,9 +33,11 @@ DESPLIEGUE (para tener una URL pública desde el móvil):
        móvil y guárdala en la pantalla de inicio como acceso directo.
 """
 
+import io
 import re
 import math
 import base64
+import random
 import time
 import unicodedata
 import urllib.parse
@@ -615,11 +617,11 @@ _CSS_LISTA = """
 .lr-foto img, .lr-inicial { width: 72px; height: 72px; border-radius: 10px; object-fit: cover; display: block; }
 .lr-inicial {
   display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 700;
-  background: var(--st-primary-color); color: #fff; opacity: 0.85;
+  background: var(--st-primary-color); color: var(--st-background-color); opacity: 0.85;
 }
 .lr-num {
   position: absolute; left: -6px; top: -6px; min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box;
-  border-radius: 11px; background: var(--st-primary-color); color: #fff;
+  border-radius: 11px; background: var(--st-primary-color); color: var(--st-background-color);
   font: 700 12px/22px var(--st-font, sans-serif); text-align: center;
   box-shadow: 0 0 0 2px var(--st-secondary-background-color);
 }
@@ -758,7 +760,7 @@ _CSS_MAPA = """
 .fm-sel .fm-punta { border-top-color: var(--st-primary-color, #ff4b4b); }
 .fm-num {
   position: absolute; right: -7px; top: -7px; min-width: 20px; height: 20px; padding: 0 4px; box-sizing: border-box;
-  border-radius: 10px; background: var(--st-primary-color, #ff4b4b); color: #fff;
+  border-radius: 10px; background: var(--st-primary-color, #ff4b4b); color: var(--st-background-color, #fff);
   font: 700 12px/20px var(--st-font, sans-serif); text-align: center; box-shadow: 0 0 0 2px #fff;
 }
 .fm-top .fm-num { background: #f5b301; color: #3b2a00; }
@@ -1264,6 +1266,9 @@ _CSS_GLOBAL = """
 }
 @media (prefers-color-scheme: dark) {
   .st-key-boton_buscar { background: linear-gradient(to top, #16130F 75%, rgba(22, 19, 15, 0)); }
+  /* el acento oscuro es naranja claro: con texto blanco no se lee (2,3:1); en oscuro, 8:1 */
+  [data-testid="stBaseButton-primary"], [data-testid="stBaseLinkButton-primary"] { color: #16130F !important; }
+  [data-testid="stBaseButton-primary"] *, [data-testid="stBaseLinkButton-primary"] * { color: inherit !important; }
 }
 .st-key-boton_buscar button { min-height: 52px; font-size: 1.05rem; font-weight: 600; }
 </style>
@@ -1307,6 +1312,83 @@ def resumen_busqueda(r):
     return " · ".join(partes)
 
 
+# ----------------------- PORTADA ----------------------- #
+# Lo primero que se ve al entrar: una cinta de fotos de vuestros restaurantes que se desliza
+# despacio (fotos distintas en cada visita). Sin saludos por hora: a veces se busca para
+# otro día. Solo CSS: si el móvil pide "reducir movimiento", todo se queda quieto.
+
+FOTOS_PORTADA = 14
+
+_CSS_PORTADA = """
+<style>
+.portada { margin: 1rem 0 4px; }   /* deja libre la barra superior de Streamlit */
+.portada .cinta {
+  overflow: hidden; margin: 0 -16px 18px; padding: 4px 0;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+          mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+}
+.portada .pista { display: flex; gap: 10px; width: max-content; animation: portada-desliza 55s linear infinite; }
+.portada .pista img {
+  width: 64px; height: 64px; border-radius: 50%; object-fit: cover; flex: 0 0 auto;
+  box-shadow: 0 2px 8px rgba(31, 26, 20, 0.18);
+}
+.portada .pista img:nth-child(even) { transform: translateY(10px); }
+.portada .momento {
+  margin: 0; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: #C2410C; animation: portada-entra 0.6s ease-out both;
+}
+.portada h1 {
+  margin: 2px 0 6px; padding: 0; font-family: "Fraunces", serif; font-weight: 700;
+  font-size: clamp(2rem, 9vw, 2.75rem); line-height: 1.05; animation: portada-entra 0.6s 0.08s ease-out both;
+}
+.portada .sub { margin: 0; opacity: 0.72; animation: portada-entra 0.6s 0.16s ease-out both; }
+@keyframes portada-desliza { to { transform: translateX(-50%); } }
+@keyframes portada-entra { from { opacity: 0; transform: translateY(10px); } }
+@media (prefers-color-scheme: dark) { .portada .momento { color: #FB923C; } }
+@media (prefers-reduced-motion: reduce) {
+  .portada .pista, .portada .momento, .portada h1, .portada .sub { animation: none; }
+}
+</style>
+"""
+
+
+@st.cache_data(show_spinner=False)
+def miniaturas_portada():
+    """Todas las fotos de imagenes/ en miniatura (96 px, unos 4 KB): la portada manda 14 en
+    base64 y con las fotos originales serían ~1 MB en cada carga del móvil."""
+    from PIL import Image
+    miniaturas = []
+    for ruta in sorted(IMAGENES_DIR.glob("*.jpg")):
+        try:
+            with Image.open(ruta) as img:
+                img = img.convert("RGB")
+                img.thumbnail((96, 96))
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG", quality=75)
+            miniaturas.append("data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode())
+        except OSError:
+            continue   # foto dañada: simplemente no sale en la cinta
+    return miniaturas
+
+
+def mostrar_portada(num_restaurantes):
+    if "fotos_portada" not in st.session_state:   # fotos distintas en cada visita, fijas mientras dure
+        todas = miniaturas_portada()
+        st.session_state["fotos_portada"] = random.sample(todas, min(FOTOS_PORTADA, len(todas)))
+    fotos = st.session_state["fotos_portada"]
+    # La lista va dos veces seguidas: al desplazarse la mitad, vuelve al principio sin salto.
+    cinta = "".join(f'<img src="{f}" alt="">' for f in fotos * 2)
+
+    st.html(_CSS_PORTADA + f"""
+<div class="portada">
+  {f'<div class="cinta" aria-hidden="true"><div class="pista">{cinta}</div></div>' if fotos else ''}
+  <p class="momento">🍽️ Vuestra lista · {num_restaurantes} sitios</p>
+  <h1>¿Dónde comemos?</h1>
+  <p class="sub">Decid desde dónde salís y qué os apetece, y os digo cuál.</p>
+</div>
+""")
+
+
 st.set_page_config(page_title="¿Dónde comemos?", page_icon="🍽️", layout="centered")
 st.html(_CSS_GLOBAL)
 
@@ -1317,7 +1399,7 @@ if vista == "resultados" and st.session_state.get("resultado") is not None:
 
 # ----------------------- VISTA: BUSCADOR ----------------------- #
 with st.container(key="buscador"):
-    st.title("¿Dónde comemos?")
+    mostrar_portada(len(maestro))
 
     # Caja de dirección y, justo debajo, el botón "Usar mi ubicación". Reservamos primero
     # el hueco de la caja y lo rellenamos después de procesar el clic del botón: así la
