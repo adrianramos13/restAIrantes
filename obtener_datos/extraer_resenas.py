@@ -1,11 +1,10 @@
 import asyncio
 import re
-import time
 from urllib.parse import quote
 from pathlib import Path
 
 import pandas as pd
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright
 
 
 # ============================================================
@@ -664,6 +663,115 @@ async def hacer_scroll_reseñas(page, espera_maxima_ms=8000, intervalo_ms=400):
     return False
 
 
+SELECTORES_RESENA = [   # tarjeta de cada reseña en Google Maps
+    'div[data-review-id]',
+    'div.jftiEf',
+]
+SELECTORES_BOTON_MAS = [
+    'button:has-text("Más")',
+    'button:has-text("más")',
+    'button:has-text("More")',
+    'button:has-text("more")',
+    '[role="button"]:has-text("Más")',
+    '[role="button"]:has-text("More")',
+]
+SELECTORES_TEXTO = [
+    'span.wiI7pd',
+    'span[class*="wiI7pd"]',
+]
+PATRONES_FECHA = [
+    r"hace\s+[^\n]+",
+    r"\d+\s+(?:days?|weeks?|months?|years?)\s+ago",
+]
+
+
+async def _expandir_resena(page, review):
+    """Pulsa el botón "Más" de la reseña, si lo tiene, para que se vea el texto completo."""
+    for selector_mas in SELECTORES_BOTON_MAS:
+        try:
+            botones = review.locator(selector_mas)
+            cantidad_botones = await botones.count()
+            if cantidad_botones == 0:
+                continue
+
+            for j in range(cantidad_botones):
+                try:
+                    boton = botones.nth(j)
+                    if await boton.is_visible():
+                        # Comprobamos que realmente es un botón de expansión.
+                        texto_boton = (await boton.inner_text()).strip().lower()
+                        if texto_boton in ["más", "more"]:
+                            await boton.click(timeout=2000)
+                            # Esperamos a que Google expanda el contenido.
+                            await page.wait_for_timeout(300)
+                            break
+                except Exception:
+                    continue
+
+            # Si hemos encontrado el selector correcto, dejamos de probar los demás.
+            break
+        except Exception:
+            continue
+
+
+async def _leer_autor(review):
+    try:
+        autor_element = review.locator('div[class*="d4r55"]')
+        if await autor_element.count() > 0:
+            return (await autor_element.first.inner_text()).strip()
+    except Exception:
+        pass
+    return ""
+
+
+async def _leer_texto(review):
+    """Texto completo de la reseña. IMPORTANTE: se lee DESPUÉS de pulsar "Más". Si no está el
+    span habitual, se usa el texto completo de la tarjeta como respaldo."""
+    for selector in SELECTORES_TEXTO:
+        try:
+            texto_element = review.locator(selector)
+            if await texto_element.count() > 0:
+                texto = (await texto_element.first.inner_text()).strip()
+                if texto:
+                    return texto
+        except Exception:
+            continue
+    try:
+        return (await review.inner_text()).strip()
+    except Exception:
+        return ""
+
+
+async def _leer_puntuacion(review):
+    try:
+        estrellas = review.locator('[role="img"][aria-label*="estrella"]')
+        if await estrellas.count() > 0:
+            return extraer_numero(await estrellas.first.get_attribute("aria-label"))
+    except Exception:
+        pass
+    return None
+
+
+async def _leer_fecha(review):
+    try:
+        texto_review = await review.inner_text()
+        for patron in PATRONES_FECHA:
+            match = re.search(patron, texto_review, flags=re.IGNORECASE)
+            if match:
+                return match.group().strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _ya_leida(reseñas, autor, texto, puntuacion):
+    clave = (normalizar_texto(autor), normalizar_texto(texto), puntuacion)
+    return any(
+        (normalizar_texto(r["Autor"]), normalizar_texto(r["Texto"]), r["Puntuación"]) == clave
+        for r in reseñas
+    )
+
+
 async def extraer_reseñas(page):
     """
     Extrae hasta MAX_REVIEWS reseñas visibles/cargadas.
@@ -677,23 +785,13 @@ async def extraer_reseñas(page):
 
     reseñas = []
 
-    # Selectores habituales de Google Maps para reseñas
-    posibles_selectores = [
-        'div[data-review-id]',
-        'div.jftiEf',
-    ]
-
     elementos = None
-
-    for selector in posibles_selectores:
-
+    for selector in SELECTORES_RESENA:
         try:
             loc = page.locator(selector)
-
             if await loc.count() > 0:
                 elementos = loc
                 break
-
         except Exception:
             continue
 
@@ -708,240 +806,18 @@ async def extraer_reseñas(page):
             break
 
         try:
-
             review = elementos.nth(i)
 
-            # =================================================
-            # 1. EXPANDIR LA RESEÑA COMPLETA
-            # =================================================
-
-            posibles_botones_mas = [
-                'button:has-text("Más")',
-                'button:has-text("más")',
-                'button:has-text("More")',
-                'button:has-text("more")',
-                '[role="button"]:has-text("Más")',
-                '[role="button"]:has-text("More")',
-            ]
-
-            for selector_mas in posibles_botones_mas:
-
-                try:
-
-                    botones = review.locator(
-                        selector_mas
-                    )
-
-                    cantidad_botones = await botones.count()
-
-                    if cantidad_botones == 0:
-                        continue
-
-                    for j in range(cantidad_botones):
-
-                        try:
-
-                            boton = botones.nth(j)
-
-                            if await boton.is_visible():
-
-                                # Comprobamos que realmente es
-                                # un botón de expansión.
-                                texto_boton = (
-                                    await boton.inner_text()
-                                ).strip().lower()
-
-                                if texto_boton in [
-                                    "más",
-                                    "more",
-                                ]:
-
-                                    await boton.click(
-                                        timeout=2000
-                                    )
-
-                                    # Esperamos a que Google
-                                    # expanda el contenido.
-                                    await page.wait_for_timeout(
-                                        300
-                                    )
-
-                                    break
-
-                        except Exception:
-                            continue
-
-                    # Si hemos encontrado el selector correcto,
-                    # dejamos de probar los demás.
-                    break
-
-                except Exception:
-                    continue
-
-            # =================================================
-            # 2. AUTOR
-            # =================================================
-
-            autor = ""
-
-            try:
-
-                autor_element = review.locator(
-                    'div[class*="d4r55"]'
-                )
-
-                if await autor_element.count() > 0:
-
-                    autor = (
-                        await autor_element.first.inner_text()
-                    ).strip()
-
-            except Exception:
-                pass
-
-            # =================================================
-            # 3. TEXTO COMPLETO DE LA RESEÑA
-            # =================================================
-
-            texto = ""
-
-            posibles_textos = [
-                'span.wiI7pd',
-                'span[class*="wiI7pd"]',
-            ]
-
-            for selector in posibles_textos:
-
-                try:
-
-                    texto_element = review.locator(
-                        selector
-                    )
-
-                    if await texto_element.count() > 0:
-
-                        # IMPORTANTE:
-                        # inner_text() se ejecuta DESPUÉS
-                        # de pulsar "Más".
-                        texto = (
-                            await texto_element.first.inner_text()
-                        ).strip()
-
-                        if texto:
-                            break
-
-                except Exception:
-                    continue
-
-            # -------------------------------------------------
-            # Si no encontramos el span habitual, utilizamos
-            # el texto completo de la tarjeta como fallback.
-            # -------------------------------------------------
-
-            if not texto:
-
-                try:
-
-                    texto_completo = (
-                        await review.inner_text()
-                    ).strip()
-
-                    # Intentamos eliminar información que
-                    # claramente no pertenece a la reseña.
-                    if texto_completo:
-                        texto = texto_completo
-
-                except Exception:
-                    pass
-
-            # =================================================
-            # 4. PUNTUACIÓN
-            # =================================================
-
-            puntuacion = None
-
-            try:
-
-                estrellas = review.locator(
-                    '[role="img"][aria-label*="estrella"]'
-                )
-
-                if await estrellas.count() > 0:
-
-                    aria = await estrellas.first.get_attribute(
-                        "aria-label"
-                    )
-
-                    puntuacion = extraer_numero(
-                        aria
-                    )
-
-            except Exception:
-                pass
-
-            # =================================================
-            # 5. FECHA
-            # =================================================
-
-            fecha = ""
-
-            try:
-
-                texto_review = await review.inner_text()
-
-                patrones_fecha = [
-                    r"hace\s+[^\n]+",
-                    r"\d+\s+(?:days?|weeks?|months?|years?)\s+ago",
-                ]
-
-                for patron in patrones_fecha:
-
-                    match = re.search(
-                        patron,
-                        texto_review,
-                        flags=re.IGNORECASE
-                    )
-
-                    if match:
-
-                        fecha = (
-                            match.group()
-                            .strip()
-                        )
-
-                        break
-
-            except Exception:
-                pass
-
-            # =================================================
-            # 6. EVITAR DUPLICADOS
-            # =================================================
-
-            clave = (
-                normalizar_texto(autor),
-                normalizar_texto(texto),
-                puntuacion,
-            )
-
-            duplicada = any(
-                (
-                    normalizar_texto(r["Autor"]),
-                    normalizar_texto(r["Texto"]),
-                    r["Puntuación"],
-                ) == clave
-                for r in reseñas
-            )
-
-            if duplicada:
+            await _expandir_resena(page, review)
+            autor = await _leer_autor(review)
+            texto = await _leer_texto(review)
+            puntuacion = await _leer_puntuacion(review)
+            fecha = await _leer_fecha(review)
+
+            if _ya_leida(reseñas, autor, texto, puntuacion):
                 continue
 
-            # =================================================
-            # 7. GUARDAR RESEÑA
-            # =================================================
-
             if autor or texto:
-
                 reseñas.append({
                     "Autor": autor,
                     "Puntuación": puntuacion,
@@ -950,14 +826,8 @@ async def extraer_reseñas(page):
                 })
 
         except Exception as e:
-
-            # Si una reseña concreta da problemas,
-            # continuamos con la siguiente.
-            print(
-                f"  Aviso: error leyendo reseña "
-                f"{i + 1}: {e}"
-            )
-
+            # Si una reseña concreta da problemas, continuamos con la siguiente.
+            print(f"  Aviso: error leyendo reseña {i + 1}: {e}")
             continue
 
     return reseñas[:MAX_REVIEWS]
@@ -965,6 +835,111 @@ async def extraer_reseñas(page):
 # ============================================================
 # PROCESAR UN RESTAURANTE
 # ============================================================
+
+async def _cargar_resenas_con_scroll(page):
+    """Lee las reseñas cargadas, hace scroll y repite hasta tener MAX_REVIEWS o hasta que dejan
+    de aparecer nuevas (6 intentos seguidos sin novedades; como mucho 30 vueltas)."""
+    reseñas = []
+
+    intentos_sin_nuevas = 0
+    ultimo_numero = 0
+
+    # Máximo de 30 iteraciones para evitar bucles infinitos
+    for intento in range(30):
+
+        # Buscar las reseñas que actualmente están cargadas
+        nuevas = await extraer_reseñas(page)
+
+        # -----------------------------------------------------
+        # ELIMINAR DUPLICADOS
+        # -----------------------------------------------------
+        existentes = {
+            (
+                r.get("Autor", ""),
+                r.get("Texto", ""),
+                r.get("Fecha", "")
+            )
+            for r in reseñas
+        }
+
+        for r in nuevas:
+
+            clave = (
+                r.get("Autor", ""),
+                r.get("Texto", ""),
+                r.get("Fecha", "")
+            )
+
+            if clave not in existentes:
+                reseñas.append(r)
+                existentes.add(clave)
+
+        # Limitar a 30
+        if len(reseñas) > MAX_REVIEWS:
+            reseñas = reseñas[:MAX_REVIEWS]
+
+        print(
+            f"Reseñas cargadas: "
+            f"{len(reseñas)}/{MAX_REVIEWS}"
+        )
+
+        # -----------------------------------------------------
+        # ¿YA TENEMOS 30?
+        # -----------------------------------------------------
+        if len(reseñas) >= MAX_REVIEWS:
+            print("Se han conseguido las 30 reseñas.")
+            break
+
+        # -----------------------------------------------------
+        # COMPROBAR SI HAN APARECIDO NUEVAS
+        # -----------------------------------------------------
+        if len(reseñas) == ultimo_numero:
+            intentos_sin_nuevas += 1
+        else:
+            intentos_sin_nuevas = 0
+
+        ultimo_numero = len(reseñas)
+
+        # -----------------------------------------------------
+        # HACER SCROLL
+        # -----------------------------------------------------
+        avanzado = await hacer_scroll_reseñas(page)
+
+        if not avanzado:
+            intentos_sin_nuevas += 1
+
+        # -----------------------------------------------------
+        # SI LLEVAMOS VARIOS INTENTOS SIN NUEVAS RESEÑAS
+        # -----------------------------------------------------
+        if intentos_sin_nuevas >= 6:
+
+            print(
+                "No aparecen nuevas reseñas después de varios "
+                "intentos. Se detiene la extracción."
+            )
+
+            break
+
+        # Esperar a que Google Maps cargue las nuevas reseñas
+        await page.wait_for_timeout(1000)
+
+    return reseñas
+
+
+def _filas_por_resena(resultado_base, reseñas):
+    """Una fila por reseña, repitiendo los datos del restaurante (formato de restaurantes_v2.xlsx)."""
+    resultados = []
+    for reseña in reseñas:
+        fila = resultado_base.copy()
+        fila.update({
+            "Autor": reseña.get("Autor", ""),
+            "Puntuación": reseña.get("Puntuación"),
+            "Fecha": reseña.get("Fecha", ""),
+            "Texto": reseña.get("Texto", ""),
+        })
+        resultados.append(fila)
+    return resultados
+
 
 async def procesar_restaurante(page, nombre, indice, total):
     print("\n" + "=" * 70)
@@ -1053,95 +1028,13 @@ async def procesar_restaurante(page, nombre, indice, total):
         except Exception:
             pass
 
-# Pequeña espera para que Google Maps termine de cargar
+        # Pequeña espera para que Google Maps termine de cargar
         await page.wait_for_timeout(1500)
 
         # ---------------------------------------------------------
         # 4. EXTRAER RESEÑAS
         # ---------------------------------------------------------
-        reseñas = []
-
-        intentos_sin_nuevas = 0
-        ultimo_numero = 0
-
-        # Máximo de 30 iteraciones para evitar bucles infinitos
-        for intento in range(30):
-
-            # Buscar las reseñas que actualmente están cargadas
-            nuevas = await extraer_reseñas(page)
-
-            # -----------------------------------------------------
-            # ELIMINAR DUPLICADOS
-            # -----------------------------------------------------
-            existentes = {
-                (
-                    r.get("Autor", ""),
-                    r.get("Texto", ""),
-                    r.get("Fecha", "")
-                )
-                for r in reseñas
-            }
-
-            for r in nuevas:
-
-                clave = (
-                    r.get("Autor", ""),
-                    r.get("Texto", ""),
-                    r.get("Fecha", "")
-                )
-
-                if clave not in existentes:
-                    reseñas.append(r)
-                    existentes.add(clave)
-
-            # Limitar a 30
-            if len(reseñas) > MAX_REVIEWS:
-                reseñas = reseñas[:MAX_REVIEWS]
-
-            print(
-                f"Reseñas cargadas: "
-                f"{len(reseñas)}/{MAX_REVIEWS}"
-            )
-
-            # -----------------------------------------------------
-            # ¿YA TENEMOS 30?
-            # -----------------------------------------------------
-            if len(reseñas) >= MAX_REVIEWS:
-                print("Se han conseguido las 30 reseñas.")
-                break
-
-            # -----------------------------------------------------
-            # COMPROBAR SI HAN APARECIDO NUEVAS
-            # -----------------------------------------------------
-            if len(reseñas) == ultimo_numero:
-                intentos_sin_nuevas += 1
-            else:
-                intentos_sin_nuevas = 0
-
-            ultimo_numero = len(reseñas)
-
-            # -----------------------------------------------------
-            # HACER SCROLL
-            # -----------------------------------------------------
-            avanzado = await hacer_scroll_reseñas(page)
-
-            if not avanzado:
-                intentos_sin_nuevas += 1
-
-            # -----------------------------------------------------
-            # SI LLEVAMOS VARIOS INTENTOS SIN NUEVAS RESEÑAS
-            # -----------------------------------------------------
-            if intentos_sin_nuevas >= 6:
-
-                print(
-                    "No aparecen nuevas reseñas después de varios "
-                    "intentos. Se detiene la extracción."
-                )
-
-                break
-
-            # Esperar a que Google Maps cargue las nuevas reseñas
-            await page.wait_for_timeout(1000)
+        reseñas = await _cargar_resenas_con_scroll(page)
 
         # ---------------------------------------------------------
         # 5. COMPROBAR RESULTADO
@@ -1160,20 +1053,7 @@ async def procesar_restaurante(page, nombre, indice, total):
         # ---------------------------------------------------------
         # 6. CREAR UNA FILA POR CADA RESEÑA
         # ---------------------------------------------------------
-        resultados = []
-
-        for reseña in reseñas:
-
-            fila = resultado_base.copy()
-
-            fila.update({
-                "Autor": reseña.get("Autor", ""),
-                "Puntuación": reseña.get("Puntuación"),
-                "Fecha": reseña.get("Fecha", ""),
-                "Texto": reseña.get("Texto", ""),
-            })
-
-            resultados.append(fila)
+        resultados = _filas_por_resena(resultado_base, reseñas)
 
         print(
             f"Extracción terminada: "
