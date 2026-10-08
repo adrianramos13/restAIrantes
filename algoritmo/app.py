@@ -384,6 +384,8 @@ def filtrar_y_puntuar(maestro, df_platos, r):
         )
 
     df["Score"] = df.apply(puntuar_fila, axis=1)
+    if r["orden"] == "Más cercanos":
+        return df.sort_values(["Tiempo desplazamiento (min)", "Score"], ascending=[True, False])
     return df.sort_values("Score", ascending=False)
 
 
@@ -970,6 +972,7 @@ tiempo_maximo_min = st.number_input(
     etiqueta_tiempo, min_value=5, max_value=60, value=20, step=1
 )
 plato_deseado = st.text_input("¿Algún plato concreto?", placeholder="ej. sushi (opcional)")
+orden = st.radio("Ordenar por", ["Mejor puntuación", "Más cercanos"], horizontal=True)
 
 enviado = st.button("🔍 Buscar restaurantes", width="stretch")
 
@@ -996,6 +999,7 @@ if enviado:
         "modo_transporte": modo_transporte,
         "tiempo_maximo_min": tiempo_maximo_min,
         "plato_deseado": plato_deseado.strip(),
+        "orden": orden,
     }
 
     texto_spinner = ("Calculando tiempos en coche a los restaurantes..." if modo_transporte == "En coche"
@@ -1043,7 +1047,10 @@ if resultado is not None:
             mostrar_tarjeta(top.iloc[posicion], respuestas, df_platos, numero=posicion + 1)
 
     # --- Tarjetas de resultados ---
-    st.subheader(f"Top {len(top)} para vosotros")
+    if respuestas.get("orden") == "Más cercanos":
+        st.subheader(f"Los {len(top)} más cercanos")
+    else:
+        st.subheader(f"Top {len(top)} para vosotros")
     for i, (_, fila) in enumerate(top.iterrows(), start=1):
         with st.container(border=True):
             mostrar_tarjeta(fila, respuestas, df_platos, numero=i)
