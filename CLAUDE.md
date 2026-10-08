@@ -14,7 +14,9 @@ Two independent halves:
 ## Commands
 
 ```bash
-pip install -r requirements.txt            # app deps (Streamlit Cloud reads this file)
+pip install -r requirements.txt            # app deps only (Streamlit Cloud reads this file)
+pip install -r obtener_datos/requirements.txt && python -m playwright install chromium   # pipeline deps
+pip install -r requirements-dev.txt && pytest tests/   # AppTest smoke tests + results reference (~40 s, uses network)
 streamlit run algoritmo/app.py             # run the app (paths resolve from __file__, any cwd works)
 
 # Data pipeline, in order (each step reads the previous outputs)
@@ -24,7 +26,7 @@ python obtener_datos/clasificar_restaurantes_jev.py  # v1 + v2 + Jev API -> exce
 #   flags: --limite N, --hilos N, --reiniciar (drop cache), --verbose, --probar "texto"
 ```
 
-There is no test suite. Verify app changes with Streamlit's AppTest (it can't drive the custom JS components; simulate them through `session_state`, e.g. set `ubicacion_actual` instead of using the location button):
+`tests/test_humo.py` compares 3 fixed searches against `tests/referencia.json`; if you change data or scoring on purpose, regenerate it with `REGENERAR_REFERENCIA=1 pytest tests/test_humo.py`. For new checks, use Streamlit's AppTest (it can't drive the custom JS components; simulate them through `session_state`, e.g. set `ubicacion_actual` instead of using the location button):
 
 ```python
 from streamlit.testing.v1 import AppTest
@@ -35,8 +37,6 @@ assert not at.exception
 ```
 
 Secrets: `TYPESAFE_API_KEY` env var (pipeline step 3, paid but cached); `ORS_API_KEY` in `.streamlit/secrets.toml` / Streamlit Cloud secrets (optional; without it walking times fall back to straight-line at 5 km/h).
-
-Note: the README still describes step 2 as using Outscraper; the code now scrapes with Playwright and writes `restaurantes_v2.xlsx`, which is what step 3 reads.
 
 ## Data pipeline gotchas
 

@@ -1,18 +1,15 @@
 """
-App web (Streamlit) que convierte la encuesta + algoritmo de recomendación
-en una página que se abre desde el navegador del móvil.
-
-Reutiliza toda la lógica de encuesta.py (parseo de precios, scoring,
-geocoding, tiempos en coche vía OSRM) pero con un formulario web en vez de
-preguntas por terminal, y muestra el resultado en tarjetas + mapa.
+App web (Streamlit), pensada para el móvil, que recomienda restaurantes de vuestra lista
+de Google Maps según desde dónde salís, cuánto tiempo queréis tardar, cocina, presupuesto
+y plato. Muestra los resultados en lista o mapa, con una ficha por restaurante.
 
 ESTRUCTURA DE CARPETAS ESPERADA (este archivo vive en algoritmo/):
     proyecto/
       excels/
         clasificacion_jev.xlsx   <- lo genera obtener_datos/clasificar_restaurantes_jev.py
+      imagenes/                  <- fotos, las descarga obtener_datos/extraer_html.py
       algoritmo/
         app.py          <- este archivo
-        encuesta.py
 
 USO LOCAL (para probarlo antes de desplegar):
     pip install -r requirements.txt

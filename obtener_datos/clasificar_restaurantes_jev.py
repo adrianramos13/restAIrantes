@@ -336,7 +336,7 @@ def cargar_restaurantes_base():
     # Localización: una fila por restaurante (la primera que tenga coordenadas válidas).
     # No hace falta avisar aparte de "repetidos" aquí: tener varias filas por restaurante
     # es NORMAL en este archivo (una por reseña), a diferencia del excel de localización
-    # de Outscraper, donde sí era una señal de duplicado real.
+    # de Outscraper (el paso 2 de antes), donde sí era una señal de duplicado real.
     con_coords = v2.dropna(subset=["ID", "Latitud", "Longitud"])
     loc = con_coords.drop_duplicates(subset="ID", keep="first")[["ID", "Latitud", "Longitud"]]
 
