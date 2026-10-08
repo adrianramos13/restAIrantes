@@ -1,0 +1,13 @@
+[data-testid="stMainBlockContainer"] { padding-top: 3rem; padding-bottom: 2rem; }
+.st-key-boton_buscar {
+  position: sticky; bottom: 0; z-index: 10;
+  padding: 16px 0 calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, #FBF7F2 75%, rgba(251, 247, 242, 0));
+}
+@media (prefers-color-scheme: dark) {
+  .st-key-boton_buscar { background: linear-gradient(to top, #16130F 75%, rgba(22, 19, 15, 0)); }
+  /* el acento oscuro es naranja claro: con texto blanco no se lee (2,3:1); en oscuro, 8:1 */
+  [data-testid="stBaseButton-primary"], [data-testid="stBaseLinkButton-primary"] { color: #16130F !important; }
+  [data-testid="stBaseButton-primary"] *, [data-testid="stBaseLinkButton-primary"] * { color: inherit !important; }
+}
+.st-key-boton_buscar button { min-height: 52px; font-size: 1.05rem; font-weight: 600; }

@@ -1,0 +1,31 @@
+.portada { margin: 1rem 0 4px; }   /* deja libre la barra superior de Streamlit */
+.portada .cinta {
+  overflow: hidden; margin: 0 -16px 18px; padding: 4px 0;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+          mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+}
+.portada .pista { display: flex; gap: 10px; width: max-content; animation: portada-desliza 55s linear infinite; }
+.portada .pista img {
+  width: 64px; height: 64px; border-radius: 50%; object-fit: cover; flex: 0 0 auto;
+  box-shadow: 0 2px 8px rgba(31, 26, 20, 0.18);
+}
+.portada .pista img:nth-child(even) { transform: translateY(10px); }
+.portada .momento {
+  margin: 0; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: #C2410C; animation: portada-entra 0.6s ease-out both;
+}
+.portada h1 {
+  margin: 2px 0 6px; padding: 0; font-family: "Fraunces", serif; font-weight: 700;
+  font-size: clamp(2rem, 9vw, 2.75rem); line-height: 1.05; animation: portada-entra 0.6s 0.08s ease-out both;
+}
+.portada .sub { margin: 0; opacity: 0.72; animation: portada-entra 0.6s 0.16s ease-out both; }
+@keyframes portada-desliza { to { transform: translateX(-50%); } }
+@keyframes portada-entra { from { opacity: 0; transform: translateY(10px); } }
+@media (prefers-color-scheme: dark) { .portada .momento { color: #FB923C; } }
+@media (prefers-reduced-motion: reduce) {
+  .portada .pista, .portada .momento, .portada h1, .portada .sub { animation: none; }
+}
+/* Con intro, el texto de la portada entra justo cuando sube el telón. */
+.portada.tras-intro .momento { animation-delay: 2.25s; }
+.portada.tras-intro h1 { animation-delay: 2.33s; }
+.portada.tras-intro .sub { animation-delay: 2.41s; }

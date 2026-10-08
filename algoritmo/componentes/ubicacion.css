@@ -1,0 +1,12 @@
+
+button {
+  display: flex; align-items: center; justify-content: center; gap: 0.4rem; width: 100%; box-sizing: border-box;
+  font-family: var(--st-font, inherit); font-size: calc(var(--st-base-font-size, 16px) * 0.875);
+  font-weight: 400; line-height: 1.6;
+  color: var(--st-text-color); background: var(--st-background-color);
+  border: 1px solid var(--st-border-color);
+  border-radius: var(--st-button-radius, 0.5rem);
+  padding: 0.25rem 0.75rem; min-height: 44px; cursor: pointer;
+}
+button:hover { border-color: var(--st-primary-color); color: var(--st-primary-color); }
+button:disabled { opacity: 0.6; cursor: progress; }
