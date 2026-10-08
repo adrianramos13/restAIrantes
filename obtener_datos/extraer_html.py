@@ -10,6 +10,12 @@ CAMPOS EXTRAÍDOS:
     - Tipo de cocina
     - Estado           (vacío normalmente; "Cerrado temporalmente" o
                          "Cerrado permanentemente" si Google Maps lo marca así)
+    - Imagen URL / Imagen archivo
+                       las URLs de fotos de Google caducan en unas semanas, así que
+                       cada foto se descarga UNA vez a imagenes/<nombre>.jpg (que se
+                       sube al repo) y la app usa ese archivo. Los restaurantes que ya
+                       tienen foto descargada no se vuelven a descargar: al añadir
+                       restaurantes nuevos, solo se bajan las fotos de los nuevos.
 
 CÓMO OBTENER EL HTML:
     1. Abre tu lista de Google Maps en el navegador.
@@ -25,7 +31,10 @@ USO:
 """
 
 import re
+import unicodedata
 from pathlib import Path
+
+import requests
 
 from bs4 import BeautifulSoup
 import openpyxl
@@ -37,12 +46,50 @@ from openpyxl.styles import Font, Alignment, PatternFill
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_HTML = BASE_DIR.parent / "origen" / "restaurantes.html"
 OUTPUT_XLSX = BASE_DIR.parent / "excels" / "restaurantes_v1.xlsx"
+IMAGENES_DIR = BASE_DIR.parent / "imagenes"
+TAMANO_IMAGEN = "=w450-h450"   # la miniatura del HTML es diminuta (=w80-h142); se pide más grande
 
 # --------------------------------------------------------------- #
 
 
 def clean(text):
     return re.sub(r"\s+", " ", text).strip()
+
+
+def nombre_archivo_imagen(nombre):
+    """'K'era | Restaurante Georgiano' -> 'kera-restaurante-georgiano.jpg'. Depende solo del
+    nombre (no del ID, que cambia al añadir restaurantes), así la foto sigue siendo la suya."""
+    sin_tildes = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", sin_tildes.replace("'", "")).strip("-")[:80]
+    return f"{slug or 'sin-nombre'}.jpg"
+
+
+def descargar_imagenes(filas):
+    """Descarga a imagenes/ las fotos que aún no estén, y rellena 'Imagen archivo' en cada fila
+    (vacío si no hay foto ni se ha podido bajar; la app entonces prueba con la URL)."""
+    IMAGENES_DIR.mkdir(parents=True, exist_ok=True)
+    nuevas, fallos = 0, []
+    for fila in filas:
+        archivo = nombre_archivo_imagen(fila["Nombre"])
+        ruta = IMAGENES_DIR / archivo
+        url = fila["Imagen URL"]
+        if not ruta.exists() and url:
+            try:
+                r = requests.get(re.sub(r"=w\d+-h\d+", TAMANO_IMAGEN, url), timeout=15)
+                r.raise_for_status()
+                if not r.headers.get("content-type", "").startswith("image/"):
+                    raise ValueError(f"no es una imagen ({r.headers.get('content-type')})")
+                ruta.write_bytes(r.content)
+                nuevas += 1
+            except Exception as e:
+                fallos.append(f"{fila['Nombre']}: {str(e).split(' for url')[0]}")
+        fila["Imagen archivo"] = archivo if ruta.exists() else ""
+
+    print(f"Imágenes: {nuevas} descargadas, {sum(1 for f in filas if f['Imagen archivo'])}/{len(filas)} con foto.")
+    if fallos:
+        print(f"  - [AVISO] {len(fallos)} no se han podido descargar (¿HTML antiguo? las URLs caducan):")
+        for f in fallos:
+            print(f"      · {f}")
 
 
 def extraer_restaurantes(soup):
@@ -117,7 +164,8 @@ def guardar_excel(filas, ruta_salida):
     ws.title = "Restaurantes"
 
     headers = list(filas[0].keys()) if filas else [
-        "Nombre", "Puntuación", "Nº Reseñas", "Rango de precios", "Tipo de cocina", "Estado", "Imagen URL"
+        "Nombre", "Puntuación", "Nº Reseñas", "Rango de precios", "Tipo de cocina", "Estado", "Imagen URL",
+        "Imagen archivo",
     ]
     ws.append(headers)
     for fila in filas:
@@ -137,7 +185,7 @@ def guardar_excel(filas, ruta_salida):
     if ws.max_row > 1:
         ws.auto_filter.ref = ws.dimensions
 
-    anchos = {"A": 45, "B": 12, "C": 12, "D": 18, "E": 20, "F": 25, "G": 50}
+    anchos = {"A": 45, "B": 12, "C": 12, "D": 18, "E": 20, "F": 25, "G": 50, "H": 40}
     for col, w in anchos.items():
         ws.column_dimensions[col].width = w
 
@@ -163,6 +211,7 @@ def main():
         soup = BeautifulSoup(f, "lxml")
 
     filas = extraer_restaurantes(soup)
+    descargar_imagenes(filas)
     guardar_excel(filas, OUTPUT_XLSX)
 
 

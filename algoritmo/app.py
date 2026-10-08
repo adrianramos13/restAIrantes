@@ -35,6 +35,7 @@ DESPLIEGUE (para tener una URL pública desde el móvil):
 
 import re
 import math
+import base64
 import time
 import unicodedata
 import urllib.parse
@@ -53,6 +54,7 @@ import streamlit as st
 # algoritmo` primero.
 BASE_DIR = Path(__file__).resolve().parent
 MAESTRO_XLSX = BASE_DIR.parent / "excels" / "clasificacion_jev.xlsx"
+IMAGENES_DIR = BASE_DIR.parent / "imagenes"
 
 PESO_PRECIO = 0.15
 PESO_COCINA = 0.30
@@ -497,7 +499,10 @@ def mostrar_tarjeta(fila, respuestas, df_platos, numero=None):
 
     with col_img:
         imagen_url = fila.get("Imagen URL")
-        if isinstance(imagen_url, str) and imagen_url.strip():
+        imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
+        if imagen_local.is_file():   # descargada por extraer_html.py; las URLs de Google caducan
+            st.image(str(imagen_local), width="stretch")
+        elif isinstance(imagen_url, str) and imagen_url.strip():
             # Pedimos bastante más resolución de la que se va a mostrar (la
             # columna es estrecha) para que se vea nítida en pantallas retina.
             st.image(mejorar_resolucion_imagen(imagen_url, ancho=450, alto=450),
@@ -827,7 +832,13 @@ def mostrar_mapa(lat_u, lon_u, restaurantes=None, seleccionado_id=None):
             if pd.isna(fila["Latitud"]) or pd.isna(fila["Longitud"]):
                 continue
             url = fila.get("Imagen URL")
-            foto = mejorar_resolucion_imagen(url, ancho=160, alto=160) if isinstance(url, str) and url.strip() else None
+            imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
+            if imagen_local.is_file():   # el componente JS no ve el disco: se la pasamos en base64
+                foto = "data:image/jpeg;base64," + base64.b64encode(imagen_local.read_bytes()).decode()
+            elif isinstance(url, str) and url.strip():
+                foto = mejorar_resolucion_imagen(url, ancho=160, alto=160)
+            else:
+                foto = None
             lista.append({
                 "id": int(fila["ID"]), "n": n, "nombre": str(fila["Nombre"]),
                 "lat": float(fila["Latitud"]), "lon": float(fila["Longitud"]), "foto": foto,

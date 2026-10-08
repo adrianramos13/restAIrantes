@@ -33,6 +33,7 @@ proyecto/
 │   └── secrets.toml              # claves para probar en local (NO se sube a GitHub)
 ├── origen/
 │   └── restaurantes.html         # HTML de tu lista de Google Maps
+├── imagenes/                     # fotos de los restaurantes (las descarga extraer_html.py; se suben al repo)
 ├── excels/
 │   ├── restaurantes_v1.xlsx
 │   ├── restaurantes_con_resenas.xlsx
@@ -58,7 +59,7 @@ Se ejecuta en este orden, desde la carpeta `obtener_datos/`. Dependencias: `pip 
 
 | Paso | Script | Entrada | Salida | Qué hace |
 |---|---|---|---|---|
-| 1 | `extraer_html.py` | `origen/restaurantes.html` | `restaurantes_v1.xlsx` | Lee con BeautifulSoup cada restaurante de la lista: nombre, puntuación, nº de reseñas, rango de precios, tipo de cocina (el de Google, en bruto), **estado** (cerrado temporal/permanente) y **URL de la imagen**. |
+| 1 | `extraer_html.py` | `origen/restaurantes.html` | `restaurantes_v1.xlsx` | Lee con BeautifulSoup cada restaurante de la lista: nombre, puntuación, nº de reseñas, rango de precios, tipo de cocina (el de Google, en bruto), **estado** (cerrado temporal/permanente) y **URL de la imagen**. Además descarga cada foto a `imagenes/` (solo las que aún no estén), porque las URLs de Google caducan en unas semanas. |
 | 2 | `extraer_resenas.py` | `restaurantes_v1.xlsx` | `restaurantes_con_resenas.xlsx` | Consulta la API de Outscraper (en lotes de 25) con `"nombre, Madrid, España"`. Guarda dirección, coordenadas, teléfono, web (hoja `Restaurantes`) y hasta 30 reseñas por restaurante (hoja `Reseñas`). |
 | 3 | `clasificar_restaurantes_jev.py` | los dos anteriores | `clasificacion_jev.xlsx` | Asigna un ID a cada restaurante (por su posición en `restaurantes_v1.xlsx`), le añade la localización cruzando por nombre, y clasifica cada reseña con **Jev**. Es el único script de análisis; genera el excel final completo. |
 
