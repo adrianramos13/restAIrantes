@@ -273,3 +273,19 @@
 [  231386ms] [ERROR] Client Error in reaching server endpoint - No response received when attempting to reach /_stcore/health @ http://localhost:8599/static/js/index.CcFifQPt.js:27
 [  231386ms] [ERROR] Is Streamlit still running? If you accidentally stopped Streamlit, just restart it in your terminal: @ http://localhost:8599/static/js/index.CcFifQPt.js:32
 [  231387ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8599/_stcore/host-config:0
+[  234482ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8599/_stcore/health:0
+[  234483ms] [ERROR] Client Error in reaching server endpoint - No response received when attempting to reach /_stcore/health @ http://localhost:8599/static/js/index.CcFifQPt.js:27
+[  234483ms] [ERROR] Is Streamlit still running? If you accidentally stopped Streamlit, just restart it in your terminal: @ http://localhost:8599/static/js/index.CcFifQPt.js:32
+[  234484ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8599/_stcore/host-config:0
+[  237603ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8599/_stcore/health:0
+[  237603ms] [ERROR] Client Error in reaching server endpoint - No response received when attempting to reach /_stcore/health @ http://localhost:8599/static/js/index.CcFifQPt.js:27
+[  237603ms] [ERROR] Is Streamlit still running? If you accidentally stopped Streamlit, just restart it in your terminal: @ http://localhost:8599/static/js/index.CcFifQPt.js:32
+[  237604ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8599/_stcore/host-config:0
+[  241320ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8599/_stcore/health:0
+[  241320ms] [ERROR] Client Error in reaching server endpoint - No response received when attempting to reach /_stcore/health @ http://localhost:8599/static/js/index.CcFifQPt.js:27
+[  241320ms] [ERROR] Is Streamlit still running? If you accidentally stopped Streamlit, just restart it in your terminal: @ http://localhost:8599/static/js/index.CcFifQPt.js:32
+[  241321ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8599/_stcore/host-config:0
+[  244555ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8599/_stcore/health:0
+[  244556ms] [ERROR] Client Error in reaching server endpoint - No response received when attempting to reach /_stcore/health @ http://localhost:8599/static/js/index.CcFifQPt.js:27
+[  244556ms] [ERROR] Is Streamlit still running? If you accidentally stopped Streamlit, just restart it in your terminal: @ http://localhost:8599/static/js/index.CcFifQPt.js:32
+[  244570ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8599/_stcore/host-config:0
