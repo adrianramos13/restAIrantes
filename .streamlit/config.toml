@@ -1,0 +1,27 @@
+# Tema de la app: cálido (crema + terracota), pensado primero para el móvil.
+# Streamlit elige claro u oscuro según el sistema; aquí se definen los dos.
+
+[theme]
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Fraunces:https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap, serif"
+baseFontSize = 15
+baseRadius = "12px"
+buttonRadius = "12px"
+linkUnderline = false
+showWidgetBorder = true
+
+[theme.light]
+primaryColor = "#C2410C"
+backgroundColor = "#FBF7F2"
+secondaryBackgroundColor = "#F3ECE3"
+textColor = "#1F1A14"
+borderColor = "#E9E1D6"
+linkColor = "#9A3412"
+
+[theme.dark]
+primaryColor = "#FB923C"
+backgroundColor = "#16130F"
+secondaryBackgroundColor = "#221E19"
+textColor = "#F3EDE4"
+borderColor = "#3A332B"
+linkColor = "#FDBA74"
