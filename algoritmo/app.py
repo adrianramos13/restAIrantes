@@ -1348,21 +1348,63 @@ _CSS_PORTADA = """
 @media (prefers-reduced-motion: reduce) {
   .portada .pista, .portada .momento, .portada h1, .portada .sub { animation: none; }
 }
+/* Con intro, el texto de la portada entra justo cuando sube el telón. */
+.portada.tras-intro .momento { animation-delay: 2.25s; }
+.portada.tras-intro h1 { animation-delay: 2.33s; }
+.portada.tras-intro .sub { animation-delay: 2.41s; }
+</style>
+"""
+
+# Pantalla de entrada (una vez por visita): 3 fotos entran con rebote, aparece el título y
+# todo sube como un telón (~2,5 s). Tapa también la carga inicial de la app. Es decorativa
+# (aria-hidden): el contenido real está debajo. Con "reducir movimiento" no se muestra.
+_CSS_INTRO = """
+<style>
+.intro {
+  position: fixed; inset: 0; z-index: 1000000; background: #FBF7F2; color: #1F1A14;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+  animation: intro-sale 0.65s cubic-bezier(0.7, 0, 0.3, 1) 1.85s forwards;
+}
+.intro .platos { display: flex; }
+.intro .platos img {
+  width: 88px; height: 88px; border-radius: 50%; object-fit: cover; margin-left: -20px;
+  border: 4px solid #FBF7F2; box-shadow: 0 6px 18px rgba(31, 26, 20, 0.22);
+  animation: intro-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.intro .platos img:first-child { margin-left: 0; animation-delay: 0.1s; }
+.intro .platos img:nth-child(2) { animation-delay: 0.25s; transform: translateY(-10px); z-index: 1; }
+.intro .platos img:nth-child(3) { animation-delay: 0.4s; }
+.intro .titulo {
+  font-family: "Fraunces", serif; font-weight: 700; font-size: clamp(2rem, 9vw, 2.75rem); line-height: 1.05;
+  animation: intro-sube 0.5s 0.65s ease-out both;
+}
+.intro .linea { width: 56px; height: 3px; border-radius: 2px; background: #C2410C; transform-origin: left;
+  animation: intro-linea 0.5s 0.9s ease-out both; }
+@keyframes intro-pop { from { opacity: 0; transform: scale(0.3); } }
+@keyframes intro-sube { from { opacity: 0; transform: translateY(14px); } }
+@keyframes intro-linea { from { transform: scaleX(0); } }
+@keyframes intro-sale { to { transform: translateY(-100%); visibility: hidden; } }
+@media (prefers-color-scheme: dark) {
+  .intro { background: #16130F; color: #F3EDE4; }
+  .intro .platos img { border-color: #16130F; }
+  .intro .linea { background: #FB923C; }
+}
+@media (prefers-reduced-motion: reduce) { .intro { display: none; } }
 </style>
 """
 
 
 @st.cache_data(show_spinner=False)
 def miniaturas_portada():
-    """Todas las fotos de imagenes/ en miniatura (96 px, unos 4 KB): la portada manda 14 en
-    base64 y con las fotos originales serían ~1 MB en cada carga del móvil."""
+    """Todas las fotos de imagenes/ en miniatura (176 px, nítidas a 88 px en pantallas retina;
+    ~10 KB): la portada manda 14 en base64 y con las originales sería ~1 MB en cada carga."""
     from PIL import Image
     miniaturas = []
     for ruta in sorted(IMAGENES_DIR.glob("*.jpg")):
         try:
             with Image.open(ruta) as img:
                 img = img.convert("RGB")
-                img.thumbnail((96, 96))
+                img.thumbnail((176, 176))
                 buffer = io.BytesIO()
                 img.save(buffer, format="JPEG", quality=75)
             miniaturas.append("data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode())
@@ -1371,16 +1413,36 @@ def miniaturas_portada():
     return miniaturas
 
 
-def mostrar_portada(num_restaurantes):
+def fotos_portada():
     if "fotos_portada" not in st.session_state:   # fotos distintas en cada visita, fijas mientras dure
         todas = miniaturas_portada()
         st.session_state["fotos_portada"] = random.sample(todas, min(FOTOS_PORTADA, len(todas)))
-    fotos = st.session_state["fotos_portada"]
+    return st.session_state["fotos_portada"]
+
+
+def mostrar_intro():
+    """Pantalla de entrada, solo en la primera carga de cada visita. Devuelve si se ha mostrado."""
+    if st.session_state.get("intro_vista"):
+        return False
+    st.session_state["intro_vista"] = True
+    platos = "".join(f'<img src="{f}" alt="">' for f in fotos_portada()[:3])
+    st.html(_CSS_INTRO + f"""
+<div class="intro" aria-hidden="true">
+  <div class="platos">{platos}</div>
+  <div class="titulo">¿Dónde comemos?</div>
+  <div class="linea"></div>
+</div>
+""")
+    return True
+
+
+def mostrar_portada(num_restaurantes, tras_intro=False):
+    fotos = fotos_portada()
     # La lista va dos veces seguidas: al desplazarse la mitad, vuelve al principio sin salto.
     cinta = "".join(f'<img src="{f}" alt="">' for f in fotos * 2)
 
     st.html(_CSS_PORTADA + f"""
-<div class="portada">
+<div class="portada{' tras-intro' if tras_intro else ''}">
   {f'<div class="cinta" aria-hidden="true"><div class="pista">{cinta}</div></div>' if fotos else ''}
   <p class="momento">🍽️ Vuestra lista · {num_restaurantes} sitios</p>
   <h1>¿Dónde comemos?</h1>
@@ -1391,6 +1453,7 @@ def mostrar_portada(num_restaurantes):
 
 st.set_page_config(page_title="¿Dónde comemos?", page_icon="🍽️", layout="centered")
 st.html(_CSS_GLOBAL)
+hay_intro = mostrar_intro()
 
 maestro, df_platos = cargar_datos()
 vista = st.session_state.setdefault("vista", "buscador")
@@ -1399,7 +1462,7 @@ if vista == "resultados" and st.session_state.get("resultado") is not None:
 
 # ----------------------- VISTA: BUSCADOR ----------------------- #
 with st.container(key="buscador"):
-    mostrar_portada(len(maestro))
+    mostrar_portada(len(maestro), tras_intro=hay_intro)
 
     # Caja de dirección y, justo debajo, el botón "Usar mi ubicación". Reservamos primero
     # el hueco de la caja y lo rellenamos después de procesar el clic del botón: así la
