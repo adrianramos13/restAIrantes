@@ -356,6 +356,23 @@ def filtrar_y_puntuar(maestro, df_platos, r):
     if df.empty:
         return df
 
+    # Filtros estrictos: solo pasan los que cumplen lo pedido; si no hay, no se rellena con otros.
+    con_jev_filtro = tiene_categorias_jev(maestro)
+    if r["cocina"]:
+        # Exige cocina principal o segunda con peso; descarta los de otra cocina y los no clasificados.
+        df = df[df.apply(lambda f: puntuacion_cocina(f, r["cocina"], con_jev_filtro) >= SCORE_COCINA_SECUNDARIA, axis=1)]
+
+    def encaja_precio(texto):
+        min_r, max_r = parsear_rango_precio(texto)
+        # ponytail: sin precio conocido no se puede descartar, se deja pasar
+        return (min_r is None and max_r is None) or solapamiento(min_r, max_r, r["presupuesto_min"], r["presupuesto_max"]) > 0
+    df = df[df["Rango de precios"].apply(encaja_precio)]
+
+    if r["plato_deseado"]:
+        df = df[df["ID"].apply(lambda i: puntuacion_plato(i, r["plato_deseado"], df_platos) > 0)]
+    if df.empty:
+        return df
+
     max_resenas = maestro["Nº Reseñas"].max() or 1
     con_jev = tiene_categorias_jev(maestro)
 
@@ -1024,8 +1041,8 @@ if resultado is not None:
 
     if df_puntuado.empty:
         etiqueta_modo = "en coche" if modo_transporte_resultado == "En coche" else "andando"
-        st.warning(f"No hay ningún restaurante a menos de {tiempo_maximo_resultado} min {etiqueta_modo}. "
-                   f"Prueba a ampliar el tiempo.")
+        st.warning(f"No hay ningún restaurante a menos de {tiempo_maximo_resultado} min {etiqueta_modo} "
+                   f"que cumpla lo que has pedido. Prueba a ampliar el tiempo o relajar cocina, presupuesto o plato.")
         mostrar_mapa(*ubicacion_usuario)
         st.stop()
 
