@@ -1,2 +1,5 @@
 .streamlit/secrets.toml
 graphify-out/
+.playwright-mcp/
+__pycache__/
+*.stackdump
