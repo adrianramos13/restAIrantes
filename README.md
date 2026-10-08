@@ -114,7 +114,7 @@ python clasificar_restaurantes_jev.py                                           
 python clasificar_restaurantes_jev.py --reiniciar                               # ignora la caché y recalcula todo
 ```
 
-**Caché**: cada resultado se guarda en `obtener_datos/.cache/cache_jev.jsonl` en cuanto se calcula. Si cortas la ejecución o la repites, no se paga otra vez por lo ya hecho. La clave de caché incluye una huella de las categorías y las dos preguntas: si editas `CATEGORIAS` o `CATEGORIAS_SENTIMIENTO`, se recalcula todo.
+**Caché**: cada resultado se guarda en `obtener_datos/.cache/cache_jev.jsonl` en cuanto se calcula. Si cortas la ejecución o la repites, no se paga otra vez por lo ya hecho. La clave de caché es el modelo, una huella de las categorías y las dos preguntas, y el texto de la reseña (no el restaurante: Jev solo ve el texto). Así, reordenar o añadir restaurantes no vuelve a cobrar nada; en cambio, si editas `CATEGORIAS` o `CATEGORIAS_SENTIMIENTO`, se recalcula todo.
 
 **Coste**: Jev cobra 0,042 USD por millón de tokens de entrada (precio de lanzamiento, puede cambiar); la salida es gratis. Para unas 6.700 reseñas, cuenta con menos de 0,50 USD en total. Al terminar, el script imprime el gasto real de esa ejecución.
 
@@ -292,7 +292,7 @@ pillow
 - **Geocodificación:** la búsqueda está limitada a la Comunidad de Madrid, pero algunos números de portal no están en OpenStreetMap y se toma otro punto de la misma calle. Elige una sugerencia de la lista o comprueba "Te he situado en" encima de los resultados.
 - **Jev es un modelo en acceso anticipado:** su documentación indica que rinde mejor en inglés; en español conviene revisar de vez en cuando la hoja `Reseñas` para detectar clasificaciones raras. Su comportamiento, precios y límites pueden cambiar sin aviso.
 - **Nombres duplicados:** si un restaurante aparece dos veces en `restaurantes_v1.xlsx`, todas sus reseñas se cruzan con un solo ID y el otro se queda sin categoría (el script avisa de esto por consola).
-- **IDs:** cambian si cambia el orden de `restaurantes_v1.xlsx` (ver más arriba).
+- **IDs:** cambian si cambia el orden de `restaurantes_v1.xlsx`. No afecta a la caché de Jev (su clave no lleva el ID) ni a la app (los IDs solo viven dentro de una búsqueda).
 
 ---
 

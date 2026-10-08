@@ -504,8 +504,11 @@ class Cache:
                 f.write(json.dumps({"k": clave, "r": resultado}, ensure_ascii=False) + "\n")
 
 
-def _clave(modelo, id_r, texto):
-    return hashlib.sha1(f"{modelo}|{HUELLA}|{id_r}|{texto}".encode("utf-8")).hexdigest()
+def _clave(modelo, texto):
+    # Jev solo recibe el texto de la reseña: el restaurante (y su ID, que es la posición en
+    # restaurantes_v1.xlsx) no va en la clave, así que reordenar o añadir restaurantes no
+    # invalida la caché ni hace pagar otra vez.
+    return hashlib.sha1(f"{modelo}|{HUELLA}|{texto}".encode("utf-8")).hexdigest()
 
 
 # ----------------------- LLAMADA A JEV ----------------------- #
@@ -585,7 +588,7 @@ def clasificar_todas(resenas, cache, hilos=1, max_errores_seguidos=8):
     resultados = [None] * len(resenas)
     pendientes = []
     for i, r in enumerate(resenas):
-        guardado = cache.get(_clave(_modelo, r["id"], r["texto"]))
+        guardado = cache.get(_clave(_modelo, r["texto"]))
         if guardado is not None:
             resultados[i] = {**guardado, "estado": "ok"}
         else:
@@ -614,7 +617,7 @@ def clasificar_todas(resenas, cache, hilos=1, max_errores_seguidos=8):
                 hechas += 1
                 try:
                     _, resultado = futuro.result()
-                    cache.put(_clave(_modelo, resenas[i]["id"], resenas[i]["texto"]), resultado)
+                    cache.put(_clave(_modelo, resenas[i]["texto"]), resultado)
                     resultados[i] = {**resultado, "estado": "ok"}
                     errores_seguidos = 0
                 except Exception as e:  # noqa: BLE001 - queremos seguir con el resto

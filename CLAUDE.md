@@ -40,7 +40,7 @@ Secrets: `TYPESAFE_API_KEY` env var (pipeline step 3, paid but cached); `ORS_API
 
 ## Data pipeline gotchas
 
-- **Restaurant `ID` = row position in `restaurantes_v1.xlsx`** (assigned in `clasificar_restaurantes_jev.py`). Reordering or inserting restaurants shifts IDs. The Jev cache key (`obtener_datos/.cache/cache_jev.jsonl`) includes that ID, so a reorder re-bills reviews.
+- **Restaurant `ID` = row position in `restaurantes_v1.xlsx`** (assigned in `clasificar_restaurantes_jev.py`). Reordering or inserting restaurants shifts IDs (fine: IDs only live within one run/session). The Jev cache key (`obtener_datos/.cache/cache_jev.jsonl`) is model + `HUELLA` + review text only — Jev never sees the restaurant — so reordering never re-bills. Never put the ID back in the key.
 - Locations/reviews from v2 are joined to v1 **by name** (normalized). Every v1 column flows through to the final excel unchanged, so adding a column in `extraer_html.py` is enough for the app to see it after re-running step 3.
 - Google photo URLs (`gps-cs-s`) expire within weeks. `extraer_html.py` downloads each photo once to `imagenes/<slug-of-name>.jpg` (keyed by name, not ID; existing files are skipped) and, if the HTML URL is stale, falls back to opening the place in Google Maps with Playwright to get a fresh one. The app prefers the local file (`Imagen archivo` column) over `Imagen URL`.
 - Changing Jev prompts/categories changes `HUELLA` and invalidates the whole cache.
