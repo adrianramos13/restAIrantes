@@ -44,6 +44,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 import streamlit as st
+from geopy.exc import GeocoderServiceError
 
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
@@ -81,6 +82,8 @@ VELOCIDAD_RESPALDO_COCHE_KMH = 30
 ORS_URL = "https://api.openrouteservice.org/v2/matrix/foot-walking"
 ORS_BATCH_SIZE = 50
 VELOCIDAD_RESPALDO_ANDANDO_KMH = 5
+
+CAJA_MADRID = [(41.17, -4.58), (39.88, -3.05)]   # Comunidad de Madrid (esquinas NO y SE)
 
 # --------------------------------------------------------------- #
 
@@ -136,17 +139,15 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 
 def geocodificar_direccion(direccion):
+    """Devuelve el Location de geopy (o None si no la encuentra). Solo busca dentro de la
+    Comunidad de Madrid y añade "Madrid" al texto: sin eso, "Chueca" acababa en Toledo y
+    "Calle Princesa 1" en Marbella. Si el servicio falla, la excepción sube (no es lo mismo
+    que "no existe esa dirección")."""
     from geopy.geocoders import Nominatim
-    from geopy.exc import GeocoderServiceError, GeocoderTimedOut
 
+    consulta = direccion if "madrid" in direccion.lower() else f"{direccion}, Madrid"
     geolocalizador = Nominatim(user_agent="app_restaurantes_pareja")
-    try:
-        ubicacion = geolocalizador.geocode(direccion, timeout=10)
-    except (GeocoderServiceError, GeocoderTimedOut):
-        return None
-    if ubicacion is None:
-        return None
-    return ubicacion.latitude, ubicacion.longitude
+    return geolocalizador.geocode(consulta, timeout=10, viewbox=CAJA_MADRID, bounded=True)
 
 
 def obtener_minutos_coche(ubicacion_usuario, maestro):
@@ -930,6 +931,149 @@ def boton_ubicacion_actual(key):
     return _BOTON_UBICACION(key=key, on_ubicacion_change=lambda: None, on_error_change=lambda: None)
 
 
+# ----------------------- CAJA DE DIRECCIÓN CON SUGERENCIAS ----------------------- #
+# Componente propio: mientras escribes, el navegador pide sugerencias a Photon
+# (photon.komoot.io, gratis, pensado para autocompletar; Nominatim lo prohíbe) dentro de
+# la Comunidad de Madrid. Al elegir una, se devuelven sus coordenadas y no hace falta
+# geocodificar; si escribes sin elegir, el texto se geocodifica con Nominatim al buscar.
+# Solo se avisa a Python al elegir, al pulsar Enter o al salir de la caja (no en cada
+# tecla), para no relanzar la app a cada letra.
+
+_HTML_DIRECCION = """
+<label for="dir">¿Desde dónde salís?</label>
+<div class="caja">
+  <input id="dir" type="text" autocomplete="off" role="combobox" aria-autocomplete="list"
+         aria-expanded="false" aria-controls="sugerencias">
+  <ul id="sugerencias" role="listbox" hidden></ul>
+</div>
+"""
+
+_CSS_DIRECCION = """
+label { display: block; font-family: var(--st-font, inherit); font-size: calc(var(--st-base-font-size, 16px) * 0.875);
+        color: var(--st-text-color); margin-bottom: 0.25rem; }
+.caja { position: relative; }
+input {
+  box-sizing: border-box; width: 100%; min-height: 2.5rem; padding: 0.5rem 0.75rem;
+  font-family: var(--st-font, inherit); font-size: var(--st-base-font-size, 16px);
+  color: var(--st-text-color); background: var(--st-secondary-background-color);
+  border: 1px solid transparent; border-radius: var(--st-base-radius, 0.5rem); outline: none;
+}
+input:focus { border-color: var(--st-primary-color); }
+input:disabled { opacity: 0.6; cursor: not-allowed; }
+ul {
+  position: absolute; z-index: 1000; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 0.25rem 0;
+  list-style: none; background: var(--st-background-color); border: 1px solid var(--st-border-color);
+  border-radius: var(--st-base-radius, 0.5rem); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  max-height: 18rem; overflow-y: auto;
+}
+li { padding: 0.45rem 0.75rem; cursor: pointer; font-family: var(--st-font, inherit); color: var(--st-text-color); }
+li[aria-selected="true"], li:hover { background: var(--st-secondary-background-color); }
+li .principal { display: block; font-size: calc(var(--st-base-font-size, 16px) * 0.95); }
+li .detalle { display: block; font-size: calc(var(--st-base-font-size, 16px) * 0.8); opacity: 0.7; }
+"""
+
+_JS_DIRECCION = """
+const PHOTON = 'https://photon.komoot.io/api/';
+const CAJA_MADRID = '-4.58,39.88,-3.05,41.17';   // lon/lat mín,máx: Comunidad de Madrid
+
+function etiquetas(p) {
+  const calle = [p.street, p.housenumber].filter(Boolean).join(' ');
+  const principal = p.name || calle || p.district || p.city || '';
+  const detalle = [p.name ? calle : null, p.district, p.city].filter((x) => x && x !== principal);
+  return { principal, detalle: [...new Set(detalle)].join(', ') };
+}
+
+export default function (component) {
+  const { parentElement, data, setStateValue } = component;
+  const input = parentElement.querySelector('#dir');
+  const lista = parentElement.querySelector('#sugerencias');
+  let opciones = [], activa = -1, temporizador = null, peticion = 0;
+
+  input.disabled = !!data.disabled;
+  input.placeholder = data.placeholder || '';
+  if (!input.value && data.texto) input.value = data.texto;   // si la caja se ha vuelto a montar vacía
+
+  const cerrar = () => { lista.hidden = true; input.setAttribute('aria-expanded', 'false'); activa = -1; };
+  const enviarTexto = () => { if (input.value !== (data.texto || '')) setStateValue('texto', input.value); };
+
+  const elegir = (i) => {
+    const o = opciones[i];
+    input.value = o.texto;
+    cerrar();
+    setStateValue('seleccion', { lat: o.lat, lon: o.lon, texto: o.texto });
+    setStateValue('texto', o.texto);
+  };
+
+  const pintar = () => {
+    lista.innerHTML = '';
+    opciones.forEach((o, i) => {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'option');
+      li.setAttribute('aria-selected', String(i === activa));
+      const a = document.createElement('span'); a.className = 'principal'; a.textContent = o.principal;
+      const b = document.createElement('span'); b.className = 'detalle'; b.textContent = o.detalle;
+      li.append(a, b);
+      li.onmousedown = (e) => { e.preventDefault(); elegir(i); };   // mousedown: antes del blur
+      lista.appendChild(li);
+    });
+    lista.hidden = opciones.length === 0;
+    input.setAttribute('aria-expanded', String(!lista.hidden));
+  };
+
+  input.oninput = () => {
+    clearTimeout(temporizador);
+    const q = input.value.trim();
+    if (q.length < 3) { opciones = []; cerrar(); return; }
+    temporizador = setTimeout(async () => {
+      const id = ++peticion;
+      try {
+        const url = `${PHOTON}?q=${encodeURIComponent(q)}&limit=6&lat=40.4168&lon=-3.7038&bbox=${CAJA_MADRID}`;
+        const res = await (await fetch(url)).json();
+        if (id !== peticion) return;   // ya hay una petición más reciente
+        const vistos = new Set();
+        opciones = res.features.map((f) => {
+          const { principal, detalle } = etiquetas(f.properties);
+          const [lon, lat] = f.geometry.coordinates;
+          return { principal, detalle, lat, lon, texto: [principal, detalle].filter(Boolean).join(', ') };
+        }).filter((o) => o.principal && !vistos.has(o.texto) && vistos.add(o.texto));
+        activa = -1;
+        pintar();
+      } catch (e) { opciones = []; cerrar(); }   // sin sugerencias: se puede seguir escribiendo a mano
+    }, 300);
+  };
+
+  input.onkeydown = (e) => {
+    if (e.key === 'ArrowDown' && opciones.length) { activa = (activa + 1) % opciones.length; pintar(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp' && opciones.length) { activa = (activa - 1 + opciones.length) % opciones.length; pintar(); e.preventDefault(); }
+    else if (e.key === 'Enter') { if (activa >= 0 && !lista.hidden) elegir(activa); else { cerrar(); enviarTexto(); } }
+    else if (e.key === 'Escape') cerrar();
+  };
+  input.onblur = () => { cerrar(); enviarTexto(); };
+}
+"""
+
+_CAJA_DIRECCION = st.components.v2.component(
+    "caja_direccion_sugerencias",
+    html=_HTML_DIRECCION, css=_CSS_DIRECCION, js=_JS_DIRECCION,
+)
+
+
+def caja_direccion_con_sugerencias(key, disabled, placeholder):
+    """Devuelve (texto escrito, sugerencia elegida o None). La sugerencia solo vale si el
+    texto no se ha cambiado después de elegirla."""
+    res = _CAJA_DIRECCION(
+        key=key, data={"disabled": disabled, "placeholder": placeholder,
+                       "texto": st.session_state.get("_texto_" + key, "")},
+        default={"texto": "", "seleccion": None},
+        on_texto_change=lambda: None, on_seleccion_change=lambda: None,
+    )
+    texto, seleccion = res.texto or "", res.seleccion
+    st.session_state["_texto_" + key] = texto
+    if seleccion and seleccion.get("texto") != texto:
+        seleccion = None
+    return texto, seleccion
+
+
 def quitar_ubicacion_actual():
     for clave in ("ubicacion_actual", "precision_ubicacion", "error_ubicacion"):
         st.session_state.pop(clave, None)
@@ -988,10 +1132,10 @@ ubicacion_actual = st.session_state.get("ubicacion_actual")
 usar_ubicacion_actual = ubicacion_actual is not None
 
 with caja_direccion:
-    direccion = st.text_input(
-        "¿Desde dónde salís?",
-        placeholder=("Usando tu ubicación actual" if usar_ubicacion_actual else "ej. Sol, Madrid"),
+    direccion, sugerencia_elegida = caja_direccion_con_sugerencias(
+        key="caja_direccion",
         disabled=usar_ubicacion_actual,
+        placeholder=("Usando tu ubicación actual" if usar_ubicacion_actual else "ej. Sol, Madrid"),
     )
 
 modo_transporte = st.radio("¿Cómo vais a ir?", ["En coche", "A pie"], horizontal=True)
@@ -1005,25 +1149,37 @@ orden = st.radio("Ordenar por", ["Mejor puntuación", "Más cercanos"], horizont
 enviado = st.button("🔍 Buscar restaurantes", width="stretch")
 
 if enviado:
+    direccion_encontrada = None
     if usar_ubicacion_actual and ubicacion_actual:
         ubicacion_usuario = ubicacion_actual
+    elif sugerencia_elegida:   # ya trae coordenadas: no hace falta geocodificar
+        ubicacion_usuario = (sugerencia_elegida["lat"], sugerencia_elegida["lon"])
+        direccion_encontrada = sugerencia_elegida["texto"]
     else:
         if not direccion.strip():
             st.error("Necesito una dirección o zona desde donde salís (o usa tu ubicación actual).")
             st.stop()
 
-        with st.spinner("Localizando tu dirección..."):
-            ubicacion_usuario = geocodificar_direccion(direccion)
-
-        if ubicacion_usuario is None:
-            st.error("No he podido localizar esa dirección. Prueba a ser más específico (calle + ciudad).")
+        try:
+            with st.spinner("Localizando tu dirección..."):
+                encontrada = geocodificar_direccion(direccion)
+        except GeocoderServiceError as e:
+            st.error(f"El servicio de mapas no responde ahora mismo ({type(e).__name__}). "
+                     f"Prueba en un rato o usa tu ubicación actual.")
             st.stop()
+
+        if encontrada is None:
+            st.error("No he encontrado esa dirección en Madrid. Prueba con calle y número o un barrio.")
+            st.stop()
+        ubicacion_usuario = (encontrada.latitude, encontrada.longitude)
+        direccion_encontrada = encontrada.address
 
     respuestas = {
         "presupuesto_min": presupuesto_min,
         "presupuesto_max": presupuesto_max,
         "cocina": "" if cocina == "Cualquiera" else cocina,
         "ubicacion_usuario": ubicacion_usuario,
+        "direccion_encontrada": direccion_encontrada,
         "modo_transporte": modo_transporte,
         "tiempo_maximo_min": tiempo_maximo_min,
         "plato_deseado": plato_deseado.strip(),
@@ -1049,6 +1205,8 @@ if resultado is not None:
     ubicacion_usuario = respuestas["ubicacion_usuario"]
     modo_transporte_resultado = respuestas["modo_transporte"]
     tiempo_maximo_resultado = respuestas["tiempo_maximo_min"]
+    if respuestas.get("direccion_encontrada"):
+        st.caption(f"📍 Te he situado en: {respuestas['direccion_encontrada']}")
 
     if df_puntuado.empty:
         etiqueta_modo = "en coche" if modo_transporte_resultado == "En coche" else "andando"
