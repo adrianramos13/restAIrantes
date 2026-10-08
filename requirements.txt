@@ -1,10 +1,8 @@
+# Solo lo que usa la app (Streamlit Cloud instala este archivo).
+# El proceso de datos tiene el suyo: obtener_datos/requirements.txt
 streamlit
 pandas
 openpyxl
 geopy
-beautifulsoup4
-lxml
 requests
-pydeck
-streamlit-geolocation
-typesafe-sdk    # clasificar_restaurantes_jev.py
+pillow

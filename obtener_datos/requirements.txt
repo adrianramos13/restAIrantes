@@ -1,0 +1,9 @@
+# Proceso de datos (se ejecuta en local): extraer_html.py, extraer_resenas.py y
+# clasificar_restaurantes_jev.py. Tras instalar: python -m playwright install chromium
+pandas
+openpyxl
+requests
+beautifulsoup4
+lxml
+playwright
+typesafe-sdk
