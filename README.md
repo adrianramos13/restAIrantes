@@ -138,12 +138,17 @@ Archivo: `algoritmo/app.py`. Al arrancar carga `excels/clasificacion_jev.xlsx` (
 
 ### Lo que ve quien la usa
 
-1. **Presupuesto** mínimo y máximo por persona.
-2. **Tipo de cocina** (o "Cualquiera"). El desplegable muestra las categorías de Jev, con el número de restaurantes de cada una.
-3. **Desde dónde salís**: escribiendo una dirección, o con el botón **"Ubicación actual"** (el navegador pide permiso; requiere HTTPS, que Streamlit Cloud ya tiene). Al usar la ubicación actual la caja de dirección se desactiva; "Quitar" vuelve a la dirección escrita.
-4. **Cómo vais a ir**: en coche o a pie, y el **tiempo máximo** en minutos (5-60).
-5. **Plato concreto** (opcional): busca en la hoja `Platos mencionados`.
-6. Pulsar **Buscar restaurantes**.
+La interfaz está pensada primero para el móvil (tema en `.streamlit/config.toml`: crema y terracota, Fraunces + Inter, modo claro y oscuro). Tiene dos vistas en la misma página:
+
+**Buscador**, ordenado por lo que más descarta:
+1. **Desde dónde salís**: caja con sugerencias mientras escribes (Photon, solo Comunidad de Madrid), o el botón **"Usar mi ubicación"** (el navegador pide permiso; requiere HTTPS, que Streamlit Cloud ya tiene). Con la ubicación activa la caja se desactiva; "Quitar" vuelve a la dirección escrita.
+2. **Cómo vais** (coche / a pie) y **tiempo máximo** (5-60 min).
+3. **Cocina** (o "Cualquiera"): categorías de Jev.
+4. **Presupuesto** por persona (rango 0-100 €; 100 = sin tope).
+5. **Más opciones**: plato concreto (opcional), busca en la hoja `Platos mencionados`.
+6. **Buscar restaurantes**: botón fijo abajo, al alcance del pulgar.
+
+**Resultados**: barra con "← Cambiar" (vuelve al buscador con todo lo escrito), **Lista | Mapa** y un resumen de lo pedido; debajo, **Mejor valorados | Más cerca** (reordena sin repetir la búsqueda) y las tarjetas compactas. Al tocar una tarjeta o una foto del mapa se abre la **ficha** en una ventana encima.
 
 ### Qué pasa al buscar
 
@@ -159,13 +164,17 @@ flowchart TD
     F --> H["Filtro duro:<br/>tiempo máximo"]
     G --> H
     H --> I["Puntuación 0-1<br/>por restaurante"]
-    I --> J["Ordenar por score"]
-    J --> K["Guardar resultado en la sesión"]
-    K --> L["Mapa + Top 5<br/>(Mostrar más: hasta 10)"]
-    L --> M["Pinchar una foto:<br/>ficha debajo del mapa"]
+    I --> K["Guardar resultado en la sesión"]
+    K --> J["Ordenar: mejor valorados<br/>o más cerca"]
+    J --> L["Lista o mapa: Top 5<br/>(Ver más: hasta 10)"]
+    L --> M["Tocar tarjeta o foto:<br/>ficha en ventana"]
 ```
 
-**Filtro duro.** Solo pasan los restaurantes cuyo tiempo de desplazamiento sea menor o igual al máximo elegido. Los que no tienen coordenadas quedan fuera.
+**Filtros duros.** Solo pasan los restaurantes que cumplen todo lo pedido; si no hay suficientes, no se rellena con otros:
+- tiempo de desplazamiento menor o igual al máximo (los que no tienen coordenadas quedan fuera);
+- cocina elegida como principal o como secundaria con peso (fuera los de otra cocina y los no clasificados);
+- rango de precio que se cruce con el presupuesto (los que no tienen precio pasan, porque no se puede saber);
+- si pediste plato, menciones positivas de ese plato en las reseñas.
 
 **Puntuación.** Cada restaurante recibe un score entre 0 y 1 combinando cinco componentes. Los pesos están al principio de `app.py` (`PESO_*`) y se pueden cambiar:
 
@@ -183,18 +192,20 @@ flowchart TD
 - **0.0** si tiene otra categoría distinta.
 - **Sin categoría de Jev**: se compara la elegida contra el `Tipo de cocina` de Google, por **raíz de palabra** (no por frase completa, porque "Asiática (otras)" casi nunca aparece tal cual en el texto de Google, pero "asiat" sí encaja con "Asiática, Fusión"). Si coincide, 1.0; si no, 0.3 (ni sí ni no, para no descartarlo del todo).
 
-**Resultado.** Se muestran los 5 mejores; **Mostrar más** amplía a 10, siempre por score y sin reordenar los ya vistos. Cada tarjeta lleva foto, cocina, precio, rating, tiempo, dirección, información del plato pedido, otros platos destacados y enlaces a Google, Instagram y TikTok (búsquedas de Google limitadas a cada red, porque ninguna de las dos permite buscar sin iniciar sesión). El score no se muestra.
+**Resultado.** Se muestran 5; **Ver más** amplía a 10 (y no aparece si no hay más que encajen). Si hay menos de 5, se avisa ("Solo hay 3 que encajan"). Si no hay ninguno, se ofrecen atajos: ampliar el tiempo, cualquier cocina o quitar el plato.
+- **Tarjeta** (componente propio, horizontal): foto pequeña, nombre, cocina, precio, nota y minutos. Los cerrados temporal o permanentemente salen atenuados y con etiqueta.
+- **Ficha** (`st.dialog`): foto grande, cocina, precio, nota, tiempo, dirección, información del plato pedido, platos destacados, **Cómo llegar** (ruta en Google Maps) y enlaces a Instagram, TikTok y Google (búsquedas de Google limitadas a cada red, porque ninguna de las dos permite buscar sin iniciar sesión). El score no se muestra.
 
 ### El mapa
 
 - Componente propio (Streamlit Components v2) con **Leaflet**. Cada restaurante es su **foto redonda** con el número de posición (el mismo que en la lista; el nº 1 en dorado). Tu ubicación es el punto azul.
 - **Mapa base:** OpenFreeMap "Positron" (vectorial, sin clave), dibujado con MapLibre GL. Si el navegador no puede (sin WebGL, sin acceso a OpenFreeMap, tarda más de 12 s), cae automáticamente a **OpenStreetMap**.
-- **Pinchar una foto** resalta el pin y muestra su ficha completa bajo el mapa; pinchar en un hueco quita la selección. El zoom que pongas se conserva.
+- **Tocar una foto** resalta el pin y abre su ficha; tocar en un hueco quita la selección. El zoom que pongas se conserva. Ocupa el 60 % de la altura de la pantalla.
 - Si no hay resultados, el mapa muestra solo tu ubicación: sirve para comprobar que la app te ha situado donde esperabas.
 
 ### Estado de la sesión
 
-Los resultados se guardan en `st.session_state` para que botones como "Mostrar más" o pinchar en el mapa no repitan toda la búsqueda. Claves principales: `resultado`, `num_mostrados`, `restaurante_seleccionado`, `ubicacion_actual`.
+Los resultados se guardan en `st.session_state` para que "Ver más", cambiar el orden o la vista, o tocar el mapa no repitan toda la búsqueda. Claves principales: `vista` (buscador/resultados), `resultado`, `num_mostrados`, `restaurante_seleccionado`, `ficha_abrir`, `ubicacion_actual`. El formulario se dibuja siempre (en resultados solo se oculta con CSS) para no perder lo escrito.
 
 ---
 

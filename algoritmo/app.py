@@ -66,6 +66,10 @@ PESO_NUM_RESENAS = 0.05
 TOP_N = 5
 TOP_N_MAX = 10
 
+ORDEN_PUNTUACION = "Mejor valorados"
+ORDEN_CERCANOS = "Más cerca"
+PRESUPUESTO_SIN_LIMITE = 100   # el máximo del slider de presupuesto significa "sin tope"
+
 # Categoría de cocina calculada con Jev (columnas que trae clasificacion_jev.xlsx).
 COL_CATEGORIA = "Categoría (Jev)"
 COL_CATEGORIA_2 = "Categoría 2ª (Jev)"
@@ -404,7 +408,12 @@ def filtrar_y_puntuar(maestro, df_platos, r):
         )
 
     df["Score"] = df.apply(puntuar_fila, axis=1)
-    if r["orden"] == "Más cercanos":
+    return df
+
+
+def ordenar_resultados(df, orden):
+    """El orden se elige ya en la vista de resultados: cambiarlo no repite la búsqueda."""
+    if orden == ORDEN_CERCANOS:
         return df.sort_values(["Tiempo desplazamiento (min)", "Score"], ascending=[True, False])
     return df.sort_values("Score", ascending=False)
 
@@ -492,69 +501,231 @@ def resumen_mencion_plato(id_restaurante, plato_deseado, df_platos):
     return f"mencionado {len(menciones)} veces en reseñas ({', '.join(partes)})"
 
 
-def mostrar_tarjeta(fila, respuestas, df_platos, numero=None):
-    """Dibuja la tarjeta de un restaurante (foto a la izquierda, datos a la
-    derecha). Se usa tanto en la lista de resultados como en la ficha que
-    aparece al pinchar un punto del mapa."""
-    col_img, col_info = st.columns([1, 3], vertical_alignment="center")
+@st.cache_data(show_spinner=False)
+def _foto_base64(ruta):
+    return "data:image/jpeg;base64," + base64.b64encode(Path(ruta).read_bytes()).decode()
 
-    with col_img:
-        imagen_url = fila.get("Imagen URL")
+
+def foto_restaurante(fila, ancho=160):
+    """Foto para el navegador: la descargada en imagenes/ (en base64, porque los componentes
+    no ven el disco) o, si no hay, la URL de Google (que puede haber caducado)."""
+    imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
+    if imagen_local.is_file():
+        return _foto_base64(str(imagen_local))
+    url = fila.get("Imagen URL")
+    if isinstance(url, str) and url.strip():
+        return mejorar_resolucion_imagen(url, ancho=ancho, alto=ancho)
+    return None
+
+
+def estado_cerrado(fila):
+    """'Cerrado temporalmente' / 'Cerrado permanentemente' o '' si está abierto."""
+    estado = str(valor_o(fila, "Estado", ""))
+    return estado if "cerrado" in estado.lower() else ""
+
+
+def resumen_valoracion(fila):
+    puntuacion = fila.get("Puntuación")
+    if pd.isna(puntuacion):
+        return "Sin nota"
+    resenas = fila.get("Nº Reseñas")
+    detalle = f" ({int(resenas)})" if pd.notna(resenas) else ""
+    return f"⭐ {puntuacion:.1f}".replace(".", ",") + detalle
+
+
+def icono_transporte(modo_transporte):
+    return "🚗" if modo_transporte == "En coche" else "🚶"
+
+
+def mostrar_ficha(fila, respuestas, df_platos):
+    """Ficha completa en una ventana encima de los resultados (se abre al tocar una tarjeta
+    o una foto del mapa). No tiene widgets: así ninguna recarga la vuelve a abrir sola."""
+
+    @st.dialog(str(fila["Nombre"]), width="medium")
+    def _ficha():
         imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
-        if imagen_local.is_file():   # descargada por extraer_html.py; las URLs de Google caducan
-            st.image(str(imagen_local), width="stretch")
-        elif isinstance(imagen_url, str) and imagen_url.strip():
-            # Pedimos bastante más resolución de la que se va a mostrar (la
-            # columna es estrecha) para que se vea nítida en pantallas retina.
-            st.image(mejorar_resolucion_imagen(imagen_url, ancho=450, alto=450),
-                     width="stretch")
+        foto = str(imagen_local) if imagen_local.is_file() else foto_restaurante(fila, ancho=800)
+        if foto:
+            st.image(foto, width="stretch")
 
-    with col_info:
-        consulta_busqueda = urllib.parse.quote(f"{fila['Nombre']} Madrid")
-        url_busqueda = f"https://www.google.com/search?q={consulta_busqueda}"
-        prefijo = f"{numero}. " if numero is not None else ""
-        st.markdown(f"### {prefijo}[{fila['Nombre']}]({url_busqueda})")
+        cerrado = estado_cerrado(fila)
+        if cerrado:
+            st.badge(cerrado, icon=":material/schedule:", color="gray")
 
-        st.write(f"**Cocina:** {etiqueta_cocina(fila)}  |  **Precio:** {fila['Rango de precios']}  |  "
-                 f"**Rating:** {fila['Puntuación']} ({fila['Nº Reseñas']} reseñas)")
-        etiqueta_modo_tarjeta = "En coche" if respuestas["modo_transporte"] == "En coche" else "Andando"
-        st.write(f"**{etiqueta_modo_tarjeta}:** {fila['Tiempo desplazamiento (min)']:.0f} min  |  "
-                 f"**Dirección:** {valor_o(fila, 'Dirección')}")
+        minutos = f"{icono_transporte(respuestas['modo_transporte'])} {fila['Tiempo desplazamiento (min)']:.0f} min"
+        direccion = valor_o(fila, "Dirección", "")
+        st.markdown(
+            f"**{etiqueta_cocina(fila)}**  \n"
+            f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)} reseñas  \n"
+            f"{minutos}" + (f" · {direccion}" if direccion else "")
+        )
 
         if respuestas["plato_deseado"]:
             resumen = resumen_mencion_plato(fila["ID"], respuestas["plato_deseado"], df_platos)
-            st.write(f"**Sobre '{respuestas['plato_deseado']}':** {resumen}")
+            st.markdown(f"**Sobre «{respuestas['plato_deseado']}»:** {resumen}")
 
-        valor = fila.get("Platos mejor valorados")
-        if isinstance(valor, str) and valor.strip():
-            st.write(f"**Otros platos destacados:** {formatear_platos(valor)}")
+        platos = formatear_platos(fila.get("Platos mejor valorados"))
+        if platos:
+            st.markdown("**Lo que destacan**  \n" + " ".join(
+                f":orange-badge[{p.strip()}]" for p in platos.split(",") if p.strip()))
 
-        # Instagram/TikTok no tienen una búsqueda por palabra clave fiable
-        # sin iniciar sesión (Instagram redirige a login), así que usamos el
-        # operador site: de Google, que sí funciona sin cuenta y solo
-        # devuelve contenido público. Los logos vienen de Simple Icons
-        # (cdn.simpleicons.org), gratuito y sin login.
-        consulta_ig = urllib.parse.quote(f'site:instagram.com "{fila["Nombre"]}" Madrid')
-        consulta_tt = urllib.parse.quote(f'site:tiktok.com "{fila["Nombre"]}" Madrid')
-        url_ig = f"https://www.google.com/search?q={consulta_ig}"
-        url_tt = f"https://www.google.com/search?q={consulta_tt}"
-        logo_ig = "https://cdn.simpleicons.org/instagram/E4405F"
-        logo_tt = "https://cdn.simpleicons.org/tiktok/000000"
-        st.markdown(
-            f'<a href="{url_ig}" target="_blank" style="margin-right:16px; text-decoration:none;">'
-            f'<img src="{logo_ig}" width="16" style="vertical-align:middle; margin-right:4px;">'
-            f'<span style="vertical-align:middle;">Instagram</span></a>'
-            f'<a href="{url_tt}" target="_blank" style="text-decoration:none;">'
-            f'<img src="{logo_tt}" width="16" style="vertical-align:middle; margin-right:4px;">'
-            f'<span style="vertical-align:middle;">TikTok</span></a>',
-            unsafe_allow_html=True,
-        )
+        modo_ruta = "driving" if respuestas["modo_transporte"] == "En coche" else "walking"
+        url_ruta = ("https://www.google.com/maps/dir/?api=1&destination="
+                    f"{fila['Latitud']},{fila['Longitud']}&travelmode={modo_ruta}")
+        st.link_button("Cómo llegar", url_ruta, type="primary", icon=":material/directions:", width="stretch")
+
+        # Instagram/TikTok no tienen una búsqueda por palabra clave fiable sin iniciar
+        # sesión, así que se usa el operador site: de Google (funciona sin cuenta).
+        nombre = fila["Nombre"]
+        buscar = lambda q: "https://www.google.com/search?q=" + urllib.parse.quote(q)
+        with st.container(horizontal=True):
+            st.link_button("Instagram", buscar(f'site:instagram.com "{nombre}" Madrid'), width="stretch")
+            st.link_button("TikTok", buscar(f'site:tiktok.com "{nombre}" Madrid'), width="stretch")
+        st.link_button("Buscar en Google", buscar(f"{nombre} Madrid"), type="tertiary",
+                       icon=":material/search:", width="stretch")
+
+    _ficha()
+
+
+# ----------------------- LISTA DE RESULTADOS ----------------------- #
+# Componente propio: tarjetas horizontales compactas (foto pequeña + 3 líneas de datos),
+# caben 4-5 por pantalla en el móvil. st.columns no sirve aquí porque en pantallas
+# estrechas apila la foto encima de los datos. Al tocar una tarjeta se avisa a Python
+# para abrir su ficha.
+
+_HTML_LISTA = """
+<ul class="lr" role="list"></ul>
+"""
+
+_CSS_LISTA = """
+.lr { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lr-card {
+  all: unset; box-sizing: border-box; width: 100%; cursor: pointer;
+  display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 8px; min-height: 88px;
+  background: var(--st-secondary-background-color); border: 1px solid var(--st-border-color);
+  border-radius: 12px; font-family: var(--st-font, sans-serif); color: var(--st-text-color);
+  transition: transform 0.08s ease-out, border-color 0.15s;
+}
+.lr-card:hover { border-color: var(--st-primary-color); }
+.lr-card:active { transform: scale(0.985); }
+.lr-card:focus-visible { outline: 2px solid var(--st-primary-color); outline-offset: 2px; }
+.lr-card.lr-sel { border-color: var(--st-primary-color); }
+.lr-cerrado { opacity: 0.6; }
+.lr-foto { position: relative; flex: 0 0 72px; width: 72px; height: 72px; }
+.lr-foto img, .lr-inicial { width: 72px; height: 72px; border-radius: 10px; object-fit: cover; display: block; }
+.lr-inicial {
+  display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 700;
+  background: var(--st-primary-color); color: #fff; opacity: 0.85;
+}
+.lr-num {
+  position: absolute; left: -6px; top: -6px; min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box;
+  border-radius: 11px; background: var(--st-primary-color); color: #fff;
+  font: 700 12px/22px var(--st-font, sans-serif); text-align: center;
+  box-shadow: 0 0 0 2px var(--st-secondary-background-color);
+}
+.lr-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lr-nombre {
+  font-family: var(--st-heading-font, var(--st-font, serif)); font-weight: 600; font-size: 17px; line-height: 1.25;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.lr-cocina, .lr-meta { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lr-cocina { opacity: 0.75; }
+.lr-etiqueta {
+  align-self: flex-start; margin-top: 2px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: var(--st-border-color); color: var(--st-text-color);
+}
+.lr-flecha { flex: 0 0 auto; font-size: 22px; opacity: 0.4; }
+@media (prefers-reduced-motion: reduce) { .lr-card { transition: none; } .lr-card:active { transform: none; } }
+"""
+
+_JS_LISTA = """
+export default function (component) {
+  const { parentElement, data, setTriggerValue } = component;
+  const lista = parentElement.querySelector('.lr');
+  lista.textContent = '';
+
+  data.items.forEach((r) => {
+    const li = document.createElement('li');
+    const boton = document.createElement('button');
+    boton.type = 'button';
+    boton.className = 'lr-card' + (r.id === data.seleccionado ? ' lr-sel' : '') + (r.cerrado ? ' lr-cerrado' : '');
+    boton.setAttribute('aria-label', `${r.n}. ${r.nombre}. ${r.cocina}. ${r.meta}${r.cerrado ? '. ' + r.cerrado : ''}. Ver ficha`);
+
+    const foto = document.createElement('div');
+    foto.className = 'lr-foto';
+    const inicial = () => {
+      const d = document.createElement('div');
+      d.className = 'lr-inicial'; d.textContent = (r.nombre.trim()[0] || '?').toUpperCase();
+      return d;
+    };
+    if (r.foto) {
+      const img = document.createElement('img');
+      img.alt = ''; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer'; img.src = r.foto;
+      img.onerror = () => img.replaceWith(inicial());
+      foto.appendChild(img);
+    } else {
+      foto.appendChild(inicial());
+    }
+    const num = document.createElement('span');
+    num.className = 'lr-num'; num.textContent = String(r.n);
+    foto.appendChild(num);
+
+    const info = document.createElement('div');
+    info.className = 'lr-info';
+    const nombre = document.createElement('span'); nombre.className = 'lr-nombre'; nombre.textContent = r.nombre;
+    const cocina = document.createElement('span'); cocina.className = 'lr-cocina'; cocina.textContent = r.cocina;
+    const meta = document.createElement('span'); meta.className = 'lr-meta'; meta.textContent = r.meta;
+    info.append(nombre, cocina, meta);
+    if (r.cerrado) {
+      const etiqueta = document.createElement('span'); etiqueta.className = 'lr-etiqueta'; etiqueta.textContent = r.cerrado;
+      info.appendChild(etiqueta);
+    }
+
+    const flecha = document.createElement('span');
+    flecha.className = 'lr-flecha'; flecha.setAttribute('aria-hidden', 'true'); flecha.textContent = '›';
+
+    boton.append(foto, info, flecha);
+    boton.onclick = () => setTriggerValue('abrir', r.id);
+    li.appendChild(boton);
+    lista.appendChild(li);
+  });
+}
+"""
+
+_LISTA_RESTAURANTES = st.components.v2.component(
+    "lista_restaurantes",
+    html=_HTML_LISTA, css=_CSS_LISTA, js=_JS_LISTA,
+)
+
+
+def _al_abrir_desde_lista():
+    valor = st.session_state["lista_restaurantes"].abrir
+    if valor is not None:
+        st.session_state["restaurante_seleccionado"] = int(valor)
+        st.session_state["ficha_abrir"] = int(valor)
+
+
+def mostrar_lista(top, respuestas, seleccionado_id=None):
+    icono = icono_transporte(respuestas["modo_transporte"])
+    items = []
+    for n, (_, fila) in enumerate(top.iterrows(), start=1):
+        items.append({
+            "id": int(fila["ID"]), "n": n, "nombre": str(fila["Nombre"]),
+            "cocina": str(etiqueta_cocina(fila)), "foto": foto_restaurante(fila),
+            "meta": (f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)} · "
+                     f"{icono} {fila['Tiempo desplazamiento (min)']:.0f}'"),
+            "cerrado": estado_cerrado(fila),
+        })
+    _LISTA_RESTAURANTES(
+        data={"items": items, "seleccionado": seleccionado_id},
+        key="lista_restaurantes", on_abrir_change=_al_abrir_desde_lista,
+    )
 
 
 # ----------------------- MAPA CON FOTOS REDONDAS ----------------------- #
 # Componente propio (st.components.v2) con Leaflet: cada restaurante es su foto
-# redonda con el número de posición (el mismo que en la lista). Al pinchar una
-# foto se avisa a Python para mostrar su ficha debajo. Leaflet y los mosaicos del
+# redonda con el número de posición (el mismo que en la lista). Al tocar una
+# foto se avisa a Python para abrir su ficha. Leaflet y los mosaicos del
 # mapa se cargan desde internet (jsDelivr y OpenFreeMap; OpenStreetMap de respaldo).
 
 _HTML_MAPA = """
@@ -563,7 +734,7 @@ _HTML_MAPA = """
 
 _CSS_MAPA = """
 .fm-mapa {
-  height: 420px; width: 100%; position: relative; z-index: 0; overflow: hidden;
+  height: 60vh; min-height: 300px; max-height: 560px; width: 100%; position: relative; z-index: 0; overflow: hidden;
   border: 1px solid var(--st-border-color, rgba(49, 51, 63, 0.2));
   border-radius: var(--st-base-radius, 0.5rem);
   font-family: var(--st-font, sans-serif);
@@ -820,6 +991,8 @@ def _al_seleccionar_en_mapa():
     if valor is None:
         return
     st.session_state["restaurante_seleccionado"] = None if int(valor) == -1 else int(valor)
+    if int(valor) != -1:
+        st.session_state["ficha_abrir"] = int(valor)
 
 
 def mostrar_mapa(lat_u, lon_u, restaurantes=None, seleccionado_id=None):
@@ -832,14 +1005,7 @@ def mostrar_mapa(lat_u, lon_u, restaurantes=None, seleccionado_id=None):
         for n, (_, fila) in enumerate(restaurantes.iterrows(), start=1):
             if pd.isna(fila["Latitud"]) or pd.isna(fila["Longitud"]):
                 continue
-            url = fila.get("Imagen URL")
-            imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
-            if imagen_local.is_file():   # el componente JS no ve el disco: se la pasamos en base64
-                foto = "data:image/jpeg;base64," + base64.b64encode(imagen_local.read_bytes()).decode()
-            elif isinstance(url, str) and url.strip():
-                foto = mejorar_resolucion_imagen(url, ancho=160, alto=160)
-            else:
-                foto = None
+            foto = foto_restaurante(fila)
             lista.append({
                 "id": int(fila["ID"]), "n": n, "nombre": str(fila["Nombre"]),
                 "lat": float(fila["Latitud"]), "lon": float(fila["Longitud"]), "foto": foto,
@@ -852,9 +1018,9 @@ def mostrar_mapa(lat_u, lon_u, restaurantes=None, seleccionado_id=None):
         on_seleccion_change=_al_seleccionar_en_mapa,
     )
     if lista:
-        st.caption("🔵 Tu ubicación · Pincha la foto de un restaurante para ver su ficha.")
+        st.caption("🔵 Tú · Toca una foto para ver la ficha.")
     else:
-        st.caption("🔵 Tu ubicación — comprueba que el mapa te sitúa donde esperabas.")
+        st.caption("🔵 Tú — comprueba que el mapa te sitúa donde esperabas.")
 
 
 # ----------------------- BOTÓN "UBICACIÓN ACTUAL" ----------------------- #
@@ -865,19 +1031,19 @@ def mostrar_mapa(lat_u, lon_u, restaurantes=None, seleccionado_id=None):
 
 _HTML_UBICACION = """
 <button type="button" id="boton">
-  <span class="icono">📍</span><span class="etiqueta">Ubicación actual</span>
+  <span class="icono">📍</span><span class="etiqueta">Usar mi ubicación</span>
 </button>
 """
 
 _CSS_UBICACION = """
 button {
-  display: inline-flex; align-items: center; gap: 0.4rem;
+  display: flex; align-items: center; justify-content: center; gap: 0.4rem; width: 100%; box-sizing: border-box;
   font-family: var(--st-font, inherit); font-size: calc(var(--st-base-font-size, 16px) * 0.875);
   font-weight: 400; line-height: 1.6;
   color: var(--st-text-color); background: var(--st-background-color);
   border: 1px solid var(--st-border-color);
   border-radius: var(--st-button-radius, 0.5rem);
-  padding: 0.25rem 0.75rem; min-height: 2.5rem; cursor: pointer;
+  padding: 0.25rem 0.75rem; min-height: 44px; cursor: pointer;
 }
 button:hover { border-color: var(--st-primary-color); color: var(--st-primary-color); }
 button:disabled { opacity: 0.6; cursor: progress; }
@@ -888,7 +1054,7 @@ export default function (component) {
   const { parentElement, setTriggerValue } = component;
   const boton = parentElement.querySelector('#boton');
   const etiqueta = boton.querySelector('.etiqueta');
-  const textoNormal = 'Ubicación actual';
+  const textoNormal = 'Usar mi ubicación';
 
   boton.onclick = () => {
     if (!navigator.geolocation) { setTriggerValue('error', 'no_soportado'); return; }
@@ -953,10 +1119,10 @@ label { display: block; font-family: var(--st-font, inherit); font-size: calc(va
         color: var(--st-text-color); margin-bottom: 0.25rem; }
 .caja { position: relative; }
 input {
-  box-sizing: border-box; width: 100%; min-height: 2.5rem; padding: 0.5rem 0.75rem;
+  box-sizing: border-box; width: 100%; min-height: 44px; padding: 0.5rem 0.75rem;
   font-family: var(--st-font, inherit); font-size: var(--st-base-font-size, 16px);
   color: var(--st-text-color); background: var(--st-secondary-background-color);
-  border: 1px solid transparent; border-radius: var(--st-base-radius, 0.5rem); outline: none;
+  border: 1px solid var(--st-border-color); border-radius: var(--st-base-radius, 0.5rem); outline: none;
 }
 input:focus { border-color: var(--st-primary-color); }
 input:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -966,7 +1132,7 @@ ul {
   border-radius: var(--st-base-radius, 0.5rem); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   max-height: 18rem; overflow-y: auto;
 }
-li { padding: 0.45rem 0.75rem; cursor: pointer; font-family: var(--st-font, inherit); color: var(--st-text-color); }
+li { padding: 0.6rem 0.75rem; min-height: 44px; box-sizing: border-box; cursor: pointer; font-family: var(--st-font, inherit); color: var(--st-text-color); }
 li[aria-selected="true"], li:hover { background: var(--st-secondary-background-color); }
 li .principal { display: block; font-size: calc(var(--st-base-font-size, 16px) * 0.95); }
 li .detalle { display: block; font-size: calc(var(--st-base-font-size, 16px) * 0.8); opacity: 0.7; }
@@ -1080,169 +1246,253 @@ def quitar_ubicacion_actual():
 
 
 # ----------------------- INTERFAZ ----------------------- #
+# Dos vistas en la misma página: "buscador" y "resultados". El formulario se dibuja
+# SIEMPRE (en resultados solo se oculta con CSS): si no se dibujara, Streamlit borraría
+# lo que habías escrito y "Cambiar" te devolvería un formulario vacío.
+
+# Ajustes de estilo que el tema de config.toml no cubre. El botón Buscar se queda fijo
+# abajo (al alcance del pulgar) con un fondo degradado para que no tape el texto de golpe.
+# ponytail: el fondo del botón fijo sigue el modo claro/oscuro del sistema, no el que se
+# elija en el menú de Streamlit; si se cambia a mano, el degradado puede no casar.
+_CSS_GLOBAL = """
+<style>
+[data-testid="stMainBlockContainer"] { padding-top: 3rem; padding-bottom: 2rem; }
+.st-key-boton_buscar {
+  position: sticky; bottom: 0; z-index: 10;
+  padding: 16px 0 calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, #FBF7F2 75%, rgba(251, 247, 242, 0));
+}
+@media (prefers-color-scheme: dark) {
+  .st-key-boton_buscar { background: linear-gradient(to top, #16130F 75%, rgba(22, 19, 15, 0)); }
+}
+.st-key-boton_buscar button { min-height: 52px; font-size: 1.05rem; font-weight: 600; }
+</style>
+"""
+_CSS_OCULTAR_BUSCADOR = "<style>.st-key-buscador { display: none; }</style>"
+
+ETIQUETAS_TRANSPORTE = {"En coche": "🚗 Coche", "A pie": "🚶 A pie"}
+
+
+def ir_a_buscador():
+    st.session_state["vista"] = "buscador"
+
+
+def fallar_busqueda(mensaje):
+    """Vuelve al buscador y enseña el error allí (si la búsqueda se lanzó desde la vista de
+    resultados, el formulario está oculto y un st.error ahí no se vería)."""
+    st.session_state["vista"] = "buscador"
+    st.session_state["error_busqueda"] = mensaje
+    st.rerun()
+
+
+def buscar_con(**cambios):
+    """Botones rápidos del estado "sin resultados": cambian un filtro y repiten la búsqueda."""
+    for clave, valor in cambios.items():
+        st.session_state[clave] = valor
+    st.session_state["buscar_ya"] = True
+
+
+def texto_presupuesto(minimo, maximo):
+    if maximo is None:
+        return f"desde {minimo} €" if minimo else "cualquier precio"
+    return f"{minimo}–{maximo} €"
+
+
+def resumen_busqueda(r):
+    lugar = (r.get("direccion_encontrada") or "Tu ubicación").split(",")
+    partes = [", ".join(p.strip() for p in lugar[:2]),
+              r["cocina"] or "Cualquier cocina",
+              f"{icono_transporte(r['modo_transporte'])} ≤{r['tiempo_maximo_min']}'",
+              texto_presupuesto(r["presupuesto_min"], r["presupuesto_max"])]
+    return " · ".join(partes)
+
 
 st.set_page_config(page_title="¿Dónde comemos?", page_icon="🍽️", layout="centered")
-st.title("🍽️ ¿Dónde comemos hoy?")
+st.html(_CSS_GLOBAL)
 
 maestro, df_platos = cargar_datos()
+vista = st.session_state.setdefault("vista", "buscador")
+if vista == "resultados" and st.session_state.get("resultado") is not None:
+    st.html(_CSS_OCULTAR_BUSCADOR)
 
-col1, col2 = st.columns(2)
-with col1:
-    presupuesto_min = st.number_input("Presupuesto mín. (€/persona)", min_value=0, value=0, step=5)
-with col2:
-    presupuesto_max = st.number_input("Presupuesto máx. (€/persona)", min_value=0, value=30, step=5)
+# ----------------------- VISTA: BUSCADOR ----------------------- #
+with st.container(key="buscador"):
+    st.title("¿Dónde comemos?")
 
-if tiene_categorias_jev(maestro):
-    cocinas_jev = sorted(maestro[COL_CATEGORIA].dropna().unique())
-    cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_jev)
-else:   # maestro sin categorías de Jev: se usa el tipo de Google
-    cocinas_disponibles = sorted(maestro["Tipo de cocina"].dropna().unique().tolist())
-    cocina = st.selectbox("Tipo de cocina", ["Cualquiera"] + cocinas_disponibles)
+    # Caja de dirección y, justo debajo, el botón "Usar mi ubicación". Reservamos primero
+    # el hueco de la caja y lo rellenamos después de procesar el clic del botón: así la
+    # caja ya refleja (desactivada) que se está usando la ubicación en ese mismo ciclo.
+    caja_direccion = st.container()
+    zona_ubicacion = st.container()
 
-# Caja de dirección y, justo debajo, el botón "Ubicación actual". Reservamos primero
-# el hueco de la caja y lo rellenamos después de procesar el clic del botón: así la
-# caja ya refleja (desactivada) que se está usando la ubicación en ese mismo ciclo.
-caja_direccion = st.container()
-zona_ubicacion = st.container()
+    with zona_ubicacion:
+        lectura = boton_ubicacion_actual(key="boton_ubicacion")
+        if lectura.ubicacion:
+            st.session_state["ubicacion_actual"] = (lectura.ubicacion["lat"], lectura.ubicacion["lon"])
+            st.session_state["precision_ubicacion"] = lectura.ubicacion.get("precision")
+            st.session_state.pop("error_ubicacion", None)
+        elif lectura.error is not None:
+            st.session_state["error_ubicacion"] = str(lectura.error)
 
-with zona_ubicacion:
-    lectura = boton_ubicacion_actual(key="boton_ubicacion")
-    if lectura.ubicacion:
-        st.session_state["ubicacion_actual"] = (lectura.ubicacion["lat"], lectura.ubicacion["lon"])
-        st.session_state["precision_ubicacion"] = lectura.ubicacion.get("precision")
-        st.session_state.pop("error_ubicacion", None)
-    elif lectura.error is not None:
-        st.session_state["error_ubicacion"] = str(lectura.error)
-
-    if st.session_state.get("ubicacion_actual"):
-        col_estado, col_quitar = st.columns([3, 1], vertical_alignment="center")
-        with col_estado:
+        if st.session_state.get("ubicacion_actual"):
             precision = st.session_state.get("precision_ubicacion")
-            detalle = f" (precisión ≈ {precision:.0f} m)" if precision else ""
-            st.caption(f"✅ Usando tu ubicación actual{detalle}")
+            with st.container(horizontal=True, vertical_alignment="center"):
+                detalle = f" · ±{precision:.0f} m" if precision else ""
+                st.caption(f"✓ Tu ubicación{detalle}")
+                st.button("Quitar", on_click=quitar_ubicacion_actual, type="tertiary")
             if precision and precision > 1000:
                 st.caption("⚠️ Es poco precisa (habitual en ordenador). Si no cuadra, quítala y escribe la dirección.")
-        with col_quitar:
-            st.button("✖ Quitar", on_click=quitar_ubicacion_actual, width="stretch")
-    elif st.session_state.get("error_ubicacion"):
-        clave = st.session_state["error_ubicacion"]
-        st.warning(MENSAJES_ERROR_UBICACION.get(clave, MENSAJES_ERROR_UBICACION["2"]))
+        elif st.session_state.get("error_ubicacion"):
+            clave = st.session_state["error_ubicacion"]
+            st.warning(MENSAJES_ERROR_UBICACION.get(clave, MENSAJES_ERROR_UBICACION["2"]))
 
-ubicacion_actual = st.session_state.get("ubicacion_actual")
-usar_ubicacion_actual = ubicacion_actual is not None
+    ubicacion_actual = st.session_state.get("ubicacion_actual")
+    usar_ubicacion_actual = ubicacion_actual is not None
 
-with caja_direccion:
-    direccion, sugerencia_elegida = caja_direccion_con_sugerencias(
-        key="caja_direccion",
-        disabled=usar_ubicacion_actual,
-        placeholder=("Usando tu ubicación actual" if usar_ubicacion_actual else "ej. Sol, Madrid"),
+    with caja_direccion:
+        direccion, sugerencia_elegida = caja_direccion_con_sugerencias(
+            key="caja_direccion",
+            disabled=usar_ubicacion_actual,
+            placeholder=("Usando tu ubicación" if usar_ubicacion_actual else "Calle, barrio o sitio"),
+        )
+
+    modo_transporte = st.segmented_control(
+        "¿Cómo vais?", list(ETIQUETAS_TRANSPORTE), format_func=ETIQUETAS_TRANSPORTE.get,
+        default="En coche", key="transporte", width="stretch",
+    ) or "En coche"   # si se desmarca la opción elegida, vuelve a coche
+    tiempo_maximo_min = st.slider("Tiempo máximo", 5, 60, 20, step=5, format="%d min", key="tiempo")
+
+    if tiene_categorias_jev(maestro):
+        cocinas_disponibles = sorted(maestro[COL_CATEGORIA].dropna().unique())
+    else:   # maestro sin categorías de Jev: se usa el tipo de Google
+        cocinas_disponibles = sorted(maestro["Tipo de cocina"].dropna().unique().tolist())
+    cocina = st.selectbox("Cocina", ["Cualquiera"] + cocinas_disponibles, key="cocina")
+
+    presupuesto_min, presupuesto_max = st.slider(
+        "Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, (0, 30), step=5, format="%d €", key="presupuesto",
+        help=f"Arrastra el máximo hasta {PRESUPUESTO_SIN_LIMITE} € para no poner tope.",
     )
+    if presupuesto_max == PRESUPUESTO_SIN_LIMITE:
+        presupuesto_max = None   # solapamiento() trata None como "sin tope"
 
-modo_transporte = st.radio("¿Cómo vais a ir?", ["En coche", "A pie"], horizontal=True)
-etiqueta_tiempo = "Máximo en coche (minutos)" if modo_transporte == "En coche" else "Máximo andando (minutos)"
-tiempo_maximo_min = st.number_input(
-    etiqueta_tiempo, min_value=5, max_value=60, value=20, step=1
-)
-plato_deseado = st.text_input("¿Algún plato concreto?", placeholder="ej. sushi (opcional)")
-orden = st.radio("Ordenar por", ["Mejor puntuación", "Más cercanos"], horizontal=True)
+    with st.expander("Más opciones"):
+        plato_deseado = st.text_input("¿Algún plato concreto?", placeholder="ej. sushi", key="plato")
 
-enviado = st.button("🔍 Buscar restaurantes", width="stretch")
+    enviado = st.button("Buscar restaurantes", type="primary", icon=":material/search:",
+                        width="stretch", key="boton_buscar")
+    enviado = enviado or st.session_state.pop("buscar_ya", False)
+    if st.session_state.get("error_busqueda") and not enviado:
+        st.error(st.session_state.pop("error_busqueda"))
 
-if enviado:
-    direccion_encontrada = None
-    if usar_ubicacion_actual and ubicacion_actual:
-        ubicacion_usuario = ubicacion_actual
-    elif sugerencia_elegida:   # ya trae coordenadas: no hace falta geocodificar
-        ubicacion_usuario = (sugerencia_elegida["lat"], sugerencia_elegida["lon"])
-        direccion_encontrada = sugerencia_elegida["texto"]
-    else:
-        if not direccion.strip():
-            st.error("Necesito una dirección o zona desde donde salís (o usa tu ubicación actual).")
-            st.stop()
+    if enviado:
+        direccion_encontrada = None
+        if usar_ubicacion_actual and ubicacion_actual:
+            ubicacion_usuario = ubicacion_actual
+        elif sugerencia_elegida:   # ya trae coordenadas: no hace falta geocodificar
+            ubicacion_usuario = (sugerencia_elegida["lat"], sugerencia_elegida["lon"])
+            direccion_encontrada = sugerencia_elegida["texto"]
+        else:
+            if not direccion.strip():
+                fallar_busqueda("Dinos desde dónde salís (o usa tu ubicación).")
 
-        try:
-            with st.spinner("Localizando tu dirección..."):
-                encontrada = geocodificar_direccion(direccion)
-        except GeocoderServiceError as e:
-            st.error(f"El servicio de mapas no responde ahora mismo ({type(e).__name__}). "
-                     f"Prueba en un rato o usa tu ubicación actual.")
-            st.stop()
+            try:
+                with st.spinner("Localizando tu dirección..."):
+                    encontrada = geocodificar_direccion(direccion)
+            except GeocoderServiceError as e:
+                fallar_busqueda(f"El servicio de mapas no responde ahora mismo ({type(e).__name__}). "
+                                f"Prueba en un rato o usa tu ubicación.")
 
-        if encontrada is None:
-            st.error("No he encontrado esa dirección en Madrid. Prueba con calle y número o un barrio.")
-            st.stop()
-        ubicacion_usuario = (encontrada.latitude, encontrada.longitude)
-        direccion_encontrada = encontrada.address
+            if encontrada is None:
+                fallar_busqueda("No he encontrado esa dirección en Madrid. Prueba con calle y número o un barrio.")
+            ubicacion_usuario = (encontrada.latitude, encontrada.longitude)
+            direccion_encontrada = encontrada.address
 
-    respuestas = {
-        "presupuesto_min": presupuesto_min,
-        "presupuesto_max": presupuesto_max,
-        "cocina": "" if cocina == "Cualquiera" else cocina,
-        "ubicacion_usuario": ubicacion_usuario,
-        "direccion_encontrada": direccion_encontrada,
-        "modo_transporte": modo_transporte,
-        "tiempo_maximo_min": tiempo_maximo_min,
-        "plato_deseado": plato_deseado.strip(),
-        "orden": orden,
-    }
+        respuestas = {
+            "presupuesto_min": presupuesto_min,
+            "presupuesto_max": presupuesto_max,
+            "cocina": "" if cocina == "Cualquiera" else cocina,
+            "ubicacion_usuario": ubicacion_usuario,
+            "direccion_encontrada": direccion_encontrada,
+            "modo_transporte": modo_transporte,
+            "tiempo_maximo_min": tiempo_maximo_min,
+            "plato_deseado": plato_deseado.strip(),
+        }
 
-    texto_spinner = ("Calculando tiempos en coche a los restaurantes..." if modo_transporte == "En coche"
-                      else "Calculando tiempos andando a los restaurantes...")
-    with st.spinner(texto_spinner):
-        df_puntuado = filtrar_y_puntuar(maestro, df_platos, respuestas)
+        texto_spinner = ("Calculando tiempos en coche..." if modo_transporte == "En coche"
+                         else "Calculando tiempos andando...")
+        with st.spinner(texto_spinner):
+            df_puntuado = filtrar_y_puntuar(maestro, df_platos, respuestas)
 
-    # Guardamos el resultado de esta búsqueda en la sesión: así el botón
-    # "Mostrar más" (que no está dentro del formulario) puede hacer que la
-    # página se vuelva a dibujar sin tener que repetir toda la búsqueda.
-    st.session_state["resultado"] = {"df_puntuado": df_puntuado, "respuestas": respuestas}
-    st.session_state["num_mostrados"] = TOP_N
-    st.session_state["restaurante_seleccionado"] = None
+        # El resultado se guarda en la sesión: cambiar el orden, la vista o pulsar
+        # "Ver más" vuelve a dibujar la página sin repetir toda la búsqueda.
+        st.session_state["resultado"] = {"df_puntuado": df_puntuado, "respuestas": respuestas}
+        st.session_state["num_mostrados"] = TOP_N
+        st.session_state["restaurante_seleccionado"] = None
+        st.session_state["vista"] = "resultados"
+        st.rerun()
 
+# ----------------------- VISTA: RESULTADOS ----------------------- #
 resultado = st.session_state.get("resultado")
-if resultado is not None:
-    df_puntuado = resultado["df_puntuado"]
+if vista == "resultados" and resultado is not None:
     respuestas = resultado["respuestas"]
     ubicacion_usuario = respuestas["ubicacion_usuario"]
-    modo_transporte_resultado = respuestas["modo_transporte"]
-    tiempo_maximo_resultado = respuestas["tiempo_maximo_min"]
-    if respuestas.get("direccion_encontrada"):
-        st.caption(f"📍 Te he situado en: {respuestas['direccion_encontrada']}")
 
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.button("Cambiar", icon=":material/arrow_back:", type="tertiary", on_click=ir_a_buscador)
+        modo_vista = st.segmented_control(
+            "Vista", ["Lista", "Mapa"], default="Lista", key="modo_vista", label_visibility="collapsed",
+        ) or "Lista"
+    st.caption(resumen_busqueda(respuestas))
+
+    df_puntuado = resultado["df_puntuado"]
     if df_puntuado.empty:
-        etiqueta_modo = "en coche" if modo_transporte_resultado == "En coche" else "andando"
-        st.warning(f"No hay ningún restaurante a menos de {tiempo_maximo_resultado} min {etiqueta_modo} "
-                   f"que cumpla lo que has pedido. Prueba a ampliar el tiempo o relajar cocina, presupuesto o plato.")
+        with st.container(border=True):
+            st.subheader("Nada por aquí")
+            etiqueta_modo = "en coche" if respuestas["modo_transporte"] == "En coche" else "andando"
+            st.write(f"No hay ningún restaurante a menos de {respuestas['tiempo_maximo_min']} min "
+                     f"{etiqueta_modo} que cumpla lo que habéis pedido.")
+            with st.container(horizontal=True, wrap=True):
+                if respuestas["tiempo_maximo_min"] < 60:
+                    nuevo_tiempo = min(60, respuestas["tiempo_maximo_min"] + 10)
+                    st.button(f"Ampliar a {nuevo_tiempo} min", on_click=buscar_con, kwargs={"tiempo": nuevo_tiempo})
+                if respuestas["cocina"]:
+                    st.button("Cualquier cocina", on_click=buscar_con, kwargs={"cocina": "Cualquiera"})
+                if respuestas["plato_deseado"]:
+                    st.button("Sin plato concreto", on_click=buscar_con, kwargs={"plato": ""})
         mostrar_mapa(*ubicacion_usuario)
         st.stop()
 
+    orden = st.segmented_control(
+        "Ordenar", [ORDEN_PUNTUACION, ORDEN_CERCANOS], default=ORDEN_PUNTUACION, key="orden",
+        label_visibility="collapsed",
+    ) or ORDEN_PUNTUACION
+    df_puntuado = ordenar_resultados(df_puntuado, orden)
+
     num_mostrados = min(st.session_state.get("num_mostrados", TOP_N), TOP_N_MAX, len(df_puntuado))
     top = df_puntuado.head(num_mostrados)
-
-    # --- Mapa (al pinchar una foto, aparece su ficha debajo) ---
-    lat_u, lon_u = ubicacion_usuario
     ids_top = [int(x) for x in top["ID"].tolist()]
     seleccionado = st.session_state.get("restaurante_seleccionado")
     if seleccionado not in ids_top:
         seleccionado = None
-    mostrar_mapa(lat_u, lon_u, top, seleccionado)
 
-    if seleccionado is not None:
-        posicion = ids_top.index(seleccionado)
-        st.markdown("#### 📍 Restaurante seleccionado")
-        with st.container(border=True):
-            mostrar_tarjeta(top.iloc[posicion], respuestas, df_platos, numero=posicion + 1)
+    if len(df_puntuado) == 1:
+        st.markdown("**Solo hay 1 sitio que encaja**")
+    elif len(df_puntuado) < TOP_N:
+        st.markdown(f"**Solo hay {len(df_puntuado)} que encajan**")
 
-    # --- Tarjetas de resultados ---
-    if respuestas.get("orden") == "Más cercanos":
-        st.subheader(f"Los {len(top)} más cercanos")
-    else:
-        st.subheader(f"Top {len(top)} para vosotros")
-    for i, (_, fila) in enumerate(top.iterrows(), start=1):
-        with st.container(border=True):
-            mostrar_tarjeta(fila, respuestas, df_platos, numero=i)
+    if modo_vista == "Mapa":
+        mostrar_mapa(*ubicacion_usuario, top, seleccionado)
+    mostrar_lista(top, respuestas, seleccionado)
 
-    # --- Botón "Mostrar más" (hasta un máximo de 10, siempre por score) ---
-    if num_mostrados < min(TOP_N_MAX, len(df_puntuado)):
-        if st.button("Mostrar más", width="stretch"):
-            st.session_state["num_mostrados"] = min(num_mostrados + 5, TOP_N_MAX, len(df_puntuado))
+    # "Ver más": de 5 en 5 hasta 10, y solo si quedan restaurantes que encajen.
+    quedan = min(TOP_N_MAX, len(df_puntuado)) - num_mostrados
+    if quedan > 0:
+        if st.button(f"Ver {min(5, quedan)} más", width="stretch"):
+            st.session_state["num_mostrados"] = num_mostrados + min(5, quedan)
             st.rerun()
+
+    # Ficha: se abre solo en la recarga justo después de tocar una tarjeta o una foto del
+    # mapa (pop), así que al cerrarla con ✕ no vuelve a aparecer sola.
+    abrir = st.session_state.pop("ficha_abrir", None)
+    if abrir in ids_top:
+        mostrar_ficha(top.iloc[ids_top.index(abrir)], respuestas, df_platos)
