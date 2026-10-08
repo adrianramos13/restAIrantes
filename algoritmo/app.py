@@ -32,18 +32,18 @@ DESPLIEGUE (para tener una URL pública desde el móvil):
 
 import io
 import re
-import math
 import base64
 import random
-import time
-import unicodedata
 import urllib.parse
 from pathlib import Path
 
 import pandas as pd
-import requests
 import streamlit as st
 from geopy.exc import GeocoderServiceError
+
+from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_PUNTUACION,
+                    VOTOS_MIN_SECUNDARIA, filtrar_y_puntuar, ordenar_resultados, tiene_categorias_jev)
+from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
 
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
@@ -56,37 +56,15 @@ BASE_DIR = Path(__file__).resolve().parent
 MAESTRO_XLSX = BASE_DIR.parent / "excels" / "clasificacion_jev.xlsx"
 IMAGENES_DIR = BASE_DIR.parent / "imagenes"
 
-PESO_PRECIO = 0.15
-PESO_COCINA = 0.30
-PESO_PLATO = 0.20
-PESO_CALIDAD = 0.30
-PESO_NUM_RESENAS = 0.05
 
 TOP_N = 5
 TOP_N_MAX = 10
 
-ORDEN_PUNTUACION = "Mejor valorados"
-ORDEN_CERCANOS = "Más cerca"
 PRESUPUESTO_SIN_LIMITE = 100   # el máximo del slider de presupuesto significa "sin tope"
 
-# Categoría de cocina calculada con Jev (columnas que trae clasificacion_jev.xlsx).
-COL_CATEGORIA = "Categoría (Jev)"
-COL_CATEGORIA_2 = "Categoría 2ª (Jev)"
-COL_VOTOS_1 = "% votos categoría (Jev)"
-COL_VOTOS_2 = "% votos 2ª (Jev)"
-SCORE_COCINA_SECUNDARIA = 0.6    # el restaurante tiene la cocina elegida como segunda categoría
-SCORE_COCINA_DESCONOCIDA = 0.3   # Jev no pudo clasificarlo (pocas reseñas informativas): ni sí ni no
-VOTOS_MIN_SECUNDARIA = 0.25      # la segunda categoría solo cuenta si tiene al menos este % de los votos
 
-OSRM_URL = "https://router.project-osrm.org/table/v1/driving/"
-OSRM_BATCH_SIZE = 100
-VELOCIDAD_RESPALDO_COCHE_KMH = 30
 
-ORS_URL = "https://api.openrouteservice.org/v2/matrix/foot-walking"
-ORS_BATCH_SIZE = 50
-VELOCIDAD_RESPALDO_ANDANDO_KMH = 5
 
-CAJA_MADRID = [(41.17, -4.58), (39.88, -3.05)]   # Comunidad de Madrid (esquinas NO y SE)
 
 # --------------------------------------------------------------- #
 
@@ -101,242 +79,32 @@ def cargar_datos():
     return maestro, df_platos
 
 
-def parsear_rango_precio(texto):
-    if not isinstance(texto, str) or not texto.strip():
-        return None, None
-    numeros = [int(n) for n in re.findall(r"\d+", texto)]
-    if len(numeros) >= 2:
-        return min(numeros), max(numeros)
-    if len(numeros) == 1:
-        if "más" in texto.lower() or "+" in texto:
-            return numeros[0], None
-        return None, numeros[0]
-    return None, None
 
 
-def solapamiento(min1, max1, min2, max2):
-    if min1 is None and max1 is None:
-        return 0.5
-    if min2 is None and max2 is None:
-        return 0.5
-    lo1 = min1 if min1 is not None else 0
-    hi1 = max1 if max1 is not None else float("inf")
-    lo2 = min2 if min2 is not None else 0
-    hi2 = max2 if max2 is not None else float("inf")
-    inicio_solape = max(lo1, lo2)
-    fin_solape = min(hi1, hi2)
-    solape = max(0, fin_solape - inicio_solape)
-    ancho_union = max(hi1, hi2) - min(lo1, lo2)
-    if ancho_union in (0, float("inf")):
-        return 1.0 if solape > 0 else 0.0
-    return min(1.0, solape / ancho_union)
 
 
-def haversine_km(lat1, lon1, lat2, lon2):
-    R = 6371.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(a))
 
 
-def geocodificar_direccion(direccion):
-    """Devuelve el Location de geopy (o None si no la encuentra). Solo busca dentro de la
-    Comunidad de Madrid y añade "Madrid" al texto: sin eso, "Chueca" acababa en Toledo y
-    "Calle Princesa 1" en Marbella. Si el servicio falla, la excepción sube (no es lo mismo
-    que "no existe esa dirección")."""
-    from geopy.geocoders import Nominatim
-
-    consulta = direccion if "madrid" in direccion.lower() else f"{direccion}, Madrid"
-    geolocalizador = Nominatim(user_agent="app_restaurantes_pareja")
-    return geolocalizador.geocode(consulta, timeout=10, viewbox=CAJA_MADRID, bounded=True)
 
 
-def obtener_minutos_coche(ubicacion_usuario, maestro):
-    lat_u, lon_u = ubicacion_usuario
-    minutos = [None] * len(maestro)
-
-    indices_validos = [
-        i for i in range(len(maestro))
-        if pd.notna(maestro.iloc[i]["Latitud"]) and pd.notna(maestro.iloc[i]["Longitud"])
-    ]
-
-    for start in range(0, len(indices_validos), OSRM_BATCH_SIZE):
-        lote_idx = indices_validos[start:start + OSRM_BATCH_SIZE]
-        coords = [f"{lon_u},{lat_u}"] + [
-            f"{maestro.iloc[i]['Longitud']},{maestro.iloc[i]['Latitud']}" for i in lote_idx
-        ]
-        url = OSRM_URL + ";".join(coords)
-        try:
-            resp = requests.get(url, params={"sources": "0", "annotations": "duration"}, timeout=30)
-            resp.raise_for_status()
-            duraciones = resp.json()["durations"][0]
-            for j, idx in enumerate(lote_idx):
-                dur_seg = duraciones[j + 1]
-                if dur_seg is not None:
-                    minutos[idx] = dur_seg / 60.0
-        except Exception:
-            for idx in lote_idx:
-                fila = maestro.iloc[idx]
-                dist_km = haversine_km(lat_u, lon_u, fila["Latitud"], fila["Longitud"])
-                minutos[idx] = (dist_km / VELOCIDAD_RESPALDO_COCHE_KMH) * 60
-
-        if start + OSRM_BATCH_SIZE < len(indices_validos):
-            time.sleep(1)
-
-    return minutos
 
 
-def obtener_minutos_a_pie(ubicacion_usuario, maestro):
-    """
-    Igual que obtener_minutos_coche pero vía OpenRouteService (perfil
-    foot-walking). El modo a pie de la matriz de ORS falla a veces con un
-    error 6099 ('Unable to compute a distance/duration matrix') en ciertas
-    coordenadas -es un bug conocido de su lado, no nuestro-, así que ante
-    cualquier fallo caemos también a una estimación por distancia en línea
-    recta a velocidad media andando (5 km/h).
-    """
-    lat_u, lon_u = ubicacion_usuario
-    minutos = [None] * len(maestro)
-
-    indices_validos = [
-        i for i in range(len(maestro))
-        if pd.notna(maestro.iloc[i]["Latitud"]) and pd.notna(maestro.iloc[i]["Longitud"])
-    ]
-
-    def respaldo_haversine(idx):
-        fila = maestro.iloc[idx]
-        dist_km = haversine_km(lat_u, lon_u, fila["Latitud"], fila["Longitud"])
-        return (dist_km / VELOCIDAD_RESPALDO_ANDANDO_KMH) * 60
-
-    api_key = leer_secreto("ORS_API_KEY")
-    if not api_key:
-        st.warning("No hay configurada una clave de OpenRouteService (ORS_API_KEY) en los "
-                   "secretos de la app: se está estimando el tiempo a pie por distancia en "
-                   "línea recta, no por calles reales.")
-        for idx in indices_validos:
-            minutos[idx] = respaldo_haversine(idx)
-        return minutos
-
-    headers = {"Authorization": api_key, "Content-Type": "application/json"}
-
-    for start in range(0, len(indices_validos), ORS_BATCH_SIZE):
-        lote_idx = indices_validos[start:start + ORS_BATCH_SIZE]
-        locations = [[lon_u, lat_u]] + [
-            [maestro.iloc[i]["Longitud"], maestro.iloc[i]["Latitud"]] for i in lote_idx
-        ]
-        body = {"locations": locations, "sources": [0], "metrics": ["duration"]}
-        try:
-            resp = requests.post(ORS_URL, json=body, headers=headers, timeout=30)
-            resp.raise_for_status()
-            duraciones = resp.json()["durations"][0]
-            for j, idx in enumerate(lote_idx):
-                dur_seg = duraciones[j + 1]
-                minutos[idx] = dur_seg / 60.0 if dur_seg is not None else respaldo_haversine(idx)
-        except Exception:
-            for idx in lote_idx:
-                minutos[idx] = respaldo_haversine(idx)
-
-        if start + ORS_BATCH_SIZE < len(indices_validos):
-            time.sleep(2)
-
-    return minutos
 
 
-def puntuacion_plato(id_restaurante, plato_deseado, df_platos):
-    if not plato_deseado:
-        return 0.0
-    if df_platos.empty or "ID_Restaurante" not in df_platos.columns:
-        return 0.0
-    menciones = df_platos[
-        (df_platos["ID_Restaurante"] == id_restaurante) &
-        (df_platos["Plato"].astype(str).str.contains(plato_deseado, case=False, na=False))
-    ]
-    if menciones.empty:
-        return 0.0
-    buenas = (menciones["Sentimiento"] == "Buena").sum()
-    malas = (menciones["Sentimiento"] == "Mala").sum()
-    total = len(menciones)
-    ratio_positivo = buenas / total if total else 0
-    bonus_volumen = min(0.2, 0.05 * total)
-    return min(1.0, ratio_positivo + bonus_volumen) if buenas >= malas else max(0.0, ratio_positivo - 0.2)
 
 
-def calcular_score_calidad(fila):
-    score_estrellas = (fila["Puntuación"] or 0) / 5.0
-    buenas = fila.get("Reseñas buenas", 0)
-    malas = fila.get("Reseñas malas", 0)
-    neutras = fila.get("Reseñas neutras", 0)
-    buenas = 0 if pd.isna(buenas) else buenas
-    malas = 0 if pd.isna(malas) else malas
-    neutras = 0 if pd.isna(neutras) else neutras
-    total_analizadas = buenas + malas + neutras
-    if total_analizadas > 0:
-        proporcion_buenas = buenas / total_analizadas
-        return 0.6 * score_estrellas + 0.4 * proporcion_buenas
-    return score_estrellas
 
 
-def tiene_categorias_jev(maestro):
-    """¿Trae el maestro la categoría de cocina de Jev? Si no (maestro antiguo), se usa la de Google."""
-    return COL_CATEGORIA in maestro.columns and maestro[COL_CATEGORIA].notna().any()
 
 
-def _sin_tildes(texto):
-    if not isinstance(texto, str):
-        return ""
-    return "".join(c for c in unicodedata.normalize("NFKD", texto.lower()) if not unicodedata.combining(c))
 
 
-_STOPWORDS_COCINA = {"y", "de", "del", "la", "el", "las", "los", "otras", "otra"}
-_RAIZ_MIN = 5   # comparamos por raíz de palabra: "arroces"/"arrocería" o "vegana"/"vegano"
-                # no coinciden letra por letra, pero sus 5 primeras letras sí
 
 
-def _palabras_significativas(texto):
-    """Raíces de las palabras de 4+ letras de `texto`, sin tildes ni conectores ('y', 'de',
-    'otras'...). Se usa para comparar una etiqueta de Jev tipo "Asiática (otras)" contra el
-    texto libre de Google: comparar la frase completa casi nunca coincide, y comparar palabra
-    a palabra tampoco (género/número distintos), así que se compara por raíz."""
-    palabras = [p for p in re.findall(r"[a-z]+", _sin_tildes(texto)) if len(p) >= 4 and p not in _STOPWORDS_COCINA]
-    return [p[:_RAIZ_MIN] for p in palabras]
 
 
-def _coincide_con_google(etiqueta_elegida, texto_google):
-    palabras = _palabras_significativas(etiqueta_elegida)
-    if not palabras:
-        return False
-    texto_norm = _sin_tildes(texto_google)
-    return any(p in texto_norm for p in palabras)
 
 
-def puntuacion_cocina(fila, cocina_elegida, con_jev):
-    """
-    Encaje (0-1) entre la cocina elegida y la del restaurante.
-    Con categorías de Jev: 1 si es su categoría principal (o hay empate con la segunda), 0.6 si es
-    la segunda con peso suficiente, 0 si tiene otra cocina, y 0.3 si Jev no pudo clasificarlo
-    (salvo que la etiqueta de Google contenga esa cocina, que cuenta como 1).
-    Sin categorías de Jev (maestro antiguo): coincidencia de texto con el tipo de Google, como antes.
-    """
-    if not cocina_elegida:
-        return 0.5
-    if not con_jev:
-        return 1.0 if cocina_elegida.lower() in str(fila["Tipo de cocina"]).lower() else 0.0
-
-    principal = fila.get(COL_CATEGORIA)
-    if isinstance(principal, str) and principal.strip():
-        if principal == cocina_elegida:
-            return 1.0
-        if fila.get(COL_CATEGORIA_2) == cocina_elegida:
-            v1, v2 = fila.get(COL_VOTOS_1), fila.get(COL_VOTOS_2)
-            if pd.notna(v1) and pd.notna(v2) and v2 >= v1:
-                return 1.0                     # empate: la "segunda" es tan buena como la principal
-            if pd.notna(v2) and v2 >= VOTOS_MIN_SECUNDARIA:
-                return SCORE_COCINA_SECUNDARIA
-        return 0.0
-
-    return 1.0 if _coincide_con_google(cocina_elegida, fila.get("Tipo de cocina")) else SCORE_COCINA_DESCONOCIDA
 
 
 def etiqueta_cocina(fila):
@@ -351,70 +119,8 @@ def etiqueta_cocina(fila):
     return valor_o(fila, "Tipo de cocina")
 
 
-def filtrar_y_puntuar(maestro, df_platos, r):
-    df = maestro.copy()
-    if r["modo_transporte"] == "A pie":
-        df["Tiempo desplazamiento (min)"] = obtener_minutos_a_pie(r["ubicacion_usuario"], df)
-    else:
-        df["Tiempo desplazamiento (min)"] = obtener_minutos_coche(r["ubicacion_usuario"], df)
-
-    df = df[df["Tiempo desplazamiento (min)"].notna() & (df["Tiempo desplazamiento (min)"] <= r["tiempo_maximo_min"])]
-    if df.empty:
-        return df
-
-    # Filtros estrictos: solo pasan los que cumplen lo pedido; si no hay, no se rellena con otros.
-    con_jev_filtro = tiene_categorias_jev(maestro)
-    if r["cocina"]:
-        # Exige cocina principal o segunda con peso; descarta los de otra cocina y los no clasificados.
-        df = df[df.apply(lambda f: puntuacion_cocina(f, r["cocina"], con_jev_filtro) >= SCORE_COCINA_SECUNDARIA, axis=1)]
-
-    def encaja_precio(texto):
-        min_r, max_r = parsear_rango_precio(texto)
-        # ponytail: sin precio conocido no se puede descartar, se deja pasar
-        return (min_r is None and max_r is None) or solapamiento(min_r, max_r, r["presupuesto_min"], r["presupuesto_max"]) > 0
-    df = df[df["Rango de precios"].apply(encaja_precio)]
-
-    if r["plato_deseado"]:
-        df = df[df["ID"].apply(lambda i: puntuacion_plato(i, r["plato_deseado"], df_platos) > 0)]
-    if df.empty:
-        return df
-
-    max_resenas = maestro["Nº Reseñas"].max() or 1
-    con_jev = tiene_categorias_jev(maestro)
-
-    # Sin plato concreto, puntuacion_plato() da 0.0 a todos por igual (no discrimina nada), así
-    # que ese 20% de PESO_PLATO se perdería sin más. En ese caso lo pasamos a la cocina, que pasa
-    # de 0.30 a 0.50; los pesos siguen sumando 1.0 en los dos casos.
-    if r["plato_deseado"]:
-        peso_cocina_efectivo, peso_plato_efectivo = PESO_COCINA, PESO_PLATO
-    else:
-        peso_cocina_efectivo, peso_plato_efectivo = PESO_COCINA + PESO_PLATO, 0.0
-
-    def puntuar_fila(fila):
-        min_r, max_r = parsear_rango_precio(fila["Rango de precios"])
-        score_precio = solapamiento(min_r, max_r, r["presupuesto_min"], r["presupuesto_max"])
-
-        score_cocina = puntuacion_cocina(fila, r["cocina"], con_jev)
-
-        score_plato = puntuacion_plato(fila["ID"], r["plato_deseado"], df_platos)
-        score_calidad = calcular_score_calidad(fila)
-        num_resenas = fila["Nº Reseñas"] if not pd.isna(fila["Nº Reseñas"]) else 0
-        score_resenas = min(1.0, num_resenas / max_resenas)
-
-        return (
-            PESO_PRECIO * score_precio + peso_cocina_efectivo * score_cocina + peso_plato_efectivo * score_plato +
-            PESO_CALIDAD * score_calidad + PESO_NUM_RESENAS * score_resenas
-        )
-
-    df["Score"] = df.apply(puntuar_fila, axis=1)
-    return df
 
 
-def ordenar_resultados(df, orden):
-    """El orden se elige ya en la vista de resultados: cambiarlo no repite la búsqueda."""
-    if orden == ORDEN_CERCANOS:
-        return df.sort_values(["Tiempo desplazamiento (min)", "Score"], ascending=[True, False])
-    return df.sort_values("Score", ascending=False)
 
 
 def leer_secreto(nombre, defecto=""):
@@ -1562,8 +1268,19 @@ with st.container(key="buscador"):
 
         texto_spinner = ("Calculando tiempos en coche..." if modo_transporte == "En coche"
                          else "Calculando tiempos andando...")
+        aviso_tiempos = None
         with st.spinner(texto_spinner):
-            df_puntuado = filtrar_y_puntuar(maestro, df_platos, respuestas)
+            if modo_transporte == "A pie":
+                clave_ors = leer_secreto("ORS_API_KEY")
+                minutos = obtener_minutos_a_pie(ubicacion_usuario, maestro, clave_ors)
+                if not clave_ors:
+                    aviso_tiempos = ("No hay configurada una clave de OpenRouteService (ORS_API_KEY) en los "
+                                     "secretos de la app: el tiempo a pie se estima por distancia en línea "
+                                     "recta, no por calles reales.")
+            else:
+                minutos = obtener_minutos_coche(ubicacion_usuario, maestro)
+            df_puntuado = filtrar_y_puntuar(maestro, df_platos, respuestas, minutos)
+        respuestas["aviso_tiempos"] = aviso_tiempos
 
         # El resultado se guarda en la sesión: cambiar el orden, la vista o pulsar
         # "Ver más" vuelve a dibujar la página sin repetir toda la búsqueda.
@@ -1585,6 +1302,8 @@ if vista == "resultados" and resultado is not None:
             "Vista", ["Lista", "Mapa"], default="Lista", key="modo_vista", label_visibility="collapsed",
         ) or "Lista"
     st.caption(resumen_busqueda(respuestas))
+    if respuestas.get("aviso_tiempos"):
+        st.warning(respuestas["aviso_tiempos"])
 
     df_puntuado = resultado["df_puntuado"]
     if df_puntuado.empty:

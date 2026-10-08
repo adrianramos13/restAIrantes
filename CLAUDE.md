@@ -9,7 +9,7 @@ A Streamlit web app ("¿Dónde comemos?") that recommends restaurants from the u
 Two independent halves:
 
 1. **Data pipeline** (`obtener_datos/`, run locally now and then) → produces `excels/clasificacion_jev.xlsx` + `imagenes/*.jpg`.
-2. **App** (`algoritmo/app.py`, a single file) → reads only that excel and those images.
+2. **App** (`algoritmo/`) → reads only that excel and those images. `logica.py` (filters, scoring, sort; no Streamlit, no network — unit-tested in `tests/test_logica.py`), `servicios.py` (Nominatim, OSRM, OpenRouteService; no Streamlit), `app.py` (Streamlit UI and custom components).
 
 ## Commands
 
@@ -45,9 +45,9 @@ Secrets: `TYPESAFE_API_KEY` env var (pipeline step 3, paid but cached); `ORS_API
 - Google photo URLs (`gps-cs-s`) expire within weeks. `extraer_html.py` downloads each photo once to `imagenes/<slug-of-name>.jpg` (keyed by name, not ID; existing files are skipped) and, if the HTML URL is stale, falls back to opening the place in Google Maps with Playwright to get a fresh one. The app prefers the local file (`Imagen archivo` column) over `Imagen URL`.
 - Changing Jev prompts/categories changes `HUELLA` and invalidates the whole cache.
 
-## App architecture (`algoritmo/app.py`)
+## App architecture (`algoritmo/`)
 
-Top-to-bottom: config constants → scoring/filtering → travel times → UI helpers → custom components → `INTERFAZ` (the script body).
+`app.py` top-to-bottom: config → UI helpers → custom components → `INTERFAZ` (the script body). Keep Streamlit out of `logica.py`/`servicios.py`: the UI computes travel times via `servicios`, passes them to `logica.filtrar_y_puntuar(maestro, df_platos, r, minutos)`, and shows any warning itself.
 
 - **Search flow**: geocode (selected Photon suggestion coords, else Nominatim bounded to Comunidad de Madrid with ", Madrid" appended) → travel times (OSRM for car, OpenRouteService for walking, haversine fallbacks) → `filtrar_y_puntuar` applies **hard filters** (time, cuisine, price overlap, dish) then scores with the `PESO_*` weights → result stored in `st.session_state["resultado"]`. Ordering is done afterwards by `ordenar_resultados`, so changing sort/view/"Ver más" never repeats the search. Never pad results with non-matching restaurants.
 - **Two views on one page**: `session_state["vista"]` is `buscador` or `resultados`. The form is **always rendered** and only hidden with CSS (`.st-key-buscador`) in results view — if it weren't rendered, Streamlit would drop the widget values. Errors from a search launched in results view must go through `fallar_busqueda()` so they show in the visible view.
