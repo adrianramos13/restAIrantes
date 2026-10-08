@@ -16,6 +16,8 @@ CAMPOS EXTRAÍDOS:
                        sube al repo) y la app usa ese archivo. Los restaurantes que ya
                        tienen foto descargada no se vuelven a descargar: al añadir
                        restaurantes nuevos, solo se bajan las fotos de los nuevos.
+                       Si la URL del HTML ya ha caducado, se busca el restaurante en
+                       Google Maps con Playwright (sin coste) para sacar una URL nueva.
 
 CÓMO OBTENER EL HTML:
     1. Abre tu lista de Google Maps en el navegador.
@@ -30,8 +32,10 @@ USO:
     python extraer_html.py
 """
 
+import asyncio
 import re
 import unicodedata
+import urllib.parse
 from pathlib import Path
 
 import requests
@@ -64,30 +68,83 @@ def nombre_archivo_imagen(nombre):
     return f"{slug or 'sin-nombre'}.jpg"
 
 
+def bajar_imagen(url, ruta):
+    """Descarga `url` (pidiendo TAMANO_IMAGEN) a `ruta`. Lanza excepción si no es una imagen."""
+    r = requests.get(re.sub(r"=w\d+-h\d+", TAMANO_IMAGEN, url), timeout=15)
+    r.raise_for_status()
+    if not r.headers.get("content-type", "").startswith("image/"):
+        raise ValueError(f"no es una imagen ({r.headers.get('content-type')})")
+    ruta.write_bytes(r.content)
+
+
+async def _urls_frescas(nombres):
+    """Abre la ficha de cada restaurante en Google Maps (con Playwright, como extraer_resenas.py)
+    y devuelve {nombre: URL de su foto principal}, recién generada y por tanto aún válida."""
+    from playwright.async_api import async_playwright
+    from extraer_resenas import aceptar_cookies
+
+    urls = {}
+    async with async_playwright() as p:
+        navegador = await p.chromium.launch(headless=True)
+        page = await navegador.new_page(locale="es-ES")
+        for i, nombre in enumerate(nombres, start=1):
+            print(f"  [{i}/{len(nombres)}] {nombre}")
+            consulta = urllib.parse.quote(f"{nombre}, Madrid, España")
+            try:
+                await page.goto(f"https://www.google.com/maps/search/?api=1&query={consulta}",
+                                wait_until="domcontentloaded")
+                await aceptar_cookies(page)
+                foto = page.locator('button[jsaction*="heroHeaderImage"] img').first
+                primer_resultado = page.locator("a.hfpxzc").first
+                # La búsqueda abre directamente la ficha o, si hay varias coincidencias, una lista.
+                await foto.or_(primer_resultado).wait_for(timeout=15000)
+                if not await foto.count():
+                    await primer_resultado.click()
+                    await foto.wait_for(timeout=15000)
+                urls[nombre] = await foto.get_attribute("src")
+            except Exception as e:
+                print(f"      sin foto: {type(e).__name__}")
+        await navegador.close()
+    return urls
+
+
 def descargar_imagenes(filas):
     """Descarga a imagenes/ las fotos que aún no estén, y rellena 'Imagen archivo' en cada fila
-    (vacío si no hay foto ni se ha podido bajar; la app entonces prueba con la URL)."""
+    (vacío si no hay foto ni se ha podido bajar; la app entonces prueba con la URL).
+    Si la URL del HTML ha caducado (HTML antiguo), busca el restaurante en Google Maps para
+    sacar una URL nueva de su foto."""
     IMAGENES_DIR.mkdir(parents=True, exist_ok=True)
-    nuevas, fallos = 0, []
+    nuevas, pendientes = 0, []
     for fila in filas:
-        archivo = nombre_archivo_imagen(fila["Nombre"])
-        ruta = IMAGENES_DIR / archivo
-        url = fila["Imagen URL"]
-        if not ruta.exists() and url:
+        ruta = IMAGENES_DIR / nombre_archivo_imagen(fila["Nombre"])
+        if not ruta.exists():
             try:
-                r = requests.get(re.sub(r"=w\d+-h\d+", TAMANO_IMAGEN, url), timeout=15)
-                r.raise_for_status()
-                if not r.headers.get("content-type", "").startswith("image/"):
-                    raise ValueError(f"no es una imagen ({r.headers.get('content-type')})")
-                ruta.write_bytes(r.content)
+                bajar_imagen(fila["Imagen URL"], ruta)
+                nuevas += 1
+            except Exception:
+                pendientes.append(fila)
+
+    fallos = []
+    if pendientes:
+        print(f"{len(pendientes)} fotos con la URL del HTML caducada: buscándolas en Google Maps...")
+        urls = asyncio.run(_urls_frescas([f["Nombre"] for f in pendientes]))
+        for fila in pendientes:
+            if not urls.get(fila["Nombre"]):
+                fallos.append(f"{fila['Nombre']}: no encontrada en Google Maps")
+                continue
+            try:
+                bajar_imagen(urls[fila["Nombre"]], IMAGENES_DIR / nombre_archivo_imagen(fila["Nombre"]))
                 nuevas += 1
             except Exception as e:
                 fallos.append(f"{fila['Nombre']}: {str(e).split(' for url')[0]}")
-        fila["Imagen archivo"] = archivo if ruta.exists() else ""
+
+    for fila in filas:
+        archivo = nombre_archivo_imagen(fila["Nombre"])
+        fila["Imagen archivo"] = archivo if (IMAGENES_DIR / archivo).exists() else ""
 
     print(f"Imágenes: {nuevas} descargadas, {sum(1 for f in filas if f['Imagen archivo'])}/{len(filas)} con foto.")
     if fallos:
-        print(f"  - [AVISO] {len(fallos)} no se han podido descargar (¿HTML antiguo? las URLs caducan):")
+        print(f"  - [AVISO] {len(fallos)} no se han podido descargar:")
         for f in fallos:
             print(f"      · {f}")
 
