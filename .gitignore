@@ -3,3 +3,4 @@ graphify-out/
 .playwright-mcp/
 __pycache__/
 *.stackdump
+origen/restaurantes_descarga_fallida.html

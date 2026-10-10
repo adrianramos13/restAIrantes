@@ -63,15 +63,21 @@ Se ejecuta en este orden, desde la carpeta `obtener_datos/`. Dependencias: `pip 
 
 | Paso | Script | Entrada | Salida | Qué hace |
 |---|---|---|---|---|
-| 1 | `extraer_html.py` | `origen/restaurantes.html` | `restaurantes_v1.xlsx` | Lee con BeautifulSoup cada restaurante de la lista: nombre, puntuación, nº de reseñas, rango de precios, tipo de cocina (el de Google, en bruto), **estado** (cerrado temporal/permanente) y **URL de la imagen**. Además descarga cada foto a `imagenes/` (solo las que aún no estén), porque las URLs de Google caducan en unas semanas. |
+| 1 | `extraer_html.py` | tu lista compartida (`--url`) u `origen/restaurantes.html` | `restaurantes_v1.xlsx` | Lee con BeautifulSoup cada restaurante de la lista: nombre, puntuación, nº de reseñas, rango de precios, tipo de cocina (el de Google, en bruto), **estado** (cerrado temporal/permanente) y **URL de la imagen**. Además descarga cada foto a `imagenes/` (solo las que aún no estén), porque las URLs de Google caducan en unas semanas. |
 | 2 | `extraer_resenas.py` | `restaurantes_v1.xlsx` | `restaurantes_v2.xlsx` | Abre Google Maps con **Playwright** (un navegador real, gratis y sin clave), busca `"nombre, Madrid, España"`, entra en la ficha y lee hasta 30 reseñas por restaurante. Guarda una fila por reseña con el nombre, la URL de la ficha, las coordenadas (sacadas de esa URL) y un `Estado` (`OK`, `NO ENCONTRADO`, `SIN RESEÑAS`, `ERROR`). No trae dirección, teléfono ni web. |
 | 3 | `clasificar_restaurantes_jev.py` | los dos anteriores | `clasificacion_jev.xlsx` | Asigna un ID a cada restaurante (por su posición en `restaurantes_v1.xlsx`), le añade la localización cruzando por nombre, y clasifica cada reseña con **Jev**. Es el único script de análisis; genera el excel final completo. |
 
-### Cómo obtener el HTML (paso 1)
+### Cómo obtener la lista (paso 1)
 
-1. Abre tu lista de Google Maps en el navegador.
-2. Haz scroll hasta que carguen **todos** los restaurantes (la lista se carga poco a poco).
-3. Guarda el HTML como `origen/restaurantes.html`.
+**Automático (recomendado).** Comparte tu lista en Google Maps (abre la lista → *Compartir* → copiar enlace) y ejecuta:
+
+```bash
+python obtener_datos/extraer_html.py --url "https://maps.app.goo.gl/..."
+```
+
+Abre la lista con Playwright (se ve una ventana de Chrome; no la cierres), hace scroll hasta cargar todos los restaurantes y guarda la página en `origen/restaurantes.html`; después sigue como siempre. Si la página no trae ningún restaurante (enlace mal copiado, lista privada, Google ha cambiado algo), **no toca** `origen/restaurantes.html`: guarda lo descargado en `origen/restaurantes_descarga_fallida.html` para revisarlo y se para.
+
+**A mano.** Abre tu lista en el navegador, haz scroll hasta que carguen **todos** los restaurantes, guarda el HTML como `origen/restaurantes.html` y ejecuta `python obtener_datos/extraer_html.py` sin `--url`.
 
 ### Requisitos del paso 2 (Playwright)
 

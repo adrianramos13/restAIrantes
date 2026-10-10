@@ -20,7 +20,8 @@ pip install -r requirements-dev.txt && pytest tests/   # AppTest smoke tests + r
 streamlit run algoritmo/app.py             # run the app (paths resolve from __file__, any cwd works)
 
 # Data pipeline, in order (each step reads the previous outputs)
-python obtener_datos/extraer_html.py                 # origen/restaurantes.html -> excels/restaurantes_v1.xlsx + imagenes/
+python obtener_datos/extraer_html.py --url "<shared list link>"   # downloads the list (Playwright, visible Chrome) -> origen/restaurantes.html -> excels/restaurantes_v1.xlsx + imagenes/
+                                                     # without --url it reads the existing origen/restaurantes.html
 python obtener_datos/extraer_resenas.py              # Playwright scrape of Google Maps -> excels/restaurantes_v2.xlsx
 python obtener_datos/clasificar_restaurantes_jev.py  # v1 + v2 + Jev API -> excels/clasificacion_jev.xlsx
 #   flags: --limite N, --hilos N, --reiniciar (drop cache), --verbose, --probar "texto"
