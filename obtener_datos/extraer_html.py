@@ -1,6 +1,6 @@
 """
 Extrae los datos de restaurantes desde el HTML de tu lista de Google Maps
-(guardado en la carpeta origen/) y genera restaurantes_novia.xlsx.
+(guardado en la carpeta origen/) y genera excels/restaurantes_v1.xlsx.
 
 CAMPOS EXTRAÍDOS:
     - Nombre

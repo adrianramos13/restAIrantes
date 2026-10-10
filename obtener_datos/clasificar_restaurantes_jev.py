@@ -278,6 +278,29 @@ def _clave_aproximada(texto):
     return re.sub(r"[^0-9a-z]+", "", _sin_tildes(_clave_nombre(texto)))
 
 
+def _cruzar_por_nombre(nombres, rest):
+    """ID de `rest` (restaurantes_v1.xlsx) para cada nombre de restaurantes_v2.xlsx: primero por
+    la clave exacta y, si falla, por la aproximada cuando no es ambigua. Es el ÚNICO cruce por
+    nombre: localización y reseñas usan el mismo, para que un restaurante no pueda quedarse
+    con reseñas pero sin coordenadas. Devuelve (ids con None si no cruza, recuento por modo)."""
+    exacto = dict(zip(rest["Nombre"].apply(_clave_nombre), rest["ID"]))
+    por_aprox = {}
+    for nombre, id_r in zip(rest["Nombre"], rest["ID"]):
+        por_aprox.setdefault(_clave_aproximada(nombre), set()).add(id_r)
+    aprox = {k: next(iter(v)) for k, v in por_aprox.items() if k and len(v) == 1}   # solo las no ambiguas
+
+    ids, modo = [], Counter()
+    for nombre in nombres:
+        id_r = exacto.get(_clave_nombre(nombre))
+        if id_r is not None:
+            modo["exacto"] += 1
+        else:
+            id_r = aprox.get(_clave_aproximada(nombre))
+            modo["aproximado" if id_r is not None else "sin_cruce"] += 1
+        ids.append(id_r)
+    return ids, modo
+
+
 def cargar_restaurantes_base():
     """
     Lee restaurantes_v1.xlsx y le asigna un ID por posición (1..N, igual que hacía antes
@@ -324,9 +347,9 @@ def cargar_restaurantes_base():
               f"se genera sin Latitud/Longitud.")
         return rest
 
-    exacto = dict(zip(rest["Nombre"].apply(_clave_nombre), rest["ID"]))
+    ids, _ = _cruzar_por_nombre(v2["Restaurante"], rest)
     v2 = v2.copy()
-    v2["ID"] = v2["Restaurante"].apply(_clave_nombre).map(exacto)
+    v2["ID"] = pd.to_numeric(pd.Series(ids, index=v2.index, dtype="object"), errors="coerce")
 
     sin_cruzar = sorted(v2.loc[v2["ID"].isna(), "Restaurante"].dropna().unique())
     if sin_cruzar:
@@ -336,7 +359,7 @@ def cargar_restaurantes_base():
     # Localización: una fila por restaurante (la primera que tenga coordenadas válidas).
     # No hace falta avisar aparte de "repetidos" aquí: tener varias filas por restaurante
     # es NORMAL en este archivo (una por reseña), a diferencia del excel de localización
-    # de Outscraper, donde sí era una señal de duplicado real.
+    # de Outscraper (el paso 2 de antes), donde sí era una señal de duplicado real.
     con_coords = v2.dropna(subset=["ID", "Latitud", "Longitud"])
     loc = con_coords.drop_duplicates(subset="ID", keep="first")[["ID", "Latitud", "Longitud"]]
 
@@ -366,21 +389,7 @@ def cargar_datos(limite_restaurantes=None):
         raise SystemExit(f"ERROR: a {RESENAS_XLSX.name} le faltan las columnas "
                          f"'Restaurante' y/o 'Texto'.")
 
-    exacto = dict(zip(rest["Nombre"].apply(_clave_nombre), rest["ID"]))
-    por_aprox = {}
-    for nombre, id_r in zip(rest["Nombre"], rest["ID"]):
-        por_aprox.setdefault(_clave_aproximada(nombre), set()).add(id_r)
-    aprox = {k: next(iter(v)) for k, v in por_aprox.items() if k and len(v) == 1}   # solo las no ambiguas
-
-    ids, modo = [], Counter()
-    for nombre in res["Restaurante"]:
-        id_r = exacto.get(_clave_nombre(nombre))
-        if id_r is not None:
-            modo["exacto"] += 1
-        else:
-            id_r = aprox.get(_clave_aproximada(nombre))
-            modo["aproximado" if id_r is not None else "sin_cruce"] += 1
-        ids.append(id_r)
+    ids, modo = _cruzar_por_nombre(res["Restaurante"], rest)
     res = res.assign(ID_Restaurante=pd.array(ids, dtype="object"))
 
     sin_cruce = res[res["ID_Restaurante"].isna()]
@@ -495,8 +504,11 @@ class Cache:
                 f.write(json.dumps({"k": clave, "r": resultado}, ensure_ascii=False) + "\n")
 
 
-def _clave(modelo, id_r, texto):
-    return hashlib.sha1(f"{modelo}|{HUELLA}|{id_r}|{texto}".encode("utf-8")).hexdigest()
+def _clave(modelo, texto):
+    # Jev solo recibe el texto de la reseña: el restaurante (y su ID, que es la posición en
+    # restaurantes_v1.xlsx) no va en la clave, así que reordenar o añadir restaurantes no
+    # invalida la caché ni hace pagar otra vez.
+    return hashlib.sha1(f"{modelo}|{HUELLA}|{texto}".encode("utf-8")).hexdigest()
 
 
 # ----------------------- LLAMADA A JEV ----------------------- #
@@ -576,7 +588,7 @@ def clasificar_todas(resenas, cache, hilos=1, max_errores_seguidos=8):
     resultados = [None] * len(resenas)
     pendientes = []
     for i, r in enumerate(resenas):
-        guardado = cache.get(_clave(_modelo, r["id"], r["texto"]))
+        guardado = cache.get(_clave(_modelo, r["texto"]))
         if guardado is not None:
             resultados[i] = {**guardado, "estado": "ok"}
         else:
@@ -605,7 +617,7 @@ def clasificar_todas(resenas, cache, hilos=1, max_errores_seguidos=8):
                 hechas += 1
                 try:
                     _, resultado = futuro.result()
-                    cache.put(_clave(_modelo, resenas[i]["id"], resenas[i]["texto"]), resultado)
+                    cache.put(_clave(_modelo, resenas[i]["texto"]), resultado)
                     resultados[i] = {**resultado, "estado": "ok"}
                     errores_seguidos = 0
                 except Exception as e:  # noqa: BLE001 - queremos seguir con el resto

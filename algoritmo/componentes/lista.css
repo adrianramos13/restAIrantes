@@ -1,0 +1,39 @@
+
+.lr { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lr-card {
+  all: unset; box-sizing: border-box; width: 100%; cursor: pointer;
+  display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 8px; min-height: 88px;
+  background: var(--st-secondary-background-color); border: 1px solid var(--st-border-color);
+  border-radius: 12px; font-family: var(--st-font, sans-serif); color: var(--st-text-color);
+  transition: transform 0.08s ease-out, border-color 0.15s;
+}
+.lr-card:hover { border-color: var(--st-primary-color); }
+.lr-card:active { transform: scale(0.985); }
+.lr-card:focus-visible { outline: 2px solid var(--st-primary-color); outline-offset: 2px; }
+.lr-card.lr-sel { border-color: var(--st-primary-color); }
+.lr-cerrado { opacity: 0.6; }
+.lr-foto { position: relative; flex: 0 0 72px; width: 72px; height: 72px; }
+.lr-foto img, .lr-inicial { width: 72px; height: 72px; border-radius: 10px; object-fit: cover; display: block; }
+.lr-inicial {
+  display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 700;
+  background: var(--st-primary-color); color: var(--st-background-color); opacity: 0.85;
+}
+.lr-num {
+  position: absolute; left: -6px; top: -6px; min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box;
+  border-radius: 11px; background: var(--st-primary-color); color: var(--st-background-color);
+  font: 700 12px/22px var(--st-font, sans-serif); text-align: center;
+  box-shadow: 0 0 0 2px var(--st-secondary-background-color);
+}
+.lr-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lr-nombre {
+  font-family: var(--st-heading-font, var(--st-font, serif)); font-weight: 600; font-size: 17px; line-height: 1.25;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.lr-cocina, .lr-meta { font-size: 13px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lr-cocina { opacity: 0.75; }
+.lr-etiqueta {
+  align-self: flex-start; margin-top: 2px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: var(--st-border-color); color: var(--st-text-color);
+}
+.lr-flecha { flex: 0 0 auto; font-size: 22px; opacity: 0.4; }
+@media (prefers-reduced-motion: reduce) { .lr-card { transition: none; } .lr-card:active { transform: none; } }
