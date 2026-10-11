@@ -4,3 +4,4 @@ graphify-out/
 __pycache__/
 *.stackdump
 origen/restaurantes_descarga_fallida.html
+origen/perfil_chrome/
