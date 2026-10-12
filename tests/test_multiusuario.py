@@ -208,6 +208,7 @@ def multiusuario(monkeypatch):
         else (pd.DataFrame(), pd.DataFrame(columns=datos.COLUMNAS_PLATOS), None)))
     monkeypatch.setattr(datos.Supabase, "pedir_actualizacion",
                         lambda self, u, enlace: estado["pedidas"].append((u, enlace)))
+    monkeypatch.setattr(datos.Supabase, "todos_los_restaurantes", lambda self: (maestro.copy(), platos.copy()))
     st.cache_data.clear()
     yield estado
     st.cache_data.clear()
@@ -234,20 +235,78 @@ def test_correo_no_permitido(multiusuario):
     assert "Buscar restaurantes" not in [b.label for b in at.button]
 
 
-def test_usuario_sin_lista_ve_mi_lista_y_pide_procesar(multiusuario):
+def test_usuario_sin_lista_abre_tus_listas_y_pide_sincronizar(multiusuario):
     multiusuario["con_lista"] = False
     at = correr()
     assert "Buscar restaurantes" not in [b.label for b in at.button]
+    assert any("Todavía no tienes restaurantes" in i.value for i in at.info)
+
+    [b for b in at.button if b.label == "Añadir tu lista"][0].click().run()   # abre la ventana "Tus listas"
+    assert not at.exception
     assert any("Todavía no has añadido tu lista" in m.value for m in at.markdown)
 
+    # En Streamlit real, pulsar un botón de la ventana solo reejecuta la ventana (sigue abierta);
+    # AppTest reejecuta todo el script, así que se vuelve a pedir abrirla antes de cada clic.
     at.text_input(key="enlace_lista").input("https://evil.com/lista")
-    [b for b in at.button if b.label == "Guardar y procesar"][0].click().run()
+    at.session_state["abrir_tus_listas"] = True
+    at.button(key="sincronizar_lista").click().run()
     assert any("no parece de una lista de Google Maps" in e.value for e in at.error)
     assert multiusuario["pedidas"] == []
 
     at.text_input(key="enlace_lista").input("https://maps.app.goo.gl/5QLC8VhBqetTCbjGA")
-    [b for b in at.button if b.label == "Guardar y procesar"][0].click().run()
+    at.session_state["abrir_tus_listas"] = True
+    at.button(key="sincronizar_lista").click().run()
     assert multiusuario["pedidas"] == [("ana@ejemplo.com", "https://maps.app.goo.gl/5QLC8VhBqetTCbjGA")]
+
+
+def test_buscar_en_todos_los_restaurantes_sin_lista_propia(multiusuario):
+    multiusuario["con_lista"] = False
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["ubicacion_actual"] = CHUECA
+    at.session_state["fuente"] = "Todos los restaurantes"
+    at = correr(at)
+    assert "Todos los restaurantes · " in portada(at)
+    at.button(key="boton_buscar").click().run()
+    assert not at.exception
+    assert not at.session_state["resultado"]["df_puntuado"].empty
+
+
+def _supabase_falso(monkeypatch, respuestas):
+    """Supabase con _rest sustituido: `respuestas` decide qué devolver según (método, tabla, params)."""
+    llamadas = []
+
+    def _rest(self, metodo, tabla, *, params=None, json=None, prefer=None):
+        llamadas.append((metodo, tabla, params, json))
+        return respuestas(metodo, tabla, params or {})
+    monkeypatch.setattr(datos.Supabase, "_rest", _rest)
+    return datos.Supabase("https://x.supabase.co", "k"), llamadas
+
+
+def test_pedir_actualizacion_copia_una_lista_ya_procesada(monkeypatch):
+    def respuestas(metodo, tabla, params):
+        if (metodo, tabla) == ("POST", "listas"):
+            return [{"id": 2, "usuario": "nuevo@ejemplo.com", "estado": "pendiente"}]
+        if (metodo, tabla) == ("GET", "listas"):
+            return [{"id": 1, "usuario": "adrian@ejemplo.com", "estado": "lista"}]
+        if (metodo, tabla) == ("GET", "lista_restaurantes"):
+            return [{"restaurante_id": 7, "posicion": 1}, {"restaurante_id": 3, "posicion": 2}]
+        return None
+    bd_, llamadas = _supabase_falso(monkeypatch, respuestas)
+    lista = bd_.pedir_actualizacion("nuevo@ejemplo.com", "https://maps.app.goo.gl/abc")
+    assert lista["estado"] == "lista"
+    copiadas = [j for m, t, p, j in llamadas if (m, t) == ("POST", "lista_restaurantes")][0]
+    assert [(f["lista_id"], f["restaurante_id"]) for f in copiadas] == [(2, 7), (2, 3)]
+    assert [j for m, t, p, j in llamadas if (m, t) == ("PATCH", "listas")][0]["estado"] == "lista"
+
+
+def test_pedir_actualizacion_sin_copia_queda_pendiente(monkeypatch):
+    def respuestas(metodo, tabla, params):
+        if (metodo, tabla) == ("POST", "listas"):
+            return [{"id": 2, "usuario": "nuevo@ejemplo.com", "estado": "pendiente"}]
+        return []   # nadie más tiene esa lista
+    bd_, llamadas = _supabase_falso(monkeypatch, respuestas)
+    assert bd_.pedir_actualizacion("nuevo@ejemplo.com", "https://maps.app.goo.gl/abc")["estado"] == "pendiente"
+    assert not [1 for m, t, p, j in llamadas if t == "lista_restaurantes" and m != "GET"]
 
 
 def portada(at):
@@ -282,7 +341,6 @@ def test_usuario_con_lista_busca_igual_que_en_local(multiusuario):
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["ubicacion_actual"] = CHUECA
     at = correr(at)
-    assert any("al día" in m.value for m in at.markdown)
     at.button(key="boton_buscar").click().run()
     assert not at.exception
     assert "resultado" in at.session_state, (at.session_state["vista"], [e.value for e in at.error],

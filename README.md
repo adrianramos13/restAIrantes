@@ -335,7 +335,15 @@ Arriba a la derecha aparece la foto de la cuenta de Google (o su inicial). Al pu
   ```bash
   python obtener_datos/procesar_solicitudes.py           # procesa las pendientes
   python obtener_datos/procesar_solicitudes.py --todas   # refresca todas (precios, cierres, restaurantes nuevos)
+  python obtener_datos/procesar_solicitudes.py --vigilar # no termina: cada 10 min procesa las pendientes que haya
   ```
+
+  **Importante:** las listas nuevas **solo se procesan mientras el procesador está en marcha** en tu ordenador (necesita Chrome visible y tu sesión de Google; en la nube no se puede). Con `--vigilar` basta con dejarlo abierto. Para que arranque solo al encender Windows: *Programador de tareas → Crear tarea básica → Al iniciar sesión → Iniciar un programa*: `python` con argumentos `obtener_datos\procesar_solicitudes.py --vigilar` e *Iniciar en* la carpeta del proyecto (y `TYPESAFE_API_KEY` definida como variable de entorno de usuario en Windows).
+
+  Si alguien pega **una lista que otra persona ya tiene procesada**, se copia al momento, sin esperar al procesador.
+
+- **Tus listas** (menú de la foto): estado de la sincronización, enlace de la lista y botón *Guardar y sincronizar*.
+- **Buscar en: Mi lista / Todos los restaurantes**: la segunda opción busca entre todos los restaurantes de la base de datos (los de todas las listas).
 
   La primera vez se abre Chrome para que inicies sesión en Google (queda guardada en `origen/perfil_chrome/`, fuera de git). Solo se analizan con Jev los restaurantes que no estaban en el catálogo. Si una lista falla, el usuario lo ve en "Mi lista" con el motivo.
 - La app tarda hasta 5 minutos en mostrar una lista recién procesada (caché).

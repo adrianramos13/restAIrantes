@@ -615,7 +615,8 @@ def mostrar_portada(num_restaurantes, tras_intro=False, maestro=None,
 
 ESTADOS_LISTA = {
     "sin_lista": "Todavía no has añadido tu lista.",
-    "pendiente": "⏳ Pendiente: se procesará en breve (puede tardar unas horas).",
+    "pendiente": "⏳ Pendiente de sincronizar. Las listas nuevas se procesan cuando el procesador del "
+                 "administrador está en marcha; si alguien ya tenía esta misma lista, se copia al momento.",
     "procesando": "⚙️ Procesando tu lista ahora mismo…",
     "lista": "✓ Tu lista está al día.",
     "error": "⚠️ No se pudo procesar tu lista.",
@@ -627,6 +628,15 @@ ESTADOS_LISTA = {
 _MENU_USUARIO = st.components.v2.component(
     "menu_usuario", html=recurso("usuario.html"), css=recurso("usuario.css"), js=recurso("usuario.js"),
 )
+
+
+FUENTE_MI_LISTA, FUENTE_TODOS = "Mi lista", "Todos los restaurantes"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def cargar_catalogo():
+    """Todos los restaurantes de la base de datos (de todas las listas), para "Buscar en: Todos"."""
+    return BD.todos_los_restaurantes()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -663,13 +673,24 @@ def mostrar_datos_personales(usuario, nombre, google):
     _dialogo()
 
 
-def menu_usuario(usuario, nombre, google):
+def abrir_tus_listas():
+    st.session_state["abrir_tus_listas"] = True
+
+
+def menu_usuario(usuario, nombre, google, lista):
     resultado = _MENU_USUARIO(
         key="menu_usuario", on_opcion_change=lambda: None,
         data={"foto": google.get("foto"), "inicial": nombre[:1].upper(), "nombre": nombre},
     )
-    if resultado.opcion == "datos_personales":   # solo en la recarga justo después de elegirlo
+    opcion = resultado.opcion   # solo tiene valor en la recarga justo después de elegirla
+    if st.session_state.pop("abrir_tus_listas", False):   # botón "Añadir tu lista" de la pantalla vacía
+        opcion = "tus_listas"
+    if opcion == "datos_personales":
         mostrar_datos_personales(usuario, nombre, google)
+    elif opcion == "tus_listas":
+        mostrar_tus_listas(usuario, lista)
+    elif opcion == "cerrar_sesion":
+        st.logout()
 
 
 def pantalla_entrar(tras_intro):
@@ -684,35 +705,44 @@ def pantalla_sin_permiso(usuario):
     st.button("Salir", on_click=st.logout)
 
 
-def pedir_procesar_lista(usuario):
-    enlace = (st.session_state.get("enlace_lista") or "").strip()
+def pedir_sincronizar_lista(usuario, enlace):
+    """Devuelve un mensaje de error para el usuario, o None si se ha pedido bien."""
+    enlace = (enlace or "").strip()
     if not bd.enlace_lista_valido(enlace):
-        st.session_state["error_enlace"] = ("Ese enlace no parece de una lista de Google Maps. En Google Maps: "
-                                            "abre tu lista → Compartir → copiar enlace (empieza por https://maps.app.goo.gl/).")
-        return
-    st.session_state.pop("error_enlace", None)
-    BD.pedir_actualizacion(usuario, enlace)
+        return ("Ese enlace no parece de una lista de Google Maps. En Google Maps: abre tu lista → "
+                "Compartir → copiar enlace (empieza por https://maps.app.goo.gl/).")
+    try:
+        BD.pedir_actualizacion(usuario, enlace)
+    except bd.ErrorSupabase:
+        return "No se ha podido guardar ahora mismo. Inténtalo en un momento."
     cargar_datos_usuario.clear()
+    return None
 
 
-def panel_mi_lista(usuario, lista, sin_restaurantes):
-    estado = lista["estado"] if lista else "sin_lista"
-    with st.expander("Mi lista de Google Maps", expanded=sin_restaurantes, icon=":material/bookmarks:"):
+def mostrar_tus_listas(usuario, lista):
+    """Ventana "Tus listas" (menú de usuario): estado de la sincronización y enlace de la lista."""
+    @st.dialog("Tus listas", width="small")
+    def _dialogo():
+        estado = lista["estado"] if lista else "sin_lista"
+        st.markdown("**Lista de Google Maps**")
         st.markdown(ESTADOS_LISTA.get(estado, estado))
         if lista and lista.get("actualizado_en"):
-            st.caption(f"Última actualización: {lista['actualizado_en'][:16].replace('T', ' ')} (UTC)")
-        if estado == "error" and lista.get("mensaje"):
+            st.caption(f"Última sincronización: {lista['actualizado_en'][:16].replace('T', ' ')} (UTC)")
+        if lista and lista.get("mensaje"):
             st.caption(lista["mensaje"])
-        st.text_input("Enlace de tu lista", value=(lista or {}).get("enlace") or "", key="enlace_lista",
-                      placeholder="https://maps.app.goo.gl/...",
-                      help="En Google Maps: abre tu lista → Compartir → copiar enlace.")
-        if st.session_state.get("error_enlace"):
-            st.error(st.session_state["error_enlace"])
-        st.button("Guardar y procesar", on_click=pedir_procesar_lista, args=(usuario,),
-                  disabled=estado in ("pendiente", "procesando"))
-        with st.container(horizontal=True, vertical_alignment="center"):
-            st.caption(f"Sesión: {usuario}")
-            st.button("Salir", on_click=st.logout, type="tertiary")
+        enlace = st.text_input("Enlace de tu lista", value=(lista or {}).get("enlace") or "", key="enlace_lista",
+                               placeholder="https://maps.app.goo.gl/...",
+                               help="En Google Maps: abre tu lista → Compartir → copiar enlace.")
+        if st.button("Guardar y sincronizar", type="primary", width="stretch", key="sincronizar_lista",
+                     disabled=estado == "procesando"):
+            error = pedir_sincronizar_lista(usuario, enlace)
+            if error:
+                st.error(error)
+            else:
+                st.rerun()   # cierra la ventana; si la lista ya existía en otra cuenta, aparece al momento
+        st.caption("Sincronizar vuelve a leer tu lista de Google Maps: añade los sitios nuevos y quita los "
+                   "que hayas borrado.")
+    _dialogo()
 
 
 st.set_page_config(page_title="¿Dónde comemos?", page_icon="🍽️", layout="centered")
@@ -744,8 +774,16 @@ if CONFIG_MULTIUSUARIO:
     except bd.ErrorSupabase:   # p. ej. aún no se ha creado la tabla perfiles: se usa el nombre de Google
         perfil = None
     nombre_usuario = nombre_visible(usuario, perfil, google)
-    menu_usuario(usuario, nombre_usuario, google)
-    momento_portada = f"🍽️ Lista de {html.escape(nombre_usuario)} · {len(maestro)} sitios"
+    menu_usuario(usuario, nombre_usuario, google, mi_lista)
+    if st.session_state.get("fuente") == FUENTE_TODOS:   # "Buscar en: Todos los restaurantes"
+        try:
+            maestro, df_platos = cargar_catalogo()
+        except bd.ErrorSupabase:
+            st.error("No se han podido cargar todos los restaurantes ahora mismo. Prueba en un momento.")
+            st.stop()
+        momento_portada = f"🍽️ Todos los restaurantes · {len(maestro)} sitios"
+    else:
+        momento_portada = f"🍽️ Lista de {html.escape(nombre_usuario)} · {len(maestro)} sitios"
 
 vista = st.session_state.setdefault("vista", "buscador")
 if vista == "resultados" and st.session_state.get("resultado") is not None:
@@ -755,9 +793,12 @@ if vista == "resultados" and st.session_state.get("resultado") is not None:
 with st.container(key="buscador"):
     mostrar_portada(len(maestro), tras_intro=hay_intro, maestro=maestro, momento=momento_portada)
     if CONFIG_MULTIUSUARIO:
-        panel_mi_lista(usuario, mi_lista, sin_restaurantes=maestro.empty)
+        st.segmented_control("Buscar en", [FUENTE_MI_LISTA, FUENTE_TODOS], default=FUENTE_MI_LISTA,
+                             key="fuente", width="stretch")
         if maestro.empty:
-            st.info("Cuando tu lista esté procesada, aquí podrás buscar entre tus restaurantes.")
+            st.info("Todavía no tienes restaurantes en tu lista. Añádela en **Tus listas** (en el menú de tu "
+                    "foto, arriba a la derecha) o busca en **Todos los restaurantes**.")
+            st.button("Añadir tu lista", on_click=abrir_tus_listas, icon=":material/add_location_alt:")
             st.stop()
 
     # Caja de dirección y, justo debajo, el botón "Usar mi ubicación". Reservamos primero
