@@ -72,6 +72,21 @@ def test_enlace_lista_valido(enlace, valido):
     assert datos.enlace_lista_valido(enlace) is valido
 
 
+def test_filas_catalogo_desde_excel():
+    df_rest = pd.DataFrame([
+        {"ID": 1, "Nombre": "Casa Pepe", "Puntuación": 4.5, "Rango de precios": float("nan"), "Imagen archivo": "casa-pepe.jpg"},
+        {"ID": 2, "Nombre": "HUNDRED", "Puntuación": np.float64(4.1), "Rango de precios": "20-30 €", "Imagen archivo": None},
+        {"ID": 3, "Nombre": "hundred ", "Puntuación": 4.1, "Rango de precios": "20-30 €", "Imagen archivo": None},
+    ])
+    df_platos = pd.DataFrame([{"ID_Restaurante": 1, "Plato": "cachopo", "Sentimiento": "Buena"}])
+    filas = datos.filas_catalogo_desde_excel(df_rest, df_platos)
+    assert [f["clave"] for f in filas] == ["casa pepe", "hundred"]     # el repetido, una sola vez
+    assert filas[0]["datos"] == {"Nombre": "Casa Pepe", "Puntuación": 4.5, "Rango de precios": None}
+    assert filas[0]["platos"] == [{"Plato": "cachopo", "Sentimiento": "Buena"}]
+    assert filas[0]["imagen"] == "casa-pepe.jpg" and filas[1]["imagen"] is None
+    json.dumps(filas)   # todo serializable a JSON
+
+
 def test_filtro_in_escapa_nombres():
     assert datos._filtro_in(['Bar "El" Sitio', "A, B (C)"]) == r'("Bar \"El\" Sitio","A, B (C)")'
 

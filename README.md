@@ -275,6 +275,65 @@ pillow
 
 ---
 
+## Modo multiusuario (login con Google y una lista por persona)
+
+Sin configurar nada, la app funciona como siempre (**modo local**: una sola lista, la de `excels/`). Con las claves de abajo en los secrets pasa a **modo multiusuario**: cada persona entra con su cuenta de Google, pega el enlace de su lista en **"Mi lista"** y ve solo sus restaurantes.
+
+```mermaid
+flowchart LR
+    U["Usuario"] -->|"Entrar con Google"| A["App (Streamlit Cloud)"]
+    A -->|"lee su lista / pide procesarla"| S[("Supabase\ncatálogo compartido + listas + fotos")]
+    P["procesar_solicitudes.py\n(tu ordenador, Chrome con tu sesión)"] -->|"descarga, analiza y guarda"| S
+```
+
+- **Catálogo compartido:** si dos personas tienen el mismo restaurante, se analiza una sola vez (Jev no cobra dos veces).
+- **El procesado se hace en tu ordenador**, porque necesita Chrome visible y tu sesión de Google (es la que enseña los precios). Las listas pedidas quedan "pendientes" hasta que ejecutas el procesador.
+- **Seguridad:** la clave de servicio de Supabase solo está en el servidor de Streamlit y en tu ordenador; las tablas no se pueden leer con la clave pública. El procesador solo acepta enlaces de listas de Google Maps, porque los abre con tu sesión.
+
+### Puesta en marcha (una vez)
+
+1. **Supabase** (gratis): crea un proyecto en supabase.com → *SQL Editor* → pega `supabase/esquema.sql` → *Run*. Crea las tablas y el bucket público `fotos`. En *Project Settings → API* copia la **URL** y la clave **`service_role`** (no la `anon`).
+2. **Login con Google** (gratis): en console.cloud.google.com → *APIs y servicios → Credenciales → Crear credenciales → ID de cliente de OAuth* → tipo *Aplicación web*. En *URIs de redirección autorizados* añade `https://TU-APP.streamlit.app/oauth2callback` y `http://localhost:8501/oauth2callback`. Copia el ID y el secreto del cliente. (Si te pide configurar la *pantalla de consentimiento*, tipo *Externo* y añade como usuarios de prueba los correos que vayan a entrar.)
+3. **Secrets** (`.streamlit/secrets.toml` en local y *Manage app → Settings → Secrets* en Streamlit Cloud):
+
+   ```toml
+   ORS_API_KEY = "..."                       # como antes
+
+   usuarios_permitidos = ["tu@gmail.com", "amiga@gmail.com"]   # opcional: vacío = cualquiera puede entrar
+
+   [supabase]
+   url = "https://xxxx.supabase.co"
+   clave_servicio = "eyJ..."                 # la service_role
+
+   [auth]
+   redirect_uri = "https://TU-APP.streamlit.app/oauth2callback"   # en local: http://localhost:8501/oauth2callback
+   cookie_secret = "una cadena larga y aleatoria"
+   [auth.google]
+   client_id = "....apps.googleusercontent.com"
+   client_secret = "..."
+   server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+   ```
+
+   Como pagas tú Jev, conviene rellenar `usuarios_permitidos` con las 20-25 personas.
+4. **Sube tu lista actual** a Supabase como la de tu cuenta:
+
+   ```bash
+   python obtener_datos/migrar_a_supabase.py --email tu@gmail.com --url "https://maps.app.goo.gl/..."
+   ```
+
+### Día a día
+
+- Cada usuario entra, abre **"Mi lista de Google Maps"**, pega el enlace de su lista (en Google Maps: la lista → *Compartir* → copiar enlace) y pulsa **Guardar y procesar**. Queda *pendiente*.
+- Tú, de vez en cuando, en tu ordenador (con `TYPESAFE_API_KEY` definida):
+
+  ```bash
+  python obtener_datos/procesar_solicitudes.py           # procesa las pendientes
+  python obtener_datos/procesar_solicitudes.py --todas   # refresca todas (precios, cierres, restaurantes nuevos)
+  ```
+
+  La primera vez se abre Chrome para que inicies sesión en Google (queda guardada en `origen/perfil_chrome/`, fuera de git). Solo se analizan con Jev los restaurantes que no estaban en el catálogo. Si una lista falla, el usuario lo ve en "Mi lista" con el motivo.
+- La app tarda hasta 5 minutos en mostrar una lista recién procesada (caché).
+
 ## Servicios externos
 
 | Servicio | Uso | Clave | Nota |

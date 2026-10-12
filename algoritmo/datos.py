@@ -82,6 +82,28 @@ def enlace_lista_valido(enlace):
     return isinstance(enlace, str) and bool(_PATRON_ENLACE_LISTA.match(enlace.strip()))
 
 
+def filas_catalogo_desde_excel(df_rest, df_platos):
+    """Hojas "Restaurantes" y "Platos mencionados" (las de clasificacion_jev.xlsx) -> filas del
+    catálogo {clave, datos, platos, imagen}, en el orden de df_rest. Un restaurante repetido
+    (misma clave) se guarda una vez: Postgres no deja actualizar la misma fila dos veces en una
+    misma petición."""
+    platos_por_id = {}
+    for p in df_platos.to_dict("records") if not df_platos.empty else []:
+        platos_por_id.setdefault(p["ID_Restaurante"], []).append(
+            {"Plato": valor_para_json(p["Plato"]), "Sentimiento": valor_para_json(p["Sentimiento"])})
+    filas, vistas = [], set()
+    for fila in df_rest.to_dict("records"):
+        clave = clave_restaurante(fila.get("Nombre"))
+        if not clave or clave in vistas:
+            continue
+        vistas.add(clave)
+        imagen = valor_para_json(fila.get("Imagen archivo"))
+        datos = fila_para_json({k: v for k, v in fila.items() if k not in ("ID", "Imagen archivo")})
+        filas.append({"clave": clave, "datos": datos, "platos": platos_por_id.get(fila.get("ID"), []),
+                      "imagen": imagen or None})
+    return filas
+
+
 def url_foto(url_supabase, archivo):
     if not archivo:
         return None

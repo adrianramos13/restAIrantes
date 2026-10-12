@@ -56,6 +56,15 @@ Secrets: `TYPESAFE_API_KEY` env var (pipeline step 3, paid but cached); `ORS_API
 - **Detail sheet** is an `st.dialog` with no widgets, opened only on the run right after a tap (`session_state.pop("ficha_abrir")`), so closing it with ✕ doesn't make it reappear.
 - **Theme** lives in `.streamlit/config.toml` (light + dark). A few things the theme can't do (sticky search button, entry splash, cover strip) are CSS injected via `st.html` (`componentes/global.css`, `portada.css`, `intro.css`); they depend on Streamlit's internal `data-testid`/`st-key-*` class names and hardcode the light/dark backgrounds via `prefers-color-scheme`.
 
+## Multiuser mode
+
+`sesion.config_multiusuario()` switches the app to multiuser when `[auth]` (Google OIDC for `st.login`) and `[supabase]` are in the secrets; otherwise (or with `RESTAIRANTES_MODO=local`, which `tests/conftest.py` sets) it runs in local mode on the excels exactly as before. Keep both modes working.
+
+- `algoritmo/datos.py` (no Streamlit) talks to Supabase's REST API with `requests` and the **service-role key, server-side only**; tables (`supabase/esquema.sql`) have RLS on with no policies, so the anon key can read nothing. The app filters by `st.user.email`; optional `usuarios_permitidos` allowlist.
+- Shared catalog: `restaurantes.datos` (jsonb) holds exactly the columns of `clasificacion_jev.xlsx`, so `logica.py` is unchanged; `filas_a_dataframes` rebuilds the same DataFrames with the catalog id as `ID`. Catalog key = `clave_restaurante(nombre)`.
+- `obtener_datos/procesar_solicitudes.py` (run locally, visible Chrome with the owner's Google session) processes pending lists: reuses catalog entries (only refreshing list fields), runs photo → reviews → Jev for new ones by pointing `clasificar_restaurantes_jev`'s path constants at temp excels. Links are validated with `datos.enlace_lista_valido` in the app **and** the processor (they're opened with the owner's Google session).
+- Tests: `tests/test_multiusuario.py` (fake requests + monkeypatched `sesion`/`datos` under AppTest) and `tests/test_procesador.py` (in-memory fake DB).
+
 ## Deployment
 
 Streamlit Community Cloud, main file `algoritmo/app.py`; one app per branch (`main` and `v2` are deployed separately). `excels/`, `imagenes/` and `.streamlit/config.toml` must be committed; `.streamlit/secrets.toml` must not.
