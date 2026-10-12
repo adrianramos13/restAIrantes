@@ -1,0 +1,23 @@
+/* Barra de secciones fija abajo (al alcance del pulgar), como las apps del móvil. */
+.barra {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 100;
+  display: flex; justify-content: space-around;
+  padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
+  background: var(--st-background-color); border-top: 1px solid var(--st-border-color);
+  font-family: var(--st-font, sans-serif);
+}
+.barra button {
+  all: unset; box-sizing: border-box; flex: 1; max-width: 120px; min-height: 56px; border-radius: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  cursor: pointer; color: var(--st-text-color); font-size: 12px;
+}
+.barra button[aria-current="page"] { color: var(--st-primary-color); font-weight: 700; }
+.barra button:focus-visible { outline: 2px solid var(--st-primary-color); outline-offset: -2px; }
+.barra svg { width: 24px; height: 24px; fill: currentColor; }
+.avatar {
+  width: 26px; height: 26px; border-radius: 50%; overflow: hidden; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; border: 2px solid transparent;
+}
+[aria-current="page"] .avatar { border-color: var(--st-primary-color); }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar [hidden] { display: none; }   /* si no, el display:block de arriba anula el atributo hidden */

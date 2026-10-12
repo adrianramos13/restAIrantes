@@ -45,6 +45,7 @@ alter table lista_restaurantes enable row level security;
 create table if not exists perfiles (
     usuario         text primary key,
     nombre          text not null check (char_length(nombre) between 1 and 40),
+    preferencias    jsonb not null default '{}'::jsonb,   -- Perfil -> Preferencias (ver 003_preferencias.sql)
     actualizado_en  timestamptz not null default now()
 );
 alter table perfiles enable row level security;

@@ -214,9 +214,11 @@ def multiusuario(monkeypatch):
     st.cache_data.clear()
 
 
-def correr(at=None):
+def correr(at=None, seccion="comer"):
     if at is None:   # ojo: un AppTest sin ejecutar cuenta como "vacío", así que `at or ...` no sirve
         at = AppTest.from_file(APP, default_timeout=180)
+    if "seccion" not in at.session_state:
+        at.session_state["seccion"] = seccion
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     return at
@@ -235,26 +237,22 @@ def test_correo_no_permitido(multiusuario):
     assert "Buscar restaurantes" not in [b.label for b in at.button]
 
 
-def test_usuario_sin_lista_abre_tus_listas_y_pide_sincronizar(multiusuario):
+def test_usuario_sin_lista_va_al_perfil_y_pide_sincronizar(multiusuario):
     multiusuario["con_lista"] = False
     at = correr()
     assert "Buscar restaurantes" not in [b.label for b in at.button]
     assert any("Todavía no tienes restaurantes" in i.value for i in at.info)
 
-    [b for b in at.button if b.label == "Añadir tu lista"][0].click().run()   # abre la ventana "Tus listas"
-    assert not at.exception
+    [b for b in at.button if b.label == "Añadir tu lista"][0].click().run()   # lleva al Perfil
+    assert not at.exception and at.session_state["seccion"] == "perfil"
     assert any("Todavía no has añadido tu lista" in m.value for m in at.markdown)
 
-    # En Streamlit real, pulsar un botón de la ventana solo reejecuta la ventana (sigue abierta);
-    # AppTest reejecuta todo el script, así que se vuelve a pedir abrirla antes de cada clic.
     at.text_input(key="enlace_lista").input("https://evil.com/lista")
-    at.session_state["abrir_tus_listas"] = True
     at.button(key="sincronizar_lista").click().run()
     assert any("no parece de una lista de Google Maps" in e.value for e in at.error)
     assert multiusuario["pedidas"] == []
 
     at.text_input(key="enlace_lista").input("https://maps.app.goo.gl/5QLC8VhBqetTCbjGA")
-    at.session_state["abrir_tus_listas"] = True
     at.button(key="sincronizar_lista").click().run()
     assert multiusuario["pedidas"] == [("ana@ejemplo.com", "https://maps.app.goo.gl/5QLC8VhBqetTCbjGA")]
 
@@ -348,3 +346,50 @@ def test_usuario_con_lista_busca_igual_que_en_local(multiusuario):
     df = at.session_state["resultado"]["df_puntuado"].sort_values(["Score", "ID"], ascending=[False, True])
     huella = [[int(i), round(float(s), 4)] for i, s in zip(df["ID"], df["Score"])]
     assert huella == REFERENCIA["cualquiera_20min"]
+
+
+@pytest.mark.parametrize("guardadas, esperado", [
+    (None, datos.PREFERENCIAS_DEFECTO),
+    ({"transporte": "A pie", "tiempo": 35, "presupuesto": [10, 100]},
+     {"transporte": "A pie", "tiempo": 35, "presupuesto": [10, 100]}),
+    ({"transporte": "En cohete", "tiempo": 37, "presupuesto": [40, 10]}, datos.PREFERENCIAS_DEFECTO),
+    ({"tiempo": True, "presupuesto": [0, "30"]}, datos.PREFERENCIAS_DEFECTO),
+    ("basura", datos.PREFERENCIAS_DEFECTO),
+])
+def test_preferencias_validas(guardadas, esperado):
+    assert datos.preferencias_validas(guardadas) == esperado
+
+
+def test_guardar_perfil_con_preferencias(monkeypatch):
+    llamadas = []
+    monkeypatch.setattr(datos.requests, "request", lambda metodo, url, **kw: llamadas.append(kw)
+                        or RespuestaFalsa([{"usuario": "ana@ejemplo.com", "nombre": "Ana"}]))
+    datos.Supabase("https://x.supabase.co", "k").guardar_perfil(
+        "ana@ejemplo.com", "Ana", {"transporte": "A pie", "tiempo": 999})
+    assert llamadas[0]["json"]["preferencias"] == {"transporte": "A pie", "tiempo": 20, "presupuesto": [0, 30]}
+
+
+
+def test_inicio_saluda_y_propone_un_plato(multiusuario):
+    at = correr(seccion="inicio")
+    assert "Hola, Ana García." in portada(at) and "Lista de Ana García · " in portada(at)
+    assert any(h.value.startswith("¿Te apetece ") for h in at.subheader)
+
+
+def test_perfil_guarda_preferencias_y_el_buscador_las_usa(multiusuario, monkeypatch):
+    guardadas = []
+    monkeypatch.setattr(datos.Supabase, "guardar_perfil",
+                        lambda self, u, nombre, preferencias=None: guardadas.append((u, nombre, preferencias)))
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Anita",
+                              "preferencias": {"transporte": "A pie", "tiempo": 35, "presupuesto": [10, 40]}}
+    at = correr(seccion="perfil")
+    assert any("Anita" in m.value and "ana@ejemplo.com" in m.value for m in at.markdown)
+    assert at.slider(key="pref_tiempo").value == 35
+    at.slider(key="pref_tiempo").set_value(50).run()
+    at.button(key="guardar_preferencias").click().run()
+    assert not at.exception
+    assert guardadas == [("ana@ejemplo.com", "Anita", {"transporte": "A pie", "tiempo": 50, "presupuesto": [10, 40]})]
+
+    at.session_state["seccion"] = "comer"
+    at.run()   # el perfil falso sigue diciendo 35: el buscador arranca con lo guardado en la base de datos
+    assert at.slider(key="tiempo").value == 35 and at.slider(key="presupuesto").value == (10, 40)

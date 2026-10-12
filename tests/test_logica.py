@@ -2,14 +2,16 @@
 inventados. Cubren los filtros estrictos, la puntuación de cocina y el orden."""
 
 import math
+import random
 
 import pandas as pd
 import pytest
 
 from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_1, COL_VOTOS_2, ORDEN_CERCANOS,
-                    ORDEN_PUNTUACION, SCORE_COCINA_DESCONOCIDA, SCORE_COCINA_SECUNDARIA,
-                    filtrar_y_puntuar, ordenar_resultados, parsear_rango_precio, puntuacion_cocina,
-                    solapamiento)
+                    ORDEN_NOMBRE, ORDEN_PUNTUACION, ORDEN_RESENAS, SCORE_COCINA_DESCONOCIDA,
+                    SCORE_COCINA_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
+                    ordenar_resultados, parsear_rango_precio, puntuacion_cocina, solapamiento,
+                    sugerencia_plato)
 
 
 @pytest.mark.parametrize("texto, esperado", [
@@ -116,3 +118,54 @@ def test_ordenar_resultados():
     por_cercania = ordenar_resultados(df, ORDEN_CERCANOS)
     tiempos = list(por_cercania["Tiempo desplazamiento (min)"])
     assert tiempos == sorted(tiempos) and not any(math.isnan(t) for t in tiempos)
+
+
+# ---------------------------------------------------------------- "Mi lista", Inicio y Perfil
+
+def test_filtrar_lista():
+    m = maestro_de_prueba()
+    m["Estado"] = ["", "", "", "Cerrado temporalmente", "", ""]
+    todos = filtrar_lista(m, PLATOS, presupuesto_max=None)
+    assert len(todos) == 6 and list(todos["ID"])[0] == 6                       # sin filtros, por nota
+    assert list(filtrar_lista(m, PLATOS, texto="japones")["ID"]) == [3]        # sin tildes ni mayúsculas
+    assert sorted(filtrar_lista(m, PLATOS, cocinas=["Japonesa"])["ID"]) == [3]
+    assert 4 not in set(filtrar_lista(m, PLATOS, presupuesto_max=30)["ID"])   # fuera de presupuesto
+    assert set(filtrar_lista(m, PLATOS, nota_min=4.8, presupuesto_max=None)["ID"]) == {2, 3, 6}
+    assert list(filtrar_lista(m, PLATOS, plato="carbonara")["ID"]) == [1]      # solo menciones buenas
+    assert 4 not in set(filtrar_lista(m, PLATOS, ocultar_cerrados=True, presupuesto_max=None)["ID"])
+    assert list(filtrar_lista(m, PLATOS, orden=ORDEN_RESENAS, presupuesto_max=None)["ID"])[0] == 6
+    assert list(filtrar_lista(m, PLATOS, orden=ORDEN_NOMBRE, presupuesto_max=None)["Nombre"])[0] == "Italiano caro"
+    assert filtrar_lista(m, PLATOS, texto="no existe", cocinas=["Italiana"]).empty
+    assert filtrar_lista(pd.DataFrame(), PLATOS, texto="x").empty                 # lista vacía
+
+
+def test_sugerencia_plato():
+    m = maestro_de_prueba()
+    m["Estado"] = ["", "", "", "", "", "Cerrado permanentemente"]
+    platos = pd.DataFrame([
+        {"ID_Restaurante": 1, "Plato": "carbonara", "Sentimiento": "Buena"},
+        {"ID_Restaurante": 1, "Plato": "carbonara", "Sentimiento": "Buena"},
+        {"ID_Restaurante": 2, "Plato": "carbonara", "Sentimiento": "Buena"},
+        {"ID_Restaurante": 2, "Plato": "carbonara", "Sentimiento": "Buena"},
+        {"ID_Restaurante": 2, "Plato": "carbonara", "Sentimiento": "Buena"},
+        {"ID_Restaurante": 3, "Plato": "sushi", "Sentimiento": "Buena"},       # una sola mención: no basta
+        {"ID_Restaurante": 6, "Plato": "lasaña", "Sentimiento": "Buena"},      # cerrado
+        {"ID_Restaurante": 6, "Plato": "lasaña", "Sentimiento": "Buena"},
+        {"ID_Restaurante": 4, "Plato": "tiramisú", "Sentimiento": "Mala"},     # malas no cuentan
+        {"ID_Restaurante": 4, "Plato": "tiramisú", "Sentimiento": "Mala"},
+        {"ID_Restaurante": 3, "Plato": "India", "Sentimiento": "Buena"},       # es una cocina, no un plato
+        {"ID_Restaurante": 3, "Plato": "India", "Sentimiento": "Buena"},
+    ])
+    rng = random.Random(1)
+    assert sugerencia_plato(m, platos, rng) == ("carbonara", 2, 3)              # el que más lo elogia
+    assert sugerencia_plato(m, platos, rng, evitar="carbonara") == ("carbonara", 2, 3)   # no hay otro
+    assert sugerencia_plato(m, PLATOS, rng) is None
+    assert sugerencia_plato(pd.DataFrame(), platos, rng) is None
+
+
+def test_estadisticas_lista():
+    e = estadisticas_lista(maestro_de_prueba())
+    assert e["total"] == 6 and e["cocinas"].to_dict() == {"Italiana": 5, "Japonesa": 1}
+    assert e["precio_medio"] == pytest.approx((15 * 4 + 55) / 5)
+    assert e["nota_media"] == pytest.approx(sum([4.5, 4.9, 4.8, 4.7, 4.0, 5.0]) / 6)
+    assert estadisticas_lista(pd.DataFrame()) is None

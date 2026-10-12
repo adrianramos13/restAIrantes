@@ -81,6 +81,29 @@ _PATRON_ENLACE_LISTA = re.compile(
 LARGO_MAX_NOMBRE = 40   # el mismo límite que la tabla perfiles
 
 
+PREFERENCIAS_DEFECTO = {"transporte": "En coche", "tiempo": 20, "presupuesto": [0, 30]}
+
+
+def _es_paso_de_5(valor, minimo, maximo):
+    return isinstance(valor, int) and not isinstance(valor, bool) and minimo <= valor <= maximo and valor % 5 == 0
+
+
+def preferencias_validas(guardadas):
+    """Preferencias de búsqueda (Perfil) listas para usar como valores iniciales del buscador: lo que
+    falte o no valga (vienen de la base de datos) se queda con el valor por defecto."""
+    guardadas = guardadas if isinstance(guardadas, dict) else {}
+    p = dict(PREFERENCIAS_DEFECTO)
+    if guardadas.get("transporte") in ("En coche", "A pie"):
+        p["transporte"] = guardadas["transporte"]
+    if _es_paso_de_5(guardadas.get("tiempo"), 5, 60):
+        p["tiempo"] = guardadas["tiempo"]
+    presupuesto = guardadas.get("presupuesto")
+    if (isinstance(presupuesto, (list, tuple)) and len(presupuesto) == 2
+            and all(_es_paso_de_5(x, 0, 100) for x in presupuesto) and presupuesto[0] <= presupuesto[1]):
+        p["presupuesto"] = list(presupuesto)
+    return p
+
+
 def validar_nombre(nombre):
     """Nombre visible del usuario, limpio. Lanza ValueError con un mensaje para el usuario si no vale."""
     nombre = re.sub(r"\s+", " ", nombre or "").strip()
@@ -238,9 +261,11 @@ class Supabase:
         filas = self._rest("GET", "perfiles", params={"usuario": f"eq.{usuario}", "select": "*"})
         return filas[0] if filas else None
 
-    def guardar_perfil(self, usuario, nombre):
-        filas = self._rest("POST", "perfiles", params={"on_conflict": "usuario"},
-                           json={"usuario": usuario, "nombre": nombre, "actualizado_en": _ahora()},
+    def guardar_perfil(self, usuario, nombre, preferencias=None):
+        fila = {"usuario": usuario, "nombre": nombre, "actualizado_en": _ahora()}
+        if preferencias is not None:
+            fila["preferencias"] = preferencias_validas(preferencias)
+        filas = self._rest("POST", "perfiles", params={"on_conflict": "usuario"}, json=fila,
                            prefer="resolution=merge-duplicates,return=representation")
         return filas[0]
 

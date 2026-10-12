@@ -322,10 +322,15 @@ flowchart LR
    ```
 
 > **Si ya habías ejecutado `esquema.sql` antes de que existiera el menú de usuario**, ejecuta también `supabase/002_perfiles.sql` (mismo procedimiento: copiar su contenido en el *SQL Editor* → *Run*). Crea la tabla `perfiles`, donde se guarda el nombre que cada usuario elige en **Datos personales**. Sin ella la app funciona, pero usa el nombre de Google y no deja guardar cambios.
+>
+> **Y para las preferencias del Perfil**, ejecuta `supabase/003_preferencias.sql` (añade la columna `preferencias` a `perfiles`). Sin ella todo funciona, pero *Guardar preferencias* da error.
 
-### Menú de usuario
+### Secciones (barra de abajo)
 
-Arriba a la derecha aparece la foto de la cuenta de Google (o su inicial). Al pulsarla se abre un desplegable con **Datos personales**: muestra el correo y la foto (los de Google, no editables: el correo identifica la lista) y permite cambiar el **nombre** con el que saluda la app ("Lista de Ana · 226 sitios").
+- **Inicio**: una idea para hoy: «¿Te apetece cachopo? Te gustará Casa Pepe», con la ficha del sitio. Elige al azar un plato que las reseñas de tu lista elogian (al menos 2 menciones buenas en un mismo sitio abierto) y el sitio donde más lo elogian. *Otra idea* cambia de plato; *Más sitios con…* lo busca en Comer hoy.
+- **Comer hoy**: el buscador de siempre (desde dónde, tiempo, cocina, presupuesto y plato).
+- **Mi lista**: todos los restaurantes de tu lista, con buscador por nombre, filtros (cocina, presupuesto, nota mínima, plato, ocultar cerrados) y orden.
+- **Perfil** (el icono es tu foto de Google): *Tus listas*, estadísticas de tu lista, **preferencias** (transporte, tiempo y presupuesto que vienen ya puestos en Comer hoy), *Datos personales* (el nombre con el que te saluda la app; el correo y la foto son los de Google) y *Cerrar sesión*.
 
 ### Día a día
   
@@ -345,7 +350,7 @@ Arriba a la derecha aparece la foto de la cuenta de Google (o su inicial). Al pu
 
   Si alguien pega **una lista que otra persona ya tiene procesada**, se copia al momento, sin esperar al procesador.
 
-- **Tus listas** (menú de la foto): estado de la sincronización, enlace de la lista y botón *Guardar y sincronizar*.
+- **Tus listas** (en el Perfil): estado de la sincronización, enlace de la lista y botón *Guardar y sincronizar*.
 - **Buscar en: Mi lista / Todos los restaurantes**: la segunda opción busca entre todos los restaurantes de la base de datos (los de todas las listas).
 
   La primera vez se abre Chrome para que inicies sesión en Google (queda guardada en `origen/perfil_chrome/`, fuera de git). Solo se analizan con Jev los restaurantes que no estaban en el catálogo. Si una lista falla, el usuario lo ve en "Mi lista" con el motivo.
