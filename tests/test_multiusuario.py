@@ -130,6 +130,40 @@ def test_reemplazar_lista_quita_repetidos(monkeypatch):
     assert [f["posicion"] for f in llamadas[1][1]["json"]] == [1, 2, 4]
 
 
+@pytest.mark.parametrize("entrada, esperado", [
+    ("  Ana   García ", "Ana García"),
+    ("Adrián", "Adrián"),
+    ("x" * 40, "x" * 40),
+])
+def test_validar_nombre_valido(entrada, esperado):
+    assert datos.validar_nombre(entrada) == esperado
+
+
+@pytest.mark.parametrize("entrada", ["", "   ", None, "x" * 41, "<script>alert(1)</script>", "Ana >"])
+def test_validar_nombre_no_valido(entrada):
+    with pytest.raises(ValueError):
+        datos.validar_nombre(entrada)
+
+
+def test_error_de_red_es_error_supabase(monkeypatch):
+    def sin_red(*a, **k):
+        raise datos.requests.ConnectionError("sin red")
+    monkeypatch.setattr(datos.requests, "request", sin_red)
+    with pytest.raises(datos.ErrorSupabase):
+        datos.Supabase("https://x.supabase.co", "k").perfil_de("ana@ejemplo.com")
+
+
+def test_guardar_perfil(monkeypatch):
+    llamadas = []
+    monkeypatch.setattr(datos.requests, "request", lambda metodo, url, **kw: llamadas.append((metodo, url, kw))
+                        or RespuestaFalsa([{"usuario": "ana@ejemplo.com", "nombre": "Ana"}]))
+    fila = datos.Supabase("https://x.supabase.co", "k").guardar_perfil("ana@ejemplo.com", "Ana")
+    metodo, url, kw = llamadas[0]
+    assert (metodo, url, kw["params"]) == ("POST", "https://x.supabase.co/rest/v1/perfiles", {"on_conflict": "usuario"})
+    assert kw["json"]["usuario"] == "ana@ejemplo.com" and kw["json"]["nombre"] == "Ana"
+    assert fila["nombre"] == "Ana"
+
+
 def test_cabeceras_segun_tipo_de_clave():
     nueva = datos.Supabase("https://x.supabase.co", "sb_secret_abc")._cabeceras
     assert nueva == {"apikey": "sb_secret_abc"}                  # no es JWT: sin Authorization
@@ -153,13 +187,22 @@ LISTA_OK = {"id": 1, "usuario": "ana@ejemplo.com", "enlace": "https://maps.app.g
 def multiusuario(monkeypatch):
     """Activa el modo multiusuario con un usuario y una base de datos falsos. Devuelve un dict
     para elegir el usuario, sus datos y ver qué se ha pedido a la base de datos."""
-    estado = {"usuario": "ana@ejemplo.com", "permitidos": [], "con_lista": True, "pedidas": []}
+    estado = {"usuario": "ana@ejemplo.com", "permitidos": [], "con_lista": True, "pedidas": [],
+              "google": {"nombre": "Ana García", "foto": "https://lh3.googleusercontent.com/a/foto"},
+              "perfil": None, "perfil_falla": False}
     maestro = pd.read_excel(EXCEL, sheet_name="Restaurantes")
     platos = pd.read_excel(EXCEL, sheet_name="Platos mencionados")
 
     monkeypatch.setattr(sesion, "config_multiusuario",
                         lambda: {"url": "https://x.supabase.co", "clave_servicio": "k", "permitidos": estado["permitidos"]})
     monkeypatch.setattr(sesion, "usuario_actual", lambda: estado["usuario"])
+    monkeypatch.setattr(sesion, "datos_google", lambda: estado["google"])
+
+    def perfil_de(self, u):
+        if estado["perfil_falla"]:
+            raise datos.ErrorSupabase("GET perfiles: 404 (la tabla no existe)")
+        return estado["perfil"]
+    monkeypatch.setattr(datos.Supabase, "perfil_de", perfil_de)
     monkeypatch.setattr(datos.Supabase, "restaurantes_de", lambda self, u: (
         (maestro.copy(), platos.copy(), LISTA_OK) if estado["con_lista"]
         else (pd.DataFrame(), pd.DataFrame(columns=datos.COLUMNAS_PLATOS), None)))
@@ -205,6 +248,34 @@ def test_usuario_sin_lista_ve_mi_lista_y_pide_procesar(multiusuario):
     at.text_input(key="enlace_lista").input("https://maps.app.goo.gl/5QLC8VhBqetTCbjGA")
     [b for b in at.button if b.label == "Guardar y procesar"][0].click().run()
     assert multiusuario["pedidas"] == [("ana@ejemplo.com", "https://maps.app.goo.gl/5QLC8VhBqetTCbjGA")]
+
+
+def portada(at):
+    return " ".join(h.proto.body for h in at.get("html") if "portada" in h.proto.body)
+
+
+def test_portada_saluda_con_el_nombre_de_google(multiusuario):
+    at = correr()
+    assert "Lista de Ana García · " in portada(at)
+
+
+def test_portada_saluda_con_el_nombre_elegido(multiusuario):
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Anita"}
+    at = correr()
+    assert "Lista de Anita · " in portada(at)
+
+
+def test_sin_tabla_perfiles_la_app_sigue_funcionando(multiusuario):
+    multiusuario["perfil_falla"] = True
+    at = correr()
+    assert "Lista de Ana García · " in portada(at)
+    assert "Buscar restaurantes" in [b.label for b in at.button]
+
+
+def test_nombre_con_html_se_escapa_en_la_portada(multiusuario):
+    multiusuario["google"] = {"nombre": "<b>Ana</b>", "foto": None}
+    at = correr()
+    assert "&lt;b&gt;Ana&lt;/b&gt;" in portada(at) and "<b>Ana</b>" not in portada(at)
 
 
 def test_usuario_con_lista_busca_igual_que_en_local(multiusuario):

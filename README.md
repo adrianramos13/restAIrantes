@@ -321,6 +321,12 @@ flowchart LR
    python obtener_datos/migrar_a_supabase.py --email tu@gmail.com --url "https://maps.app.goo.gl/..."
    ```
 
+> **Si ya habías ejecutado `esquema.sql` antes de que existiera el menú de usuario**, ejecuta también `supabase/002_perfiles.sql` (mismo procedimiento: copiar su contenido en el *SQL Editor* → *Run*). Crea la tabla `perfiles`, donde se guarda el nombre que cada usuario elige en **Datos personales**. Sin ella la app funciona, pero usa el nombre de Google y no deja guardar cambios.
+
+### Menú de usuario
+
+Arriba a la derecha aparece la foto de la cuenta de Google (o su inicial). Al pulsarla se abre un desplegable con **Datos personales**: muestra el correo y la foto (los de Google, no editables: el correo identifica la lista) y permite cambiar el **nombre** con el que saluda la app ("Lista de Ana · 226 sitios").
+
 ### Día a día
   
 - Cada usuario entra, abre **"Mi lista de Google Maps"**, pega el enlace de su lista (en Google Maps: la lista → *Compartir* → copiar enlace) y pulsa **Guardar y procesar**. Queda *pendiente*.
