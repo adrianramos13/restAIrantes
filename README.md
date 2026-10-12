@@ -292,7 +292,7 @@ flowchart LR
 
 ### Puesta en marcha (una vez)
 
-1. **Supabase** (gratis): crea un proyecto en supabase.com → *SQL Editor* → pega `supabase/esquema.sql` → *Run*. Crea las tablas y el bucket público `fotos`. En *Project Settings → API* copia la **URL** y la clave **`service_role`** (no la `anon`).
+1. **Supabase** (gratis): crea un proyecto en supabase.com → *SQL Editor* → abre el archivo `supabase/esquema.sql` del proyecto, copia **todo su contenido** (no el nombre del archivo) y pégalo en el editor → *Run*. Debe responder "Success. No rows returned" y crear las tablas `restaurantes`, `listas` y `lista_restaurantes` (*Table Editor*) y el bucket público `fotos` (*Storage*). En *Project Settings → API* copia la **URL** y la clave **`service_role`** (no la `anon`).
 2. **Login con Google** (gratis): en console.cloud.google.com → *APIs y servicios → Credenciales → Crear credenciales → ID de cliente de OAuth* → tipo *Aplicación web*. En *URIs de redirección autorizados* añade `https://TU-APP.streamlit.app/oauth2callback` y `http://localhost:8501/oauth2callback`. Copia el ID y el secreto del cliente. (Si te pide configurar la *pantalla de consentimiento*, tipo *Externo* y añade como usuarios de prueba los correos que vayan a entrar.)
 3. **Secrets** (`.streamlit/secrets.toml` en local y *Manage app → Settings → Secrets* en Streamlit Cloud):
 

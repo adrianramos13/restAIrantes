@@ -127,7 +127,11 @@ def _lotes(elementos, tamano=FILAS_POR_PETICION):
 class Supabase:
     def __init__(self, url, clave_servicio):
         self.url = url.rstrip("/")
-        self._cabeceras = {"apikey": clave_servicio, "Authorization": f"Bearer {clave_servicio}"}
+        self._cabeceras = {"apikey": clave_servicio}
+        # Las claves antiguas (service_role, "eyJ...") son JWT y van también como Bearer; las nuevas
+        # (sb_secret_...) no son JWT y Supabase solo las acepta en la cabecera apikey.
+        if not clave_servicio.startswith("sb_"):
+            self._cabeceras["Authorization"] = f"Bearer {clave_servicio}"
 
     def _rest(self, metodo, tabla, *, params=None, json=None, prefer=None):
         cabeceras = dict(self._cabeceras)

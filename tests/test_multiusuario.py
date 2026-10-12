@@ -130,6 +130,13 @@ def test_reemplazar_lista_quita_repetidos(monkeypatch):
     assert [f["posicion"] for f in llamadas[1][1]["json"]] == [1, 2, 4]
 
 
+def test_cabeceras_segun_tipo_de_clave():
+    nueva = datos.Supabase("https://x.supabase.co", "sb_secret_abc")._cabeceras
+    assert nueva == {"apikey": "sb_secret_abc"}                  # no es JWT: sin Authorization
+    antigua = datos.Supabase("https://x.supabase.co", "eyJhbGci.x.y")._cabeceras
+    assert antigua == {"apikey": "eyJhbGci.x.y", "Authorization": "Bearer eyJhbGci.x.y"}
+
+
 def test_error_de_supabase(monkeypatch):
     monkeypatch.setattr(datos.requests, "request", lambda *a, **k: RespuestaFalsa({"message": "no"}, 401))
     with pytest.raises(datos.ErrorSupabase):
