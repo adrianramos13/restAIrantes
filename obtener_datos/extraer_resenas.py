@@ -141,7 +141,9 @@ async def abrir_ficha_desde_resultados(page, nombre):
 
     try:
         titulo = page.locator("h1").first
-        if await titulo.count() > 0 and await titulo.is_visible():
+        # Una lista de resultados también tiene <h1> ("Resultados"): solo es ficha si no hay feed
+        if (await page.locator('div[role="feed"]').count() == 0
+                and await titulo.count() > 0 and await titulo.is_visible()):
             texto = (await titulo.inner_text()).strip()
             if texto:
                 return True
@@ -201,7 +203,9 @@ async def obtener_datos_ficha(page):
     try:
         # Nombre
         try:
-            titulo = page.locator("h1").first
+            # Si se llegó desde una lista de resultados, su <h1> "Resultados" sigue en la página
+            titulo = page.locator("h1").filter(has_text=re.compile(r"\S")).filter(
+                has_not_text=re.compile(r"^Resultados$")).first
 
             if await titulo.count() > 0:
                 datos["nombre_google"] = (
@@ -1144,22 +1148,13 @@ async def main():
         # Abrir navegador
         # ----------------------------------------------------
 
-        browser = await p.chromium.launch(
-            headless=False,
-            args=[
-                "--disable-blink-features=AutomationControlled"
-            ]
-        )
-
-        context = await browser.new_context(
-            locale="es-ES",
-            viewport={
-                "width": 1440,
-                "height": 900,
-            }
-        )
-
-        page = await context.new_page()
+        # Con TU sesión de Google (la misma que usa extraer_html.py --url): sin sesión,
+        # Google Maps enseña una vista limitada con solo ~5 reseñas por sitio.
+        from extraer_html import _abrir_chrome_con_sesion, _asegurar_sesion
+        browser = await _abrir_chrome_con_sesion(p)   # contexto persistente: se cierra igual
+        page = browser.pages[0] if browser.pages else await browser.new_page()
+        await page.goto("https://www.google.com/maps?hl=es", wait_until="load")
+        await _asegurar_sesion(page, "https://www.google.com/maps?hl=es")
 
         # ----------------------------------------------------
         # Procesar restaurantes

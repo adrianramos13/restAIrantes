@@ -88,6 +88,60 @@ def test_reutiliza_el_catalogo_y_analiza_solo_los_nuevos(monkeypatch, analizados
     assert resumen == "2 restaurantes (1 nuevos)"
 
 
+def test_resenas_en_varias_pestanas_mantienen_el_orden(monkeypatch):
+    import asyncio
+    import random
+
+    class PaginaFalsa:
+        async def goto(self, *a, **k):
+            pass
+
+    class ContextoFalso:
+        def __init__(self):
+            self.pages = [PaginaFalsa()]
+
+        async def new_page(self):
+            self.pages.append(PaginaFalsa())
+            return self.pages[-1]
+
+        async def close(self):
+            pass
+
+    contexto = ContextoFalso()
+    usadas, vistos = set(), []
+
+    async def abrir(p):
+        return contexto
+
+    async def asegurar(page, url):
+        pass
+
+    async def procesar(page, nombre, i, total):
+        usadas.add(id(page))
+        vistos.append(nombre)
+        await asyncio.sleep(random.uniform(0, 0.02))   # terminan en distinto orden
+        return [{"Restaurante": nombre, "Texto": f"reseña {k}"} for k in range(2)]
+
+    class PlaywrightFalso:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *a):
+            return False
+
+    import playwright.async_api
+    monkeypatch.setattr(playwright.async_api, "async_playwright", lambda: PlaywrightFalso())
+    monkeypatch.setattr(ps.extraer_html, "_abrir_chrome_con_sesion", abrir)
+    monkeypatch.setattr(ps.extraer_html, "_asegurar_sesion", asegurar)
+    monkeypatch.setattr(ps.extraer_resenas, "procesar_restaurante", procesar)
+
+    nombres = [f"Sitio {n}" for n in range(10)]
+    filas = asyncio.run(ps._resenas_de(nombres, pestanas=3))
+    assert sorted(vistos) == sorted(nombres) and len(vistos) == 10      # cada uno, una vez
+    assert len(usadas) == 3                                             # se han usado las 3 pestañas
+    assert [f["Restaurante"] for f in filas] == [n for n in nombres for _ in range(2)]   # orden original
+
+
 def test_enlace_no_valido_no_abre_el_navegador(monkeypatch, analizados):
     monkeypatch.setattr(ps, "descargar_filas", lambda enlace: pytest.fail("no debería descargar nada"))
     with pytest.raises(ps.ErrorLista):
