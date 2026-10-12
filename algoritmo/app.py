@@ -44,6 +44,8 @@ from geopy.exc import GeocoderServiceError
 from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_PUNTUACION,
                     VOTOS_MIN_SECUNDARIA, filtrar_y_puntuar, ordenar_resultados, tiene_categorias_jev)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
+import datos as bd
+from sesion import config_multiusuario, usuario_actual
 
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
@@ -74,6 +76,12 @@ PRESUPUESTO_SIN_LIMITE = 100   # el máximo del slider de presupuesto significa 
 # --------------------------------------------------------------- #
 
 
+# Modo multiusuario (login de Google + Supabase) si los secrets lo configuran; si no, modo local
+# con los excels de siempre. Ver sesion.py.
+CONFIG_MULTIUSUARIO = config_multiusuario()
+BD = bd.Supabase(CONFIG_MULTIUSUARIO["url"], CONFIG_MULTIUSUARIO["clave_servicio"]) if CONFIG_MULTIUSUARIO else None
+
+
 @st.cache_data
 def cargar_datos():
     maestro = pd.read_excel(MAESTRO_XLSX, sheet_name="Restaurantes")
@@ -82,6 +90,12 @@ def cargar_datos():
     except Exception:
         df_platos = pd.DataFrame(columns=["ID_Restaurante", "Plato", "Sentimiento"])
     return maestro, df_platos
+
+
+@st.cache_data(ttl=300, show_spinner=False)   # 5 min: lo que tarda en verse una lista recién procesada
+def cargar_datos_usuario(usuario):
+    """(maestro, df_platos, lista) del usuario en modo multiusuario."""
+    return BD.restaurantes_de(usuario)
 
 
 
@@ -217,9 +231,13 @@ def _foto_base64(ruta):
 
 
 def foto_restaurante(fila, ancho=160):
-    """Foto para el navegador: la descargada en imagenes/ (en base64, porque los componentes
-    no ven el disco) o, si no hay, la URL de Google (que puede haber caducado)."""
-    imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
+    """Foto para el navegador: en multiusuario, la de Supabase Storage (URL pública); en local,
+    la descargada en imagenes/ (en base64, porque los componentes no ven el disco). Si no hay,
+    la URL de Google (que puede haber caducado)."""
+    archivo = valor_o(fila, "Imagen archivo", "")
+    if BD is not None and archivo:
+        return BD.url_foto(archivo)
+    imagen_local = IMAGENES_DIR / str(archivo)
     if imagen_local.is_file():
         return _foto_base64(str(imagen_local))
     url = fila.get("Imagen URL")
@@ -254,7 +272,7 @@ def mostrar_ficha(fila, respuestas, df_platos):
     @st.dialog(str(fila["Nombre"]), width="medium")
     def _ficha():
         imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
-        foto = str(imagen_local) if imagen_local.is_file() else foto_restaurante(fila, ancho=800)
+        foto = str(imagen_local) if BD is None and imagen_local.is_file() else foto_restaurante(fila, ancho=800)
         if foto:
             st.image(foto, width="stretch")
 
@@ -544,9 +562,17 @@ def miniaturas_portada():
     return miniaturas
 
 
-def fotos_portada():
-    if "fotos_portada" not in st.session_state:   # fotos distintas en cada visita, fijas mientras dure
-        todas = miniaturas_portada()
+def fotos_portada(maestro=None):
+    """Fotos de la cinta: distintas en cada visita y fijas mientras dura. En multiusuario son las
+    de los restaurantes del usuario (URLs de Supabase); en local, miniaturas de imagenes/."""
+    if "fotos_portada" not in st.session_state:
+        if BD is not None:
+            archivos = [] if maestro is None or maestro.empty else maestro["Imagen archivo"].dropna().tolist()
+            todas = [BD.url_foto(a) for a in archivos]
+        else:
+            todas = miniaturas_portada()
+        if not todas:   # sin fotos todavía (p. ej. antes de entrar): no se fija, se reintenta luego
+            return []
         st.session_state["fotos_portada"] = random.sample(todas, min(FOTOS_PORTADA, len(todas)))
     return st.session_state["fotos_portada"]
 
@@ -567,33 +593,110 @@ def mostrar_intro():
     return True
 
 
-def mostrar_portada(num_restaurantes, tras_intro=False):
-    fotos = fotos_portada()
+def mostrar_portada(num_restaurantes, tras_intro=False, maestro=None,
+                    momento=None, subtitulo="Decid desde dónde salís y qué os apetece, y os digo cuál."):
+    fotos = fotos_portada(maestro)
     # La lista va dos veces seguidas: al desplazarse la mitad, vuelve al principio sin salto.
     cinta = "".join(f'<img src="{f}" alt="">' for f in fotos * 2)
+    momento = momento or f"🍽️ Vuestra lista · {num_restaurantes} sitios"
 
     st.html(_CSS_PORTADA + f"""
 <div class="portada{' tras-intro' if tras_intro else ''}">
   {f'<div class="cinta" aria-hidden="true"><div class="pista">{cinta}</div></div>' if fotos else ''}
-  <p class="momento">🍽️ Vuestra lista · {num_restaurantes} sitios</p>
+  <p class="momento">{momento}</p>
   <h1>¿Dónde comemos?</h1>
-  <p class="sub">Decid desde dónde salís y qué os apetece, y os digo cuál.</p>
+  <p class="sub">{subtitulo}</p>
 </div>
 """)
+
+
+# ----------------------- MODO MULTIUSUARIO: ENTRAR Y "MI LISTA" ----------------------- #
+
+ESTADOS_LISTA = {
+    "sin_lista": "Todavía no has añadido tu lista.",
+    "pendiente": "⏳ Pendiente: se procesará en breve (puede tardar unas horas).",
+    "procesando": "⚙️ Procesando tu lista ahora mismo…",
+    "lista": "✓ Tu lista está al día.",
+    "error": "⚠️ No se pudo procesar tu lista.",
+}
+
+
+def pantalla_entrar(tras_intro):
+    mostrar_portada(0, tras_intro=tras_intro, momento="🍽️ Tus sitios de Google Maps",
+                    subtitulo="Entra con tu cuenta de Google para ver los restaurantes de tu lista.")
+    st.button("Entrar con Google", type="primary", icon=":material/login:", width="stretch",
+              on_click=st.login, args=("google",))
+
+
+def pantalla_sin_permiso(usuario):
+    st.warning(f"La cuenta {usuario} no tiene acceso a esta app. Pide al administrador que te añada.")
+    st.button("Salir", on_click=st.logout)
+
+
+def pedir_procesar_lista(usuario):
+    enlace = (st.session_state.get("enlace_lista") or "").strip()
+    if not bd.enlace_lista_valido(enlace):
+        st.session_state["error_enlace"] = ("Ese enlace no parece de una lista de Google Maps. En Google Maps: "
+                                            "abre tu lista → Compartir → copiar enlace (empieza por https://maps.app.goo.gl/).")
+        return
+    st.session_state.pop("error_enlace", None)
+    BD.pedir_actualizacion(usuario, enlace)
+    cargar_datos_usuario.clear()
+
+
+def panel_mi_lista(usuario, lista, sin_restaurantes):
+    estado = lista["estado"] if lista else "sin_lista"
+    with st.expander("Mi lista de Google Maps", expanded=sin_restaurantes, icon=":material/bookmarks:"):
+        st.markdown(ESTADOS_LISTA.get(estado, estado))
+        if lista and lista.get("actualizado_en"):
+            st.caption(f"Última actualización: {lista['actualizado_en'][:16].replace('T', ' ')} (UTC)")
+        if estado == "error" and lista.get("mensaje"):
+            st.caption(lista["mensaje"])
+        st.text_input("Enlace de tu lista", value=(lista or {}).get("enlace") or "", key="enlace_lista",
+                      placeholder="https://maps.app.goo.gl/...",
+                      help="En Google Maps: abre tu lista → Compartir → copiar enlace.")
+        if st.session_state.get("error_enlace"):
+            st.error(st.session_state["error_enlace"])
+        st.button("Guardar y procesar", on_click=pedir_procesar_lista, args=(usuario,),
+                  disabled=estado in ("pendiente", "procesando"))
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.caption(f"Sesión: {usuario}")
+            st.button("Salir", on_click=st.logout, type="tertiary")
 
 
 st.set_page_config(page_title="¿Dónde comemos?", page_icon="🍽️", layout="centered")
 st.html(_CSS_GLOBAL)
 hay_intro = mostrar_intro()
 
-maestro, df_platos = cargar_datos()
+usuario, mi_lista = None, None
+if CONFIG_MULTIUSUARIO:
+    usuario = usuario_actual()
+    if usuario is None:
+        pantalla_entrar(hay_intro)
+        st.stop()
+    if CONFIG_MULTIUSUARIO["permitidos"] and usuario not in CONFIG_MULTIUSUARIO["permitidos"]:
+        pantalla_sin_permiso(usuario)
+        st.stop()
+    try:
+        maestro, df_platos, mi_lista = cargar_datos_usuario(usuario)
+    except bd.ErrorSupabase:
+        st.error("No se ha podido cargar tu lista ahora mismo. Prueba a recargar la página en un momento.")
+        st.stop()
+else:
+    maestro, df_platos = cargar_datos()
+
 vista = st.session_state.setdefault("vista", "buscador")
 if vista == "resultados" and st.session_state.get("resultado") is not None:
     st.html(_CSS_OCULTAR_BUSCADOR)
 
 # ----------------------- VISTA: BUSCADOR ----------------------- #
 with st.container(key="buscador"):
-    mostrar_portada(len(maestro), tras_intro=hay_intro)
+    mostrar_portada(len(maestro), tras_intro=hay_intro, maestro=maestro)
+    if CONFIG_MULTIUSUARIO:
+        panel_mi_lista(usuario, mi_lista, sin_restaurantes=maestro.empty)
+        if maestro.empty:
+            st.info("Cuando tu lista esté procesada, aquí podrás buscar entre tus restaurantes.")
+            st.stop()
 
     # Caja de dirección y, justo debajo, el botón "Usar mi ubicación". Reservamos primero
     # el hueco de la caja y lo rellenamos después de procesar el clic del botón: así la
