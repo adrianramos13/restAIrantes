@@ -30,6 +30,7 @@ DESPLIEGUE (para tener una URL pública desde el móvil):
        móvil y guárdala en la pantalla de inicio como acceso directo.
 """
 
+import html
 import io
 import re
 import base64
@@ -45,7 +46,7 @@ from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS,
                     VOTOS_MIN_SECUNDARIA, filtrar_y_puntuar, ordenar_resultados, tiene_categorias_jev)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
 import datos as bd
-from sesion import config_multiusuario, usuario_actual
+from sesion import config_multiusuario, datos_google, usuario_actual
 
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
@@ -621,6 +622,56 @@ ESTADOS_LISTA = {
 }
 
 
+# Menú de usuario (arriba a la derecha): su foto de Google en un círculo y, al pulsarla, un
+# desplegable con "Datos personales". Componente propio como los demás (componentes/usuario.*).
+_MENU_USUARIO = st.components.v2.component(
+    "menu_usuario", html=recurso("usuario.html"), css=recurso("usuario.css"), js=recurso("usuario.js"),
+)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_perfil(usuario):
+    return BD.perfil_de(usuario)
+
+
+def nombre_visible(usuario, perfil, google):
+    """El que haya elegido en "Datos personales"; si no, el de Google; si no, lo de antes de la @."""
+    return (perfil or {}).get("nombre") or google.get("nombre") or usuario.split("@")[0]
+
+
+def mostrar_datos_personales(usuario, nombre, google):
+    @st.dialog("Datos personales", width="small")
+    def _dialogo():
+        with st.container(horizontal=True, vertical_alignment="center"):
+            if google.get("foto"):
+                st.image(google["foto"], width=72)
+            st.markdown(f"**{nombre}**  \n{usuario}")
+        st.caption("El correo y la foto son los de tu cuenta de Google: identifican tu lista y no se cambian aquí.")
+        nuevo = st.text_input("Nombre", value=nombre, max_chars=bd.LARGO_MAX_NOMBRE, key="perfil_nombre",
+                              help="Es el nombre con el que te saluda la app.")
+        if st.button("Guardar cambios", type="primary", width="stretch", key="guardar_perfil"):
+            try:
+                BD.guardar_perfil(usuario, bd.validar_nombre(nuevo))
+            except ValueError as e:
+                st.error(str(e))
+                return
+            except bd.ErrorSupabase:
+                st.error("No se han podido guardar los cambios ahora mismo. Inténtalo en un momento.")
+                return
+            cargar_perfil.clear()
+            st.rerun()   # cierra la ventana y la portada ya saluda con el nombre nuevo
+    _dialogo()
+
+
+def menu_usuario(usuario, nombre, google):
+    resultado = _MENU_USUARIO(
+        key="menu_usuario", on_opcion_change=lambda: None,
+        data={"foto": google.get("foto"), "inicial": nombre[:1].upper(), "nombre": nombre},
+    )
+    if resultado.opcion == "datos_personales":   # solo en la recarga justo después de elegirlo
+        mostrar_datos_personales(usuario, nombre, google)
+
+
 def pantalla_entrar(tras_intro):
     mostrar_portada(0, tras_intro=tras_intro, momento="🍽️ Tus sitios de Google Maps",
                     subtitulo="Entra con tu cuenta de Google para ver los restaurantes de tu lista.")
@@ -685,13 +736,24 @@ if CONFIG_MULTIUSUARIO:
 else:
     maestro, df_platos = cargar_datos()
 
+momento_portada = None
+if CONFIG_MULTIUSUARIO:
+    google = datos_google()
+    try:
+        perfil = cargar_perfil(usuario)
+    except bd.ErrorSupabase:   # p. ej. aún no se ha creado la tabla perfiles: se usa el nombre de Google
+        perfil = None
+    nombre_usuario = nombre_visible(usuario, perfil, google)
+    menu_usuario(usuario, nombre_usuario, google)
+    momento_portada = f"🍽️ Lista de {html.escape(nombre_usuario)} · {len(maestro)} sitios"
+
 vista = st.session_state.setdefault("vista", "buscador")
 if vista == "resultados" and st.session_state.get("resultado") is not None:
     st.html(_CSS_OCULTAR_BUSCADOR)
 
 # ----------------------- VISTA: BUSCADOR ----------------------- #
 with st.container(key="buscador"):
-    mostrar_portada(len(maestro), tras_intro=hay_intro, maestro=maestro)
+    mostrar_portada(len(maestro), tras_intro=hay_intro, maestro=maestro, momento=momento_portada)
     if CONFIG_MULTIUSUARIO:
         panel_mi_lista(usuario, mi_lista, sin_restaurantes=maestro.empty)
         if maestro.empty:

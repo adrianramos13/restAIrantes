@@ -40,6 +40,15 @@ alter table restaurantes enable row level security;
 alter table listas enable row level security;
 alter table lista_restaurantes enable row level security;
 
+-- Datos personales (menú de usuario -> "Datos personales"). También en 002_perfiles.sql, para
+-- quien ya hubiera ejecutado este archivo antes de que existiera la tabla.
+create table if not exists perfiles (
+    usuario         text primary key,
+    nombre          text not null check (char_length(nombre) between 1 and 40),
+    actualizado_en  timestamptz not null default now()
+);
+alter table perfiles enable row level security;
+
 -- Fotos de los restaurantes: bucket público (son las fotos públicas de Google Maps).
 insert into storage.buckets (id, name, public)
 values ('fotos', 'fotos', true)

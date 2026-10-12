@@ -78,6 +78,21 @@ _PATRON_ENLACE_LISTA = re.compile(
     r"^https://(maps\.app\.goo\.gl/[A-Za-z0-9_-]+|goo\.gl/maps/[A-Za-z0-9_-]+|(www\.)?google\.(com|es)/maps/\S+)$")
 
 
+LARGO_MAX_NOMBRE = 40   # el mismo límite que la tabla perfiles
+
+
+def validar_nombre(nombre):
+    """Nombre visible del usuario, limpio. Lanza ValueError con un mensaje para el usuario si no vale."""
+    nombre = re.sub(r"\s+", " ", nombre or "").strip()
+    if not nombre:
+        raise ValueError("Escribe un nombre.")
+    if len(nombre) > LARGO_MAX_NOMBRE:
+        raise ValueError(f"El nombre puede tener como mucho {LARGO_MAX_NOMBRE} caracteres.")
+    if any(c in nombre for c in "<>"):   # se muestra en la portada: nada de etiquetas HTML
+        raise ValueError("El nombre no puede llevar los caracteres < ni >.")
+    return nombre
+
+
 def enlace_lista_valido(enlace):
     return isinstance(enlace, str) and bool(_PATRON_ENLACE_LISTA.match(enlace.strip()))
 
@@ -137,8 +152,11 @@ class Supabase:
         cabeceras = dict(self._cabeceras)
         if prefer:
             cabeceras["Prefer"] = prefer
-        r = requests.request(metodo, f"{self.url}/rest/v1/{tabla}", params=params, json=json,
-                             headers=cabeceras, timeout=TIMEOUT_S)
+        try:
+            r = requests.request(metodo, f"{self.url}/rest/v1/{tabla}", params=params, json=json,
+                                 headers=cabeceras, timeout=TIMEOUT_S)
+        except requests.RequestException as e:   # sin red, tiempo agotado...: la app ya sabe manejar ErrorSupabase
+            raise ErrorSupabase(f"{metodo} {tabla}: sin respuesta de Supabase ({type(e).__name__})") from e
         if not r.ok:
             raise ErrorSupabase(f"{metodo} {tabla}: {r.status_code} {r.text[:300]}")
         return r.json() if r.content else None
@@ -195,6 +213,18 @@ class Supabase:
         self._rest("DELETE", "lista_restaurantes", params={"lista_id": f"eq.{lista_id}"})
         for lote in _lotes(filas):
             self._rest("POST", "lista_restaurantes", json=lote)
+
+    # ---------------- perfil (datos personales) ----------------
+
+    def perfil_de(self, usuario):
+        filas = self._rest("GET", "perfiles", params={"usuario": f"eq.{usuario}", "select": "*"})
+        return filas[0] if filas else None
+
+    def guardar_perfil(self, usuario, nombre):
+        filas = self._rest("POST", "perfiles", params={"on_conflict": "usuario"},
+                           json={"usuario": usuario, "nombre": nombre, "actualizado_en": _ahora()},
+                           prefer="resolution=merge-duplicates,return=representation")
+        return filas[0]
 
     # ---------------- catálogo compartido ----------------
 

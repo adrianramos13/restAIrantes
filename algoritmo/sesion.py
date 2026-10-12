@@ -33,3 +33,10 @@ def config_multiusuario():
 def usuario_actual():
     """Correo (en minúsculas) del usuario con sesión iniciada, o None."""
     return st.user.email.lower() if st.user.is_logged_in and st.user.get("email") else None
+
+
+def datos_google():
+    """Nombre y foto de la cuenta de Google del usuario con sesión iniciada (pueden faltar)."""
+    if not st.user.is_logged_in:
+        return {"nombre": None, "foto": None}
+    return {"nombre": st.user.get("name"), "foto": st.user.get("picture")}
