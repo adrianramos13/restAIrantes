@@ -63,15 +63,21 @@ Se ejecuta en este orden, desde la carpeta `obtener_datos/`. Dependencias: `pip 
 
 | Paso | Script | Entrada | Salida | Qué hace |
 |---|---|---|---|---|
-| 1 | `extraer_html.py` | `origen/restaurantes.html` | `restaurantes_v1.xlsx` | Lee con BeautifulSoup cada restaurante de la lista: nombre, puntuación, nº de reseñas, rango de precios, tipo de cocina (el de Google, en bruto), **estado** (cerrado temporal/permanente) y **URL de la imagen**. Además descarga cada foto a `imagenes/` (solo las que aún no estén), porque las URLs de Google caducan en unas semanas. |
+| 1 | `extraer_html.py` | tu lista compartida (`--url`) u `origen/restaurantes.html` | `restaurantes_v1.xlsx` | Lee con BeautifulSoup cada restaurante de la lista: nombre, puntuación, nº de reseñas, rango de precios, tipo de cocina (el de Google, en bruto), **estado** (cerrado temporal/permanente) y **URL de la imagen**. Además descarga cada foto a `imagenes/` (solo las que aún no estén), porque las URLs de Google caducan en unas semanas. |
 | 2 | `extraer_resenas.py` | `restaurantes_v1.xlsx` | `restaurantes_v2.xlsx` | Abre Google Maps con **Playwright** (un navegador real, gratis y sin clave), busca `"nombre, Madrid, España"`, entra en la ficha y lee hasta 30 reseñas por restaurante. Guarda una fila por reseña con el nombre, la URL de la ficha, las coordenadas (sacadas de esa URL) y un `Estado` (`OK`, `NO ENCONTRADO`, `SIN RESEÑAS`, `ERROR`). No trae dirección, teléfono ni web. |
 | 3 | `clasificar_restaurantes_jev.py` | los dos anteriores | `clasificacion_jev.xlsx` | Asigna un ID a cada restaurante (por su posición en `restaurantes_v1.xlsx`), le añade la localización cruzando por nombre, y clasifica cada reseña con **Jev**. Es el único script de análisis; genera el excel final completo. |
 
-### Cómo obtener el HTML (paso 1)
+### Cómo obtener la lista (paso 1)
 
-1. Abre tu lista de Google Maps en el navegador.
-2. Haz scroll hasta que carguen **todos** los restaurantes (la lista se carga poco a poco).
-3. Guarda el HTML como `origen/restaurantes.html`.
+**Automático (recomendado).** Comparte tu lista en Google Maps (abre la lista → *Compartir* → copiar enlace) y ejecuta:
+
+```bash
+python obtener_datos/extraer_html.py --url "https://maps.app.goo.gl/..."
+```
+
+Abre la lista con Playwright (se ve una ventana de Chrome; no la cierres), hace scroll hasta cargar todos los restaurantes y guarda la página en `origen/restaurantes.html`; después sigue como siempre. Si la página no trae ningún restaurante (enlace mal copiado, lista privada, Google ha cambiado algo), **no toca** `origen/restaurantes.html`: guarda lo descargado en `origen/restaurantes_descarga_fallida.html` para revisarlo y se para.
+
+**A mano.** Abre tu lista en el navegador, haz scroll hasta que carguen **todos** los restaurantes, guarda el HTML como `origen/restaurantes.html` y ejecuta `python obtener_datos/extraer_html.py` sin `--url`.
 
 ### Requisitos del paso 2 (Playwright)
 
@@ -268,6 +274,87 @@ pillow
 **Actualizar los datos:** vuelve a ejecutar `clasificar_restaurantes_jev.py` (basta con este si `restaurantes_v1.xlsx` y `restaurantes_v2.xlsx` no han cambiado), sube el nuevo `clasificacion_jev.xlsx` y redespliega.
 
 ---
+
+## Modo multiusuario (login con Google y una lista por persona)
+
+Sin configurar nada, la app funciona como siempre (**modo local**: una sola lista, la de `excels/`). Con las claves de abajo en los secrets pasa a **modo multiusuario**: cada persona entra con su cuenta de Google, pega el enlace de su lista en **"Mi lista"** y ve solo sus restaurantes.
+
+```mermaid
+flowchart LR
+    U["Usuario"] -->|"Entrar con Google"| A["App (Streamlit Cloud)"]
+    A -->|"lee su lista / pide procesarla"| S[("Supabase\ncatálogo compartido + listas + fotos")]
+    P["procesar_solicitudes.py\n(tu ordenador, Chrome con tu sesión)"] -->|"descarga, analiza y guarda"| S
+```
+
+- **Catálogo compartido:** si dos personas tienen el mismo restaurante, se analiza una sola vez (Jev no cobra dos veces).
+- **El procesado se hace en tu ordenador**, porque necesita Chrome visible y tu sesión de Google (es la que enseña los precios). Las listas pedidas quedan "pendientes" hasta que ejecutas el procesador.
+- **Seguridad:** la clave de servicio de Supabase solo está en el servidor de Streamlit y en tu ordenador; las tablas no se pueden leer con la clave pública. El procesador solo acepta enlaces de listas de Google Maps, porque los abre con tu sesión.
+
+### Puesta en marcha (una vez)
+
+1. **Supabase** (gratis): crea un proyecto en supabase.com → *SQL Editor* → abre el archivo `supabase/esquema.sql` del proyecto, copia **todo su contenido** (no el nombre del archivo) y pégalo en el editor → *Run*. Debe responder "Success. No rows returned" y crear las tablas `restaurantes`, `listas` y `lista_restaurantes` (*Table Editor*) y el bucket público `fotos` (*Storage*). En *Project Settings → API* copia la **URL** y la clave **`service_role`** (no la `anon`).
+2. **Login con Google** (gratis): en console.cloud.google.com → *APIs y servicios → Credenciales → Crear credenciales → ID de cliente de OAuth* → tipo *Aplicación web*. En *URIs de redirección autorizados* añade `https://TU-APP.streamlit.app/oauth2callback` y `http://localhost:8501/oauth2callback`. Copia el ID y el secreto del cliente. (Si te pide configurar la *pantalla de consentimiento*, tipo *Externo* y añade como usuarios de prueba los correos que vayan a entrar.)
+3. **Secrets** (`.streamlit/secrets.toml` en local y *Manage app → Settings → Secrets* en Streamlit Cloud):
+
+   ```toml
+   ORS_API_KEY = "..."                       # como antes
+
+   usuarios_permitidos = ["tu@gmail.com", "amiga@gmail.com"]   # opcional: vacío = cualquiera puede entrar
+
+   [supabase]
+   url = "https://xxxx.supabase.co"
+   clave_servicio = "eyJ..."                 # la service_role
+
+   [auth]
+   redirect_uri = "https://TU-APP.streamlit.app/oauth2callback"   # en local: http://localhost:8501/oauth2callback
+   cookie_secret = "una cadena larga y aleatoria"
+   [auth.google]
+   client_id = "....apps.googleusercontent.com"
+   client_secret = "..."
+   server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+   ```
+
+   Como pagas tú Jev, conviene rellenar `usuarios_permitidos` con las 20-25 personas.
+4. **Sube tu lista actual** a Supabase como la de tu cuenta:
+
+   ```bash
+   python obtener_datos/migrar_a_supabase.py --email tu@gmail.com --url "https://maps.app.goo.gl/..."
+   ```
+
+> **Si ya habías ejecutado `esquema.sql` antes de que existiera el menú de usuario**, ejecuta también `supabase/002_perfiles.sql` (mismo procedimiento: copiar su contenido en el *SQL Editor* → *Run*). Crea la tabla `perfiles`, donde se guarda el nombre que cada usuario elige en **Datos personales**. Sin ella la app funciona, pero usa el nombre de Google y no deja guardar cambios.
+>
+> **Y para las preferencias del Perfil**, ejecuta `supabase/003_preferencias.sql` (añade la columna `preferencias` a `perfiles`). Sin ella todo funciona, pero *Guardar preferencias* da error.
+
+### Secciones (barra de abajo)
+
+- **Inicio**: una idea para hoy: «¿Te apetece cachopo? Te gustará Casa Pepe», con la ficha del sitio. Elige al azar un plato que las reseñas de tu lista elogian (al menos 2 menciones buenas en un mismo sitio abierto) y el sitio donde más lo elogian. *Otra idea* cambia de plato; *Más sitios con…* lo busca en Comer hoy.
+- **Comer hoy**: el buscador de siempre (desde dónde, tiempo, cocina, presupuesto y plato).
+- **Mi lista**: todos los restaurantes de tu lista, con buscador por nombre, filtros (cocina, presupuesto, nota mínima, plato, ocultar cerrados) y orden.
+- **Perfil** (el icono es tu foto de Google): *Tus listas*, estadísticas de tu lista, **preferencias** (transporte, tiempo y presupuesto que vienen ya puestos en Comer hoy), *Datos personales* (el nombre con el que te saluda la app; el correo y la foto son los de Google) y *Cerrar sesión*.
+
+### Día a día
+  
+- Cada usuario entra, abre **"Mi lista de Google Maps"**, pega el enlace de su lista (en Google Maps: la lista → *Compartir* → copiar enlace) y pulsa **Guardar y procesar**. Queda *pendiente*.
+- Tú, de vez en cuando, en tu ordenador (con `TYPESAFE_API_KEY` definida):
+
+  ```bash
+  python obtener_datos/procesar_solicitudes.py           # procesa las pendientes
+  python obtener_datos/procesar_solicitudes.py --todas   # refresca todas (precios, cierres, restaurantes nuevos)
+  python obtener_datos/procesar_solicitudes.py --vigilar # no termina: cada 10 min procesa las pendientes que haya
+  python obtener_datos/procesar_solicitudes.py --pestanas 1   # una pestaña (por defecto 3), si Google pone pegas
+  ```
+
+  Las reseñas se sacan **con tu sesión de Google** (sin sesión, Google Maps enseña solo ~5 por sitio; con ella, las 30) y en **3 pestañas a la vez**: unos 20 s por restaurante nuevo. Al terminar cada lista se imprimen los tiempos de cada paso.
+
+  **Importante:** las listas nuevas **solo se procesan mientras el procesador está en marcha** en tu ordenador (necesita Chrome visible y tu sesión de Google; en la nube no se puede). Con `--vigilar` basta con dejarlo abierto. Para que arranque solo al encender Windows: *Programador de tareas → Crear tarea básica → Al iniciar sesión → Iniciar un programa*: `python` con argumentos `obtener_datos\procesar_solicitudes.py --vigilar` e *Iniciar en* la carpeta del proyecto (y `TYPESAFE_API_KEY` definida como variable de entorno de usuario en Windows).
+
+  Si alguien pega **una lista que otra persona ya tiene procesada**, se copia al momento, sin esperar al procesador.
+
+- **Tus listas** (en el Perfil): estado de la sincronización, enlace de la lista y botón *Guardar y sincronizar*.
+- **Buscar en: Mi lista / Todos los restaurantes**: la segunda opción busca entre todos los restaurantes de la base de datos (los de todas las listas).
+
+  La primera vez se abre Chrome para que inicies sesión en Google (queda guardada en `origen/perfil_chrome/`, fuera de git). Solo se analizan con Jev los restaurantes que no estaban en el catálogo. Si una lista falla, el usuario lo ve en "Mi lista" con el motivo.
+- La app tarda hasta 5 minutos en mostrar una lista recién procesada (caché).
 
 ## Servicios externos
 

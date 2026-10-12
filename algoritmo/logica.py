@@ -15,6 +15,8 @@ PESO_CALIDAD = 0.30
 PESO_NUM_RESENAS = 0.05
 ORDEN_PUNTUACION = "Mejor valorados"
 ORDEN_CERCANOS = "Más cerca"
+ORDEN_RESENAS = "Más reseñas"   # solo en "Mi lista"
+ORDEN_NOMBRE = "Nombre"
 # Categoría de cocina calculada con Jev (columnas que trae clasificacion_jev.xlsx).
 COL_CATEGORIA = "Categoría (Jev)"
 COL_CATEGORIA_2 = "Categoría 2ª (Jev)"
@@ -149,6 +151,89 @@ def puntuacion_cocina(fila, cocina_elegida, con_jev):
     return 1.0 if _coincide_con_google(cocina_elegida, fila.get("Tipo de cocina")) else SCORE_COCINA_DESCONOCIDA
 
 
+def encaja_precio(texto, presupuesto_min, presupuesto_max):
+    min_r, max_r = parsear_rango_precio(texto)
+    # ponytail: sin precio conocido no se puede descartar, se deja pasar
+    return (min_r is None and max_r is None) or solapamiento(min_r, max_r, presupuesto_min, presupuesto_max) > 0
+
+
+def cerrados(df):
+    """Máscara de los restaurantes que Google da por cerrados (temporal o permanentemente)."""
+    if "Estado" not in df.columns:
+        return pd.Series(False, index=df.index)
+    return df["Estado"].fillna("").astype(str).str.contains("cerrado", case=False)
+
+
+def filtrar_lista(maestro, df_platos, texto="", cocinas=(), presupuesto_min=0, presupuesto_max=None,
+                  nota_min=0.0, plato="", ocultar_cerrados=False, orden=ORDEN_PUNTUACION):
+    """Pestaña "Mi lista": los restaurantes de la lista que cumplen los filtros (los mismos criterios
+    estrictos que el buscador, sin tiempos de viaje), ordenados."""
+    df = maestro
+    if df.empty:
+        return df
+    if texto.strip():
+        df = df[df["Nombre"].map(_sin_tildes).str.contains(re.escape(_sin_tildes(texto.strip())))]
+    if cocinas and not df.empty:
+        con_jev = tiene_categorias_jev(maestro)
+        df = df[df.apply(lambda f: any(puntuacion_cocina(f, c, con_jev) >= SCORE_COCINA_SECUNDARIA for c in cocinas),
+                         axis=1).astype(bool)]
+    df = df[df["Rango de precios"].apply(encaja_precio, args=(presupuesto_min, presupuesto_max)).astype(bool)]
+    if nota_min:
+        df = df[df["Puntuación"].fillna(0) >= nota_min]
+    if plato.strip():
+        df = df[df["ID"].apply(lambda i: puntuacion_plato(i, plato.strip(), df_platos) > 0).astype(bool)]
+    if ocultar_cerrados:
+        df = df[~cerrados(df)]
+    if orden == ORDEN_NOMBRE:
+        return df.sort_values("Nombre", key=lambda s: s.map(_sin_tildes))
+    if orden == ORDEN_RESENAS:
+        return df.sort_values(["Nº Reseñas", "Puntuación"], ascending=False)
+    return df.sort_values(["Puntuación", "Nº Reseñas"], ascending=False)
+
+
+# Jev a veces apunta como "plato" el tipo de cocina ("india", "peruana"...): en Inicio quedaría
+# "¿Te apetece india?". ponytail: lista a mano; si salen otros, añadirlos aquí.
+NO_SON_PLATOS = {"argentina", "china", "coreana", "española", "francesa", "georgiana", "griega", "india",
+                 "italiana", "izakaya", "japonesa", "libanesa", "marisquería", "mexicana", "peruana",
+                 "tailandesa", "turca", "vietnamita"}
+
+
+def sugerencia_plato(maestro, df_platos, rng, evitar=None, minimo=2):
+    """Inicio: un plato al azar entre los que las reseñas elogian (al menos `minimo` menciones
+    buenas en un mismo sitio abierto) y el sitio donde más lo elogian. Devuelve
+    (plato, ID del restaurante, nº de menciones buenas) o None si no hay ninguno."""
+    if maestro.empty or df_platos.empty or "ID_Restaurante" not in df_platos.columns:
+        return None
+    abiertos = maestro[~cerrados(maestro)]
+    buenas = df_platos[(df_platos["Sentimiento"] == "Buena") & df_platos["ID_Restaurante"].isin(abiertos["ID"])]
+    conteo = buenas.dropna(subset=["Plato"]).groupby(["Plato", "ID_Restaurante"]).size().reset_index(name="n")
+    conteo = conteo[(conteo["n"] >= minimo) & ~conteo["Plato"].str.lower().isin(NO_SON_PLATOS)]
+    platos = sorted(set(conteo["Plato"]) - {evitar}) or sorted(set(conteo["Plato"]))
+    if not platos:
+        return None
+    plato = rng.choice(platos)
+    candidatos = conteo[conteo["Plato"] == plato].merge(
+        abiertos[["ID", "Puntuación"]], left_on="ID_Restaurante", right_on="ID")
+    mejor = candidatos.sort_values(["n", "Puntuación"], ascending=False).iloc[0]
+    return plato, int(mejor["ID"]), int(mejor["n"])
+
+
+def estadisticas_lista(maestro, num_cocinas=6):
+    """Perfil: resumen de la lista (nº de sitios, nota media, precio medio y cocinas más repetidas)."""
+    if maestro.empty:
+        return None
+    columna = COL_CATEGORIA if tiene_categorias_jev(maestro) else "Tipo de cocina"
+    rangos = [parsear_rango_precio(t) for t in maestro["Rango de precios"]]
+    medios = [(lo + hi) / 2 for lo, hi in rangos if lo is not None and hi is not None]
+    nota = maestro["Puntuación"].mean()
+    return {
+        "total": len(maestro),
+        "nota_media": None if pd.isna(nota) else float(nota),
+        "precio_medio": sum(medios) / len(medios) if medios else None,
+        "cocinas": maestro[columna].dropna().value_counts().head(num_cocinas),
+    }
+
+
 def filtrar_y_puntuar(maestro, df_platos, r, minutos):
     """`minutos`: tiempo hasta cada restaurante (misma posición que `maestro`, None si no se
     sabe), calculado por servicios.obtener_minutos_*. Devuelve solo los que cumplen todo lo
@@ -166,11 +251,7 @@ def filtrar_y_puntuar(maestro, df_platos, r, minutos):
         # Exige cocina principal o segunda con peso; descarta los de otra cocina y los no clasificados.
         df = df[df.apply(lambda f: puntuacion_cocina(f, r["cocina"], con_jev_filtro) >= SCORE_COCINA_SECUNDARIA, axis=1)]
 
-    def encaja_precio(texto):
-        min_r, max_r = parsear_rango_precio(texto)
-        # ponytail: sin precio conocido no se puede descartar, se deja pasar
-        return (min_r is None and max_r is None) or solapamiento(min_r, max_r, r["presupuesto_min"], r["presupuesto_max"]) > 0
-    df = df[df["Rango de precios"].apply(encaja_precio)]
+    df = df[df["Rango de precios"].apply(encaja_precio, args=(r["presupuesto_min"], r["presupuesto_max"]))]
 
     if r["plato_deseado"]:
         df = df[df["ID"].apply(lambda i: puntuacion_plato(i, r["plato_deseado"], df_platos) > 0)]

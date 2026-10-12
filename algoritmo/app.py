@@ -30,6 +30,7 @@ DESPLIEGUE (para tener una URL pública desde el móvil):
        móvil y guárdala en la pantalla de inicio como acceso directo.
 """
 
+import html
 import io
 import re
 import base64
@@ -41,9 +42,12 @@ import pandas as pd
 import streamlit as st
 from geopy.exc import GeocoderServiceError
 
-from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_PUNTUACION,
-                    VOTOS_MIN_SECUNDARIA, filtrar_y_puntuar, ordenar_resultados, tiene_categorias_jev)
+from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
+                    ORDEN_RESENAS, VOTOS_MIN_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
+                    ordenar_resultados, sugerencia_plato, tiene_categorias_jev)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
+import datos as bd
+from sesion import config_multiusuario, datos_google, usuario_actual
 
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
@@ -74,6 +78,12 @@ PRESUPUESTO_SIN_LIMITE = 100   # el máximo del slider de presupuesto significa 
 # --------------------------------------------------------------- #
 
 
+# Modo multiusuario (login de Google + Supabase) si los secrets lo configuran; si no, modo local
+# con los excels de siempre. Ver sesion.py.
+CONFIG_MULTIUSUARIO = config_multiusuario()
+BD = bd.Supabase(CONFIG_MULTIUSUARIO["url"], CONFIG_MULTIUSUARIO["clave_servicio"]) if CONFIG_MULTIUSUARIO else None
+
+
 @st.cache_data
 def cargar_datos():
     maestro = pd.read_excel(MAESTRO_XLSX, sheet_name="Restaurantes")
@@ -82,6 +92,12 @@ def cargar_datos():
     except Exception:
         df_platos = pd.DataFrame(columns=["ID_Restaurante", "Plato", "Sentimiento"])
     return maestro, df_platos
+
+
+@st.cache_data(ttl=300, show_spinner=False)   # 5 min: lo que tarda en verse una lista recién procesada
+def cargar_datos_usuario(usuario):
+    """(maestro, df_platos, lista) del usuario en modo multiusuario."""
+    return BD.restaurantes_de(usuario)
 
 
 
@@ -217,9 +233,13 @@ def _foto_base64(ruta):
 
 
 def foto_restaurante(fila, ancho=160):
-    """Foto para el navegador: la descargada en imagenes/ (en base64, porque los componentes
-    no ven el disco) o, si no hay, la URL de Google (que puede haber caducado)."""
-    imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
+    """Foto para el navegador: en multiusuario, la de Supabase Storage (URL pública); en local,
+    la descargada en imagenes/ (en base64, porque los componentes no ven el disco). Si no hay,
+    la URL de Google (que puede haber caducado)."""
+    archivo = valor_o(fila, "Imagen archivo", "")
+    if BD is not None and archivo:
+        return BD.url_foto(archivo)
+    imagen_local = IMAGENES_DIR / str(archivo)
     if imagen_local.is_file():
         return _foto_base64(str(imagen_local))
     url = fila.get("Imagen URL")
@@ -247,52 +267,58 @@ def icono_transporte(modo_transporte):
     return "🚗" if modo_transporte == "En coche" else "🚶"
 
 
-def mostrar_ficha(fila, respuestas, df_platos):
-    """Ficha completa en una ventana encima de los resultados (se abre al tocar una tarjeta
-    o una foto del mapa). No tiene widgets: así ninguna recarga la vuelve a abrir sola."""
+def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
+    """Foto, datos, lo que destacan y enlaces de un restaurante. `modo_transporte` solo viene de una
+    búsqueda (trae el tiempo de viaje); `plato`, de una búsqueda con plato o de la idea de Inicio."""
+    imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
+    foto = str(imagen_local) if BD is None and imagen_local.is_file() else foto_restaurante(fila, ancho=800)
+    if foto:
+        st.image(foto, width="stretch")
+
+    cerrado = estado_cerrado(fila)
+    if cerrado:
+        st.badge(cerrado, icon=":material/schedule:", color="gray")
+
+    lugar = [valor_o(fila, "Dirección", "")]
+    if modo_transporte:
+        lugar.insert(0, f"{icono_transporte(modo_transporte)} {fila['Tiempo desplazamiento (min)']:.0f} min")
+    st.markdown(
+        f"**{etiqueta_cocina(fila)}**  \n"
+        f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)} reseñas  \n"
+        + " · ".join(p for p in lugar if p)
+    )
+
+    if plato:
+        st.markdown(f"**Sobre «{plato}»:** {resumen_mencion_plato(fila['ID'], plato, df_platos)}")
+
+    platos = formatear_platos(fila.get("Platos mejor valorados"))
+    if platos:
+        st.markdown("**Lo que destacan**  \n" + " ".join(
+            f":orange-badge[{p.strip()}]" for p in platos.split(",") if p.strip()))
+
+    url_ruta = f"https://www.google.com/maps/dir/?api=1&destination={fila['Latitud']},{fila['Longitud']}"
+    if modo_transporte:
+        url_ruta += "&travelmode=" + ("driving" if modo_transporte == "En coche" else "walking")
+    st.link_button("Cómo llegar", url_ruta, type="primary", icon=":material/directions:", width="stretch")
+
+    # Instagram/TikTok no tienen una búsqueda por palabra clave fiable sin iniciar
+    # sesión, así que se usa el operador site: de Google (funciona sin cuenta).
+    nombre = fila["Nombre"]
+    buscar = lambda q: "https://www.google.com/search?q=" + urllib.parse.quote(q)
+    with st.container(horizontal=True):
+        st.link_button("Instagram", buscar(f'site:instagram.com "{nombre}" Madrid'), width="stretch")
+        st.link_button("TikTok", buscar(f'site:tiktok.com "{nombre}" Madrid'), width="stretch")
+    st.link_button("Buscar en Google", buscar(f"{nombre} Madrid"), type="tertiary",
+                   icon=":material/search:", width="stretch")
+
+
+def mostrar_ficha(fila, df_platos, plato=None, modo_transporte=None):
+    """Ficha completa en una ventana encima de la lista (se abre al tocar una tarjeta o una foto
+    del mapa). No tiene widgets: así ninguna recarga la vuelve a abrir sola."""
 
     @st.dialog(str(fila["Nombre"]), width="medium")
     def _ficha():
-        imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
-        foto = str(imagen_local) if imagen_local.is_file() else foto_restaurante(fila, ancho=800)
-        if foto:
-            st.image(foto, width="stretch")
-
-        cerrado = estado_cerrado(fila)
-        if cerrado:
-            st.badge(cerrado, icon=":material/schedule:", color="gray")
-
-        minutos = f"{icono_transporte(respuestas['modo_transporte'])} {fila['Tiempo desplazamiento (min)']:.0f} min"
-        direccion = valor_o(fila, "Dirección", "")
-        st.markdown(
-            f"**{etiqueta_cocina(fila)}**  \n"
-            f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)} reseñas  \n"
-            f"{minutos}" + (f" · {direccion}" if direccion else "")
-        )
-
-        if respuestas["plato_deseado"]:
-            resumen = resumen_mencion_plato(fila["ID"], respuestas["plato_deseado"], df_platos)
-            st.markdown(f"**Sobre «{respuestas['plato_deseado']}»:** {resumen}")
-
-        platos = formatear_platos(fila.get("Platos mejor valorados"))
-        if platos:
-            st.markdown("**Lo que destacan**  \n" + " ".join(
-                f":orange-badge[{p.strip()}]" for p in platos.split(",") if p.strip()))
-
-        modo_ruta = "driving" if respuestas["modo_transporte"] == "En coche" else "walking"
-        url_ruta = ("https://www.google.com/maps/dir/?api=1&destination="
-                    f"{fila['Latitud']},{fila['Longitud']}&travelmode={modo_ruta}")
-        st.link_button("Cómo llegar", url_ruta, type="primary", icon=":material/directions:", width="stretch")
-
-        # Instagram/TikTok no tienen una búsqueda por palabra clave fiable sin iniciar
-        # sesión, así que se usa el operador site: de Google (funciona sin cuenta).
-        nombre = fila["Nombre"]
-        buscar = lambda q: "https://www.google.com/search?q=" + urllib.parse.quote(q)
-        with st.container(horizontal=True):
-            st.link_button("Instagram", buscar(f'site:instagram.com "{nombre}" Madrid'), width="stretch")
-            st.link_button("TikTok", buscar(f'site:tiktok.com "{nombre}" Madrid'), width="stretch")
-        st.link_button("Buscar en Google", buscar(f"{nombre} Madrid"), type="tertiary",
-                       icon=":material/search:", width="stretch")
+        contenido_ficha(fila, df_platos, plato, modo_transporte)
 
     _ficha()
 
@@ -313,27 +339,28 @@ _LISTA_RESTAURANTES = st.components.v2.component(
 )
 
 
-def _al_abrir_desde_lista():
-    valor = st.session_state["lista_restaurantes"].abrir
+def _al_abrir_desde_lista(key):
+    valor = st.session_state[key].abrir
     if valor is not None:
         st.session_state["restaurante_seleccionado"] = int(valor)
         st.session_state["ficha_abrir"] = int(valor)
 
 
-def mostrar_lista(top, respuestas, seleccionado_id=None):
-    icono = icono_transporte(respuestas["modo_transporte"])
+def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes"):
+    """Tarjetas de `top`. Con `modo_transporte` (resultados de una búsqueda) enseñan el tiempo de viaje."""
     items = []
     for n, (_, fila) in enumerate(top.iterrows(), start=1):
+        meta = f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)}"
+        if modo_transporte:
+            meta += f" · {icono_transporte(modo_transporte)} {fila['Tiempo desplazamiento (min)']:.0f}'"
         items.append({
             "id": int(fila["ID"]), "n": n, "nombre": str(fila["Nombre"]),
-            "cocina": str(etiqueta_cocina(fila)), "foto": foto_restaurante(fila),
-            "meta": (f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)} · "
-                     f"{icono} {fila['Tiempo desplazamiento (min)']:.0f}'"),
+            "cocina": str(etiqueta_cocina(fila)), "foto": foto_restaurante(fila), "meta": meta,
             "cerrado": estado_cerrado(fila),
         })
     _LISTA_RESTAURANTES(
         data={"items": items, "seleccionado": seleccionado_id},
-        key="lista_restaurantes", on_abrir_change=_al_abrir_desde_lista,
+        key=key, on_abrir_change=lambda: _al_abrir_desde_lista(key),
     )
 
 
@@ -544,9 +571,17 @@ def miniaturas_portada():
     return miniaturas
 
 
-def fotos_portada():
-    if "fotos_portada" not in st.session_state:   # fotos distintas en cada visita, fijas mientras dure
-        todas = miniaturas_portada()
+def fotos_portada(maestro=None):
+    """Fotos de la cinta: distintas en cada visita y fijas mientras dura. En multiusuario son las
+    de los restaurantes del usuario (URLs de Supabase); en local, miniaturas de imagenes/."""
+    if "fotos_portada" not in st.session_state:
+        if BD is not None:
+            archivos = [] if maestro is None or maestro.empty else maestro["Imagen archivo"].dropna().tolist()
+            todas = [BD.url_foto(a) for a in archivos]
+        else:
+            todas = miniaturas_portada()
+        if not todas:   # sin fotos todavía (p. ej. antes de entrar): no se fija, se reintenta luego
+            return []
         st.session_state["fotos_portada"] = random.sample(todas, min(FOTOS_PORTADA, len(todas)))
     return st.session_state["fotos_portada"]
 
@@ -567,33 +602,395 @@ def mostrar_intro():
     return True
 
 
-def mostrar_portada(num_restaurantes, tras_intro=False):
-    fotos = fotos_portada()
+def mostrar_portada(num_restaurantes, tras_intro=False, maestro=None,
+                    momento=None, subtitulo="Decid desde dónde salís y qué os apetece, y os digo cuál."):
+    fotos = fotos_portada(maestro)
     # La lista va dos veces seguidas: al desplazarse la mitad, vuelve al principio sin salto.
     cinta = "".join(f'<img src="{f}" alt="">' for f in fotos * 2)
+    momento = momento or f"🍽️ Vuestra lista · {num_restaurantes} sitios"
 
     st.html(_CSS_PORTADA + f"""
 <div class="portada{' tras-intro' if tras_intro else ''}">
   {f'<div class="cinta" aria-hidden="true"><div class="pista">{cinta}</div></div>' if fotos else ''}
-  <p class="momento">🍽️ Vuestra lista · {num_restaurantes} sitios</p>
+  <p class="momento">{momento}</p>
   <h1>¿Dónde comemos?</h1>
-  <p class="sub">Decid desde dónde salís y qué os apetece, y os digo cuál.</p>
+  <p class="sub">{subtitulo}</p>
 </div>
 """)
+
+
+# ----------------------- BARRA DE SECCIONES ----------------------- #
+# Componente propio fijo abajo: Inicio, Comer hoy (el buscador), Mi lista y Perfil (con la foto de
+# Google del usuario como icono). Solo se dibuja la sección elegida; lo escrito en las demás se
+# conserva con conservar_formularios().
+
+SECCIONES = ("inicio", "comer", "mi_lista", "perfil")
+_BARRA = st.components.v2.component(
+    "barra_secciones", html=recurso("barra.html"), css=recurso("barra.css"), js=recurso("barra.js"),
+)
+
+# Widgets de cada sección cuyo valor tiene que sobrevivir mientras se está en otra.
+CLAVES_FORMULARIOS = {
+    "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
+    "mi_lista": ("ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
+}
+
+
+def ir_a(seccion):
+    st.session_state["seccion"] = seccion
+
+
+def _al_cambiar_seccion():
+    seccion = st.session_state["barra_secciones"].seccion
+    if seccion in SECCIONES:
+        ir_a(seccion)
+
+
+def barra_secciones(seccion, foto=None):
+    _BARRA(key="barra_secciones", data={"activa": seccion, "foto": foto}, on_seccion_change=_al_cambiar_seccion)
+
+
+def conservar_formularios(seccion):
+    """Streamlit borra el valor de un widget que no se dibuja; volver a guardarlo a mano lo conserva
+    (truco documentado: "widget state across pages"). Así, al volver a una sección, sigue lo escrito."""
+    for otra, claves in CLAVES_FORMULARIOS.items():
+        if otra != seccion:
+            for clave in claves:
+                if clave in st.session_state:
+                    st.session_state[clave] = st.session_state[clave]
+
+
+def cocinas_disponibles(maestro):
+    if tiene_categorias_jev(maestro):
+        return sorted(maestro[COL_CATEGORIA].dropna().unique())
+    return sorted(maestro["Tipo de cocina"].dropna().unique().tolist())   # sin categorías de Jev: la de Google
+
+
+# ----------------------- INICIO ----------------------- #
+# Una idea para hoy: un plato que las reseñas de tu lista elogian y el sitio donde más lo elogian.
+
+def otra_sugerencia():
+    anterior = st.session_state.pop("sugerencia", None)
+    st.session_state["sugerencia_evitar"] = anterior and anterior[0]
+
+
+def buscar_sitios_con(plato):
+    """De la idea de Inicio a "Comer hoy" con el plato ya puesto."""
+    st.session_state["plato"] = plato
+    st.session_state["vista"] = "buscador"
+    ir_a("comer")
+
+
+def seccion_inicio(maestro, df_platos, tras_intro, momento, nombre=None):
+    saludo = f"Hola, {html.escape(nombre)}. " if nombre else ""
+    mostrar_portada(len(maestro), tras_intro=tras_intro, maestro=maestro, momento=momento,
+                    subtitulo=f"{saludo}Una idea para hoy:")
+    sugerencia = st.session_state.get("sugerencia")
+    if sugerencia is None or sugerencia[1] not in set(maestro.get("ID", [])):
+        sugerencia = sugerencia_plato(maestro, df_platos, random.Random(),
+                                      evitar=st.session_state.pop("sugerencia_evitar", None))
+        st.session_state["sugerencia"] = sugerencia
+    if sugerencia is None:
+        if maestro.empty and CONFIG_MULTIUSUARIO:
+            st.info("Todavía no tienes restaurantes en tu lista. Añádela en tu **Perfil** y aquí te propondré "
+                    "qué comer y dónde.")
+            st.button("Añadir tu lista", on_click=ir_a, args=("perfil",), icon=":material/add_location_alt:")
+        else:
+            st.info("Cuando las reseñas de tu lista estén analizadas, aquí te propondré qué comer y dónde.")
+        return
+
+    plato, id_restaurante, menciones = sugerencia
+    fila = maestro[maestro["ID"] == id_restaurante].iloc[0]
+    with st.container(border=True):
+        st.subheader(f"¿Te apetece {plato}?")
+        st.markdown(f"Te gustará **{fila['Nombre']}**: {menciones} reseñas hablan bien de su {plato}.")
+        contenido_ficha(fila, df_platos, plato=plato)
+    with st.container(horizontal=True, wrap=True):
+        st.button("Otra idea", on_click=otra_sugerencia, icon=":material/casino:", key="otra_idea")
+        st.button(f"Más sitios con {plato}", on_click=buscar_sitios_con, args=(plato,),
+                  icon=":material/search:", key="buscar_plato")
+
+
+# ----------------------- MI LISTA ----------------------- #
+# Todos los restaurantes de la lista del usuario, con buscador por nombre y filtros.
+
+MI_LISTA_POR_PAGINA = 20
+
+
+def seccion_mi_lista(maestro, df_platos):
+    st.header("Mi lista")
+    if maestro.empty:
+        st.info("Todavía no tienes restaurantes en tu lista. Añádela en tu **Perfil**.")
+        st.button("Añadir tu lista", on_click=ir_a, args=("perfil",), icon=":material/add_location_alt:")
+        return
+
+    texto = st.text_input("Buscar por nombre", placeholder="Buscar por nombre", key="ml_texto",
+                          label_visibility="collapsed", icon=":material/search:")
+    with st.expander("Filtros"):
+        cocinas = st.multiselect("Cocina", cocinas_disponibles(maestro), key="ml_cocinas", placeholder="Cualquiera")
+        presupuesto_min, presupuesto_max = st.slider(
+            "Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, (0, PRESUPUESTO_SIN_LIMITE), step=5,
+            format="%d €", key="ml_presupuesto")
+        nota_min = st.slider("Nota mínima en Google", 0.0, 5.0, 0.0, step=0.5, format="%.1f ⭐", key="ml_nota")
+        plato = st.text_input("Plato que destaquen", placeholder="ej. croquetas", key="ml_plato")
+        ocultar_cerrados = st.toggle("Ocultar los cerrados", key="ml_cerrados")
+    orden = st.segmented_control("Ordenar", [ORDEN_PUNTUACION, ORDEN_RESENAS, ORDEN_NOMBRE], default=ORDEN_PUNTUACION,
+                                 key="ml_orden", label_visibility="collapsed") or ORDEN_PUNTUACION
+
+    df = filtrar_lista(maestro, df_platos, texto, cocinas, presupuesto_min,
+                       None if presupuesto_max == PRESUPUESTO_SIN_LIMITE else presupuesto_max,
+                       nota_min, plato, ocultar_cerrados, orden)
+    st.caption(f"{len(df)} de {len(maestro)} restaurantes")
+    if df.empty:
+        st.info("Ninguno cumple esos filtros.")
+        return
+
+    # Se pintan de 20 en 20: cada tarjeta lleva su foto.
+    filtros = (texto, tuple(cocinas), presupuesto_min, presupuesto_max, nota_min, plato, ocultar_cerrados, orden)
+    if st.session_state.get("ml_filtros") != filtros:
+        st.session_state["ml_filtros"], st.session_state["ml_mostrados"] = filtros, MI_LISTA_POR_PAGINA
+    top = df.head(st.session_state["ml_mostrados"])
+    mostrar_lista(top, key="lista_mi_lista")
+    if len(df) > len(top):
+        if st.button(f"Ver más ({len(df) - len(top)} restantes)", width="stretch", key="ml_ver_mas"):
+            st.session_state["ml_mostrados"] += MI_LISTA_POR_PAGINA
+            st.rerun()
+
+    abrir = st.session_state.pop("ficha_abrir", None)
+    if abrir in set(top["ID"]):
+        mostrar_ficha(top[top["ID"] == abrir].iloc[0], df_platos, plato.strip() or None)
+
+
+# ----------------------- PERFIL ----------------------- #
+
+ESTADOS_LISTA = {
+    "sin_lista": "Todavía no has añadido tu lista.",
+    "pendiente": "⏳ Pendiente de sincronizar. Las listas nuevas se procesan cuando el procesador del "
+                 "administrador está en marcha; si alguien ya tenía esta misma lista, se copia al momento.",
+    "procesando": "⚙️ Procesando tu lista ahora mismo…",
+    "lista": "✓ Tu lista está al día.",
+    "error": "⚠️ No se pudo procesar tu lista.",
+}
+
+FUENTE_MI_LISTA, FUENTE_TODOS = "Mi lista", "Todos los restaurantes"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def cargar_catalogo():
+    """Todos los restaurantes de la base de datos (de todas las listas), para "Buscar en: Todos"."""
+    return BD.todos_los_restaurantes()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_perfil(usuario):
+    return BD.perfil_de(usuario)
+
+
+def nombre_visible(usuario, perfil, google):
+    """El que haya elegido en "Datos personales"; si no, el de Google; si no, lo de antes de la @."""
+    return (perfil or {}).get("nombre") or google.get("nombre") or usuario.split("@")[0]
+
+
+def bloque_datos_personales(usuario, nombre):
+    st.subheader("Datos personales")
+    nuevo = st.text_input("Nombre", value=nombre, max_chars=bd.LARGO_MAX_NOMBRE, key="perfil_nombre",
+                          help="Es el nombre con el que te saluda la app.")
+    st.caption("El correo y la foto son los de tu cuenta de Google: identifican tu lista y no se cambian aquí.")
+    if st.button("Guardar nombre", width="stretch", key="guardar_perfil"):
+        try:
+            BD.guardar_perfil(usuario, bd.validar_nombre(nuevo))
+        except ValueError as e:
+            st.error(str(e))
+            return
+        except bd.ErrorSupabase:
+            st.error("No se han podido guardar los cambios ahora mismo. Inténtalo en un momento.")
+            return
+        cargar_perfil.clear()
+        st.rerun()   # todo saluda ya con el nombre nuevo
+
+
+def pedir_sincronizar_lista(usuario, enlace):
+    """Devuelve un mensaje de error para el usuario, o None si se ha pedido bien."""
+    enlace = (enlace or "").strip()
+    if not bd.enlace_lista_valido(enlace):
+        return ("Ese enlace no parece de una lista de Google Maps. En Google Maps: abre tu lista → "
+                "Compartir → copiar enlace (empieza por https://maps.app.goo.gl/).")
+    try:
+        BD.pedir_actualizacion(usuario, enlace)
+    except bd.ErrorSupabase:
+        return "No se ha podido guardar ahora mismo. Inténtalo en un momento."
+    cargar_datos_usuario.clear()
+    return None
+
+
+def bloque_tus_listas(usuario, lista):
+    """Estado de la sincronización y enlace de la lista de Google Maps."""
+    st.subheader("Tus listas")
+    estado = lista["estado"] if lista else "sin_lista"
+    st.markdown(ESTADOS_LISTA.get(estado, estado))
+    if lista and lista.get("actualizado_en"):
+        st.caption(f"Última sincronización: {lista['actualizado_en'][:16].replace('T', ' ')} (UTC)")
+    if lista and lista.get("mensaje"):
+        st.caption(lista["mensaje"])
+    enlace = st.text_input("Enlace de tu lista", value=(lista or {}).get("enlace") or "", key="enlace_lista",
+                           placeholder="https://maps.app.goo.gl/...",
+                           help="En Google Maps: abre tu lista → Compartir → copiar enlace.")
+    if st.button("Guardar y sincronizar", type="primary", width="stretch", key="sincronizar_lista",
+                 disabled=estado == "procesando"):
+        error = pedir_sincronizar_lista(usuario, enlace)
+        if error:
+            st.error(error)
+        else:
+            st.rerun()   # si la lista ya existía en otra cuenta, aparece al momento
+    st.caption("Sincronizar vuelve a leer tu lista de Google Maps: añade los sitios nuevos y quita los "
+               "que hayas borrado.")
+
+
+def bloque_estadisticas(maestro):
+    st.subheader("Tus estadísticas")
+    e = estadisticas_lista(maestro)
+    if e is None:
+        st.caption("Aparecerán cuando tengas restaurantes en tu lista.")
+        return
+    with st.container(horizontal=True):
+        st.metric("Restaurantes", e["total"])
+        st.metric("Nota media", "–" if e["nota_media"] is None else f"{e['nota_media']:.1f} ⭐".replace(".", ","))
+        st.metric("Precio medio", "–" if e["precio_medio"] is None else f"{e['precio_medio']:.0f} €")
+    if not e["cocinas"].empty:
+        st.markdown("**Las cocinas que más se repiten**")
+        # naranja intermedio entre el acento claro (#C2410C) y el oscuro (#FB923C): se ve bien en los dos
+        st.bar_chart(e["cocinas"].rename("Restaurantes"), horizontal=True, sort="-Restaurantes", color="#EA580C",
+                     x_label="", y_label="", height=220)
+
+
+def bloque_preferencias(usuario, nombre, preferencias):
+    st.subheader("Preferencias")
+    st.caption("Lo que viene ya puesto al buscar en **Comer hoy**.")
+    transporte = st.segmented_control(
+        "¿Cómo soléis ir?", list(ETIQUETAS_TRANSPORTE), format_func=ETIQUETAS_TRANSPORTE.get,
+        default=preferencias["transporte"], key="pref_transporte", width="stretch") or "En coche"
+    tiempo = st.slider("Tiempo máximo", 5, 60, preferencias["tiempo"], step=5, format="%d min", key="pref_tiempo")
+    presupuesto = st.slider("Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, tuple(preferencias["presupuesto"]),
+                            step=5, format="%d €", key="pref_presupuesto")
+    if st.button("Guardar preferencias", width="stretch", key="guardar_preferencias"):
+        try:
+            BD.guardar_perfil(usuario, nombre, {"transporte": transporte, "tiempo": tiempo,
+                                                "presupuesto": list(presupuesto)})
+        except bd.ErrorSupabase:
+            st.error("No se han podido guardar las preferencias ahora mismo (¿falta ejecutar "
+                     "supabase/003_preferencias.sql?). Inténtalo en un momento.")
+            return
+        cargar_perfil.clear()
+        for clave in ("transporte", "tiempo", "presupuesto"):   # el buscador arranca con las nuevas
+            st.session_state.pop(clave, None)
+        st.toast("Preferencias guardadas", icon=":material/check:")
+
+
+def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, preferencias=None):
+    if not CONFIG_MULTIUSUARIO:   # modo local: no hay cuenta, solo las estadísticas de la lista
+        st.header("Perfil")
+        bloque_estadisticas(maestro)
+        return
+    with st.container(horizontal=True, vertical_alignment="center"):
+        if google.get("foto"):
+            st.image(google["foto"], width=72)
+        st.markdown(f"### {nombre}\n{usuario}")
+    with st.container(border=True):
+        bloque_tus_listas(usuario, lista)
+    with st.container(border=True):
+        bloque_estadisticas(maestro)
+    with st.container(border=True):
+        bloque_preferencias(usuario, nombre, preferencias)
+    with st.container(border=True):
+        bloque_datos_personales(usuario, nombre)
+    st.button("Cerrar sesión", on_click=st.logout, icon=":material/logout:", width="stretch", key="cerrar_sesion")
+
+
+def pantalla_entrar(tras_intro):
+    mostrar_portada(0, tras_intro=tras_intro, momento="🍽️ Tus sitios de Google Maps",
+                    subtitulo="Entra con tu cuenta de Google para ver los restaurantes de tu lista.")
+    st.button("Entrar con Google", type="primary", icon=":material/login:", width="stretch",
+              on_click=st.login, args=("google",))
+
+
+def pantalla_sin_permiso(usuario):
+    st.warning(f"La cuenta {usuario} no tiene acceso a esta app. Pide al administrador que te añada.")
+    st.button("Salir", on_click=st.logout)
 
 
 st.set_page_config(page_title="¿Dónde comemos?", page_icon="🍽️", layout="centered")
 st.html(_CSS_GLOBAL)
 hay_intro = mostrar_intro()
 
-maestro, df_platos = cargar_datos()
+usuario, mi_lista = None, None
+if CONFIG_MULTIUSUARIO:
+    usuario = usuario_actual()
+    if usuario is None:
+        pantalla_entrar(hay_intro)
+        st.stop()
+    if CONFIG_MULTIUSUARIO["permitidos"] and usuario not in CONFIG_MULTIUSUARIO["permitidos"]:
+        pantalla_sin_permiso(usuario)
+        st.stop()
+    try:
+        maestro, df_platos, mi_lista = cargar_datos_usuario(usuario)
+    except bd.ErrorSupabase:
+        st.error("No se ha podido cargar tu lista ahora mismo. Prueba a recargar la página en un momento.")
+        st.stop()
+else:
+    maestro, df_platos = cargar_datos()
+
+seccion = st.session_state.setdefault("seccion", "inicio")
+conservar_formularios(seccion)
+
+momento_portada = nombre_usuario = None
+google, perfil = {}, None
+if CONFIG_MULTIUSUARIO:
+    google = datos_google()
+    try:
+        perfil = cargar_perfil(usuario)
+    except bd.ErrorSupabase:   # p. ej. aún no se ha creado la tabla perfiles: se usa el nombre de Google
+        perfil = None
+    nombre_usuario = nombre_visible(usuario, perfil, google)
+    momento_portada = f"🍽️ Lista de {html.escape(nombre_usuario)} · {len(maestro)} sitios"
+preferencias = bd.preferencias_validas((perfil or {}).get("preferencias"))
+barra_secciones(seccion, google.get("foto"))
+
+# Inicio, Mi lista y Perfil trabajan siempre con la lista del usuario; "Comer hoy" es lo de debajo.
+if seccion == "inicio":
+    seccion_inicio(maestro, df_platos, hay_intro, momento_portada, nombre_usuario)
+    st.stop()
+if seccion == "mi_lista":
+    seccion_mi_lista(maestro, df_platos)
+    st.stop()
+if seccion == "perfil":
+    seccion_perfil(maestro, usuario, nombre_usuario, google, mi_lista, preferencias)
+    st.stop()
+
+# ----------------------- COMER HOY: EL BUSCADOR ----------------------- #
+if CONFIG_MULTIUSUARIO:
+    if st.session_state.get("fuente") == FUENTE_TODOS:   # "Buscar en: Todos los restaurantes"
+        try:
+            maestro, df_platos = cargar_catalogo()
+        except bd.ErrorSupabase:
+            st.error("No se han podido cargar todos los restaurantes ahora mismo. Prueba en un momento.")
+            st.stop()
+        momento_portada = f"🍽️ Todos los restaurantes · {len(maestro)} sitios"
+
 vista = st.session_state.setdefault("vista", "buscador")
 if vista == "resultados" and st.session_state.get("resultado") is not None:
     st.html(_CSS_OCULTAR_BUSCADOR)
 
 # ----------------------- VISTA: BUSCADOR ----------------------- #
 with st.container(key="buscador"):
-    mostrar_portada(len(maestro), tras_intro=hay_intro)
+    mostrar_portada(len(maestro), tras_intro=hay_intro, maestro=maestro, momento=momento_portada)
+    if CONFIG_MULTIUSUARIO:
+        st.segmented_control("Buscar en", [FUENTE_MI_LISTA, FUENTE_TODOS], default=FUENTE_MI_LISTA,
+                             key="fuente", width="stretch")
+        if maestro.empty:
+            st.info("Todavía no tienes restaurantes en tu lista. Añádela en tu **Perfil** (abajo a la derecha) "
+                    "o busca en **Todos los restaurantes**.")
+            st.button("Añadir tu lista", on_click=ir_a, args=("perfil",), icon=":material/add_location_alt:")
+            st.stop()
 
     # Caja de dirección y, justo debajo, el botón "Usar mi ubicación". Reservamos primero
     # el hueco de la caja y lo rellenamos después de procesar el clic del botón: así la
@@ -634,18 +1031,16 @@ with st.container(key="buscador"):
 
     modo_transporte = st.segmented_control(
         "¿Cómo vais?", list(ETIQUETAS_TRANSPORTE), format_func=ETIQUETAS_TRANSPORTE.get,
-        default="En coche", key="transporte", width="stretch",
+        default=preferencias["transporte"], key="transporte", width="stretch",
     ) or "En coche"   # si se desmarca la opción elegida, vuelve a coche
-    tiempo_maximo_min = st.slider("Tiempo máximo", 5, 60, 20, step=5, format="%d min", key="tiempo")
+    tiempo_maximo_min = st.slider("Tiempo máximo", 5, 60, preferencias["tiempo"], step=5, format="%d min",
+                                  key="tiempo")
 
-    if tiene_categorias_jev(maestro):
-        cocinas_disponibles = sorted(maestro[COL_CATEGORIA].dropna().unique())
-    else:   # maestro sin categorías de Jev: se usa el tipo de Google
-        cocinas_disponibles = sorted(maestro["Tipo de cocina"].dropna().unique().tolist())
-    cocina = st.selectbox("Cocina", ["Cualquiera"] + cocinas_disponibles, key="cocina")
+    cocina = st.selectbox("Cocina", ["Cualquiera"] + cocinas_disponibles(maestro), key="cocina")
 
     presupuesto_min, presupuesto_max = st.slider(
-        "Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, (0, 30), step=5, format="%d €", key="presupuesto",
+        "Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, tuple(preferencias["presupuesto"]), step=5,
+        format="%d €", key="presupuesto",
         help=f"Arrastra el máximo hasta {PRESUPUESTO_SIN_LIMITE} € para no poner tope.",
     )
     if presupuesto_max == PRESUPUESTO_SIN_LIMITE:
@@ -771,7 +1166,7 @@ if vista == "resultados" and resultado is not None:
 
     if modo_vista == "Mapa":
         mostrar_mapa(*ubicacion_usuario, top, seleccionado)
-    mostrar_lista(top, respuestas, seleccionado)
+    mostrar_lista(top, respuestas["modo_transporte"], seleccionado)
 
     # "Ver más": de 5 en 5 hasta 10, y solo si quedan restaurantes que encajen.
     quedan = min(TOP_N_MAX, len(df_puntuado)) - num_mostrados
@@ -784,4 +1179,5 @@ if vista == "resultados" and resultado is not None:
     # mapa (pop), así que al cerrarla con ✕ no vuelve a aparecer sola.
     abrir = st.session_state.pop("ficha_abrir", None)
     if abrir in ids_top:
-        mostrar_ficha(top.iloc[ids_top.index(abrir)], respuestas, df_platos)
+        mostrar_ficha(top.iloc[ids_top.index(abrir)], df_platos, respuestas["plato_deseado"],
+                      respuestas["modo_transporte"])

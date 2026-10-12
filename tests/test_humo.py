@@ -28,9 +28,10 @@ BUSQUEDAS = {   # nombre -> filtros del formulario
 }
 
 
-def nueva_app():
+def nueva_app(seccion="comer"):
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["ubicacion_actual"] = CHUECA
+    at.session_state["seccion"] = seccion
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     return at
@@ -108,3 +109,40 @@ def test_ver_mas_orden_y_volver():
     [b for b in at.button if b.label == "Cambiar"][0].click().run()
     assert at.session_state["vista"] == "buscador"
     assert at.session_state["tiempo"] == 20   # el formulario conserva lo escrito
+
+
+# ---------------------------------------------------------------- barra de secciones
+
+def test_inicio_propone_un_plato_y_lleva_a_buscarlo():
+    at = nueva_app(seccion="inicio")
+    plato, id_restaurante, _ = at.session_state["sugerencia"]
+    assert any(f"¿Te apetece {plato}?" in h.value for h in at.subheader)
+    at.button(key="otra_idea").click().run()
+    assert not at.exception and at.session_state["sugerencia"][0] != plato   # otro plato
+    plato = at.session_state["sugerencia"][0]
+    at.button(key="buscar_plato").click().run()
+    assert not at.exception
+    assert at.session_state["seccion"] == "comer" and at.text_input(key="plato").value == plato
+
+
+def test_mi_lista_filtra():
+    at = nueva_app(seccion="mi_lista")
+    total = at.caption[0].value
+    assert total.endswith("restaurantes")
+    at.text_input(key="ml_texto").input("zzzz no existe").run()
+    assert any("Ninguno cumple" in i.value for i in at.info)
+    at.text_input(key="ml_texto").input("").run()
+    at.multiselect(key="ml_cocinas").select("Italiana").run()
+    assert not at.exception and at.caption[0].value != total
+
+
+def test_cambiar_de_seccion_conserva_el_formulario():
+    at = nueva_app()
+    at.slider(key="tiempo").set_value(45).run()
+    at.session_state["seccion"] = "perfil"
+    at.run()
+    assert not at.exception and any(h.value == "Tus estadísticas" for h in at.subheader)
+    at.session_state["seccion"] = "comer"
+    at.run()
+    assert at.slider(key="tiempo").value == 45
+    assert not at.warning, [w.value for w in at.warning]   # ni el aviso de "default + Session State"

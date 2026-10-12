@@ -1,7 +1,8 @@
-[data-testid="stMainBlockContainer"] { padding-top: 3rem; padding-bottom: 2rem; }
+/* abajo, hueco para la barra de secciones fija (componentes/barra.*: ~64 px + la zona segura del móvil) */
+[data-testid="stMainBlockContainer"] { padding-top: 3rem; padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
 .st-key-boton_buscar {
-  position: sticky; bottom: 0; z-index: 10;
-  padding: 16px 0 calc(12px + env(safe-area-inset-bottom));
+  position: sticky; bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 10;   /* justo encima de la barra */
+  padding: 16px 0 12px;
   background: linear-gradient(to top, #FBF7F2 75%, rgba(251, 247, 242, 0));
 }
 @media (prefers-color-scheme: dark) {
