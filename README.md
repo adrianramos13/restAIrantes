@@ -336,7 +336,10 @@ Arriba a la derecha aparece la foto de la cuenta de Google (o su inicial). Al pu
   python obtener_datos/procesar_solicitudes.py           # procesa las pendientes
   python obtener_datos/procesar_solicitudes.py --todas   # refresca todas (precios, cierres, restaurantes nuevos)
   python obtener_datos/procesar_solicitudes.py --vigilar # no termina: cada 10 min procesa las pendientes que haya
+  python obtener_datos/procesar_solicitudes.py --pestanas 1   # una pestaña (por defecto 3), si Google pone pegas
   ```
+
+  Las reseñas se sacan **con tu sesión de Google** (sin sesión, Google Maps enseña solo ~5 por sitio; con ella, las 30) y en **3 pestañas a la vez**: unos 20 s por restaurante nuevo. Al terminar cada lista se imprimen los tiempos de cada paso.
 
   **Importante:** las listas nuevas **solo se procesan mientras el procesador está en marcha** en tu ordenador (necesita Chrome visible y tu sesión de Google; en la nube no se puede). Con `--vigilar` basta con dejarlo abierto. Para que arranque solo al encender Windows: *Programador de tareas → Crear tarea básica → Al iniciar sesión → Iniciar un programa*: `python` con argumentos `obtener_datos\procesar_solicitudes.py --vigilar` e *Iniciar en* la carpeta del proyecto (y `TYPESAFE_API_KEY` definida como variable de entorno de usuario en Windows).
 

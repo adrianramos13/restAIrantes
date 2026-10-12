@@ -55,18 +55,32 @@ def datos_actualizados(existente, fila_lista):
     return nuevos
 
 
-async def _resenas_de(nombres):
-    """Reseñas de Google Maps de cada restaurante, con el mismo navegador que extraer_resenas.py."""
+PESTANAS = 3   # restaurantes a la vez al sacar reseñas (--pestanas); si Google pone pegas, bajar a 1
+MAPS = "https://www.google.com/maps?hl=es"
+
+
+async def _resenas_de(nombres, pestanas=None):
+    """Reseñas (hasta 30) de cada restaurante, con TU sesión de Google (sin sesión, Google Maps
+    solo enseña ~5 por sitio) y en varias pestañas a la vez. Devuelve las filas en el orden de
+    `nombres`, igual que si se hicieran de uno en uno."""
     from playwright.async_api import async_playwright
-    filas = []
+    pendientes = list(enumerate(nombres, start=1))
+    por_indice = {}
     async with async_playwright() as p:
-        navegador = await p.chromium.launch(headless=False, args=["--disable-blink-features=AutomationControlled"])
-        contexto = await navegador.new_context(locale="es-ES", viewport={"width": 1440, "height": 900})
-        page = await contexto.new_page()
-        for i, nombre in enumerate(nombres, start=1):
-            filas += await extraer_resenas.procesar_restaurante(page, nombre, i, len(nombres))
-        await navegador.close()
-    return filas
+        contexto = await extraer_html._abrir_chrome_con_sesion(p)
+        primera = contexto.pages[0] if contexto.pages else await contexto.new_page()
+        await primera.goto(MAPS, wait_until="load")
+        await extraer_html._asegurar_sesion(primera, MAPS)
+        paginas = [primera] + [await contexto.new_page() for _ in range(max(1, pestanas or PESTANAS) - 1)]
+
+        async def trabajador(page):
+            while pendientes:   # cada pestaña coge el siguiente restaurante libre
+                i, nombre = pendientes.pop(0)
+                por_indice[i] = await extraer_resenas.procesar_restaurante(page, nombre, i, len(nombres))
+
+        await asyncio.gather(*(trabajador(pagina) for pagina in paginas))
+        await contexto.close()
+    return [fila for i in sorted(por_indice) for fila in por_indice[i]]
 
 
 def analizar_nuevos(filas):
@@ -76,8 +90,14 @@ def analizar_nuevos(filas):
         raise ErrorLista("falta la variable de entorno TYPESAFE_API_KEY para clasificar los restaurantes nuevos")
     import clasificar_restaurantes_jev as clasif
 
+    import time
+    t0 = time.time()
     extraer_html.descargar_imagenes(filas)   # rellena "Imagen archivo" y deja cada foto en imagenes/
+    t_fotos = time.time()
     resenas = asyncio.run(_resenas_de([f["Nombre"] for f in filas]))
+    t_resenas = time.time()
+    print(f"  Tiempos: fotos {t_fotos - t0:.0f} s | reseñas {t_resenas - t_fotos:.0f} s "
+          f"({(t_resenas - t_fotos) / max(1, len(filas)):.0f} s por restaurante, {PESTANAS} pestañas)")
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         extraer_html.guardar_excel(filas, tmp / "v1.xlsx")
@@ -141,11 +161,15 @@ def procesar_lista(bd, lista):
 
 
 def main(argv=None):
+    global PESTANAS
     parser = argparse.ArgumentParser(description="Procesa las listas pedidas desde la app.")
     parser.add_argument("--todas", action="store_true", help="vuelve a procesar todas las listas, no solo las pendientes")
     parser.add_argument("--vigilar", type=int, metavar="MINUTOS", nargs="?", const=10,
                         help="no termina: cada MINUTOS (10 por defecto) procesa las listas pendientes que haya")
+    parser.add_argument("--pestanas", type=int, default=PESTANAS,
+                        help=f"restaurantes a la vez al sacar reseñas (por defecto {PESTANAS}; 1 si Google pone pegas)")
     args = parser.parse_args(argv)
+    PESTANAS = max(1, args.pestanas)
 
     bd = cliente()
     if args.vigilar:
