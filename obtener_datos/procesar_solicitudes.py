@@ -143,13 +143,27 @@ def procesar_lista(bd, lista):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Procesa las listas pedidas desde la app.")
     parser.add_argument("--todas", action="store_true", help="vuelve a procesar todas las listas, no solo las pendientes")
+    parser.add_argument("--vigilar", type=int, metavar="MINUTOS", nargs="?", const=10,
+                        help="no termina: cada MINUTOS (10 por defecto) procesa las listas pendientes que haya")
     args = parser.parse_args(argv)
 
     bd = cliente()
+    if args.vigilar:
+        import time
+        print(f"Vigilando listas pendientes cada {args.vigilar} min (Ctrl+C para parar)...")
+        while True:
+            pendientes = bd.listas_pendientes()
+            if pendientes:
+                procesar_varias(bd, pendientes)
+            time.sleep(args.vigilar * 60)
     listas = bd.listas_con_enlace() if args.todas else bd.listas_pendientes()
     if not listas:
         print("No hay listas pendientes.")
         return
+    procesar_varias(bd, listas)
+
+
+def procesar_varias(bd, listas):
     for lista in listas:
         print(f"\n=== {lista['usuario']} ===")
         try:

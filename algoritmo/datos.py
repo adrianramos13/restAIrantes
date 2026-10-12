@@ -177,8 +177,26 @@ class Supabase:
         return filas[0]
 
     def pedir_actualizacion(self, usuario, enlace):
-        """El usuario pega (o vuelve a pedir) su lista: queda pendiente para el procesador."""
-        return self.guardar_lista(usuario, enlace=enlace, estado="pendiente")
+        """El usuario pega (o vuelve a pedir) su lista. Si otra persona ya tiene ESA MISMA lista
+        procesada, se copia al momento (estado "lista"); si no, queda pendiente para el procesador."""
+        lista = self.guardar_lista(usuario, enlace=enlace, estado="pendiente")
+        igual = self.lista_procesada_con_enlace(enlace, excepto_usuario=usuario)
+        ids = self.ids_de_lista(igual["id"]) if igual else []
+        if not ids:
+            return lista
+        self.reemplazar_lista(lista["id"], ids)
+        self.marcar(lista["id"], "lista", f"{len(ids)} restaurantes (copiada de una lista ya procesada)")
+        return {**lista, "estado": "lista"}
+
+    def lista_procesada_con_enlace(self, enlace, excepto_usuario):
+        filas = self._rest("GET", "listas", params={"enlace": f"eq.{enlace}", "estado": "eq.lista",
+                                                    "usuario": f"neq.{excepto_usuario}", "select": "*", "limit": 1})
+        return filas[0] if filas else None
+
+    def ids_de_lista(self, lista_id):
+        filas = self._rest("GET", "lista_restaurantes", params={
+            "lista_id": f"eq.{lista_id}", "select": "restaurante_id,posicion", "order": "posicion.asc"})
+        return [f["restaurante_id"] for f in filas]
 
     def listas_pendientes(self):
         return self._rest("GET", "listas", params={"estado": "eq.pendiente", "select": "*",
@@ -227,6 +245,18 @@ class Supabase:
         return filas[0]
 
     # ---------------- catálogo compartido ----------------
+
+    def todos_los_restaurantes(self):
+        """(maestro, df_platos) con TODO el catálogo compartido (opción "Todos los restaurantes")."""
+        filas, desde = [], 0
+        while True:   # PostgREST devuelve como mucho 1000 filas por petición
+            lote = self._rest("GET", "restaurantes", params={
+                "select": "id,datos,platos,imagen", "order": "id.asc", "limit": 1000, "offset": desde})
+            filas += lote
+            if len(lote) < 1000:
+                break
+            desde += 1000
+        return filas_a_dataframes([{"posicion": i, "restaurantes": f} for i, f in enumerate(filas)])
 
     def restaurantes_por_clave(self, claves):
         """{clave: fila del catálogo} para las claves que ya existen."""
