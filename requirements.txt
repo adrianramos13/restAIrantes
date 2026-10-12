@@ -7,3 +7,4 @@ geopy
 requests
 pillow
 Authlib>=1.3.2   # login con Google (st.login) en modo multiusuario
+httpx            # la necesita Authlib para el login (no se instala sola)
