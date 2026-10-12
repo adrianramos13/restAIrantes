@@ -322,7 +322,7 @@ flowchart LR
    ```
 
 ### Día a día
-
+  
 - Cada usuario entra, abre **"Mi lista de Google Maps"**, pega el enlace de su lista (en Google Maps: la lista → *Compartir* → copiar enlace) y pulsa **Guardar y procesar**. Queda *pendiente*.
 - Tú, de vez en cuando, en tu ordenador (con `TYPESAFE_API_KEY` definida):
 
