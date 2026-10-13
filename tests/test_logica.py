@@ -11,7 +11,7 @@ from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_1, COL_VOTOS_2, OR
                     ORDEN_NOMBRE, ORDEN_PUNTUACION, ORDEN_RESENAS, SCORE_COCINA_DESCONOCIDA,
                     SCORE_COCINA_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, parsear_rango_precio, puntuacion_cocina, solapamiento,
-                    sugerencia_plato)
+                    sugerencia_plato, hace_cuanto)
 
 
 @pytest.mark.parametrize("texto, esperado", [
@@ -169,3 +169,12 @@ def test_estadisticas_lista():
     assert e["precio_medio"] == pytest.approx((15 * 4 + 55) / 5)
     assert e["nota_media"] == pytest.approx(sum([4.5, 4.9, 4.8, 4.7, 4.0, 5.0]) / 6)
     assert estadisticas_lista(pd.DataFrame()) is None
+
+
+def test_hace_cuanto():
+    from datetime import datetime, timezone
+    ahora = datetime(2026, 10, 13, 9, 0, tzinfo=timezone.utc)
+    assert hace_cuanto("2026-10-13T08:00:00+00:00", ahora) == "hoy"
+    assert hace_cuanto("2026-10-12T23:59:00+00:00", ahora) == "ayer"
+    assert hace_cuanto("2026-10-10T12:00:00.123456+00:00", ahora) == "hace 3 días"
+    assert hace_cuanto("2026-09-01T12:00:00+00:00", ahora) == "01/09"

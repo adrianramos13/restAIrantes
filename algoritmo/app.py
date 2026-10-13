@@ -36,6 +36,7 @@ import re
 import base64
 import random
 import urllib.parse
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -46,7 +47,11 @@ from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS,
                     ORDEN_RESENAS, VOTOS_MIN_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, sugerencia_plato, tiene_categorias_jev)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
+import acceso
+import amigos
 import datos as bd
+from cuentas import Cuentas
+from logica import hace_cuanto
 from sesion import config_multiusuario, datos_google, usuario_actual
 
 
@@ -82,6 +87,8 @@ PRESUPUESTO_SIN_LIMITE = 100   # el máximo del slider de presupuesto significa 
 # con los excels de siempre. Ver sesion.py.
 CONFIG_MULTIUSUARIO = config_multiusuario()
 BD = bd.Supabase(CONFIG_MULTIUSUARIO["url"], CONFIG_MULTIUSUARIO["clave_servicio"]) if CONFIG_MULTIUSUARIO else None
+# Cuentas con correo y contraseña (Supabase Auth), además de Google. Ver cuentas.py y acceso.py.
+CUENTAS = Cuentas(CONFIG_MULTIUSUARIO["url"], CONFIG_MULTIUSUARIO["clave_servicio"]) if CONFIG_MULTIUSUARIO else None
 
 
 @st.cache_data
@@ -310,6 +317,26 @@ def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
         st.link_button("TikTok", buscar(f'site:tiktok.com "{nombre}" Madrid'), width="stretch")
     st.link_button("Buscar en Google", buscar(f"{nombre} Madrid"), type="tertiary",
                    icon=":material/search:", width="stretch")
+    if BD is not None and usuario:
+        boton_he_ido(fila)
+
+
+def boton_he_ido(fila):
+    """"He ido" (con nota opcional): lo ven tus amigos en su Inicio. Va en la ficha, que es una ventana
+    (st.dialog): pulsar aquí solo recarga la ventana, que sigue abierta."""
+    st.divider()
+    id_restaurante = int(fila["ID"])
+    nota = st.feedback("stars", key=f"nota_visita_{id_restaurante}")
+    if st.button("He ido", icon=":material/check_circle:", width="stretch", key=f"he_ido_{id_restaurante}"):
+        try:
+            BD.registrar_visita(usuario, id_restaurante, None if nota is None else nota + 1)
+        except bd.ErrorSupabase:
+            st.error("No se ha podido guardar ahora mismo (¿falta ejecutar supabase/004_amigos.sql?).")
+            return
+        amigos.limpiar_cache()
+        st.success("¡Apuntado! Tus amigos lo verán en su Inicio.")
+    else:
+        st.caption("¿Has ido? Márcalo (y ponle nota si quieres): tus amigos lo verán en su Inicio.")
 
 
 def mostrar_ficha(fila, df_platos, plato=None, modo_transporte=None):
@@ -346,8 +373,9 @@ def _al_abrir_desde_lista(key):
         st.session_state["ficha_abrir"] = int(valor)
 
 
-def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes"):
-    """Tarjetas de `top`. Con `modo_transporte` (resultados de una búsqueda) enseñan el tiempo de viaje."""
+def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes", detalle=None):
+    """Tarjetas de `top`. Con `modo_transporte` (resultados de una búsqueda) enseñan el tiempo de viaje;
+    `detalle(fila)` cambia la línea de la cocina por otro texto (p. ej. qué amigo fue y cuándo)."""
     items = []
     for n, (_, fila) in enumerate(top.iterrows(), start=1):
         meta = f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)}"
@@ -355,7 +383,8 @@ def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_re
             meta += f" · {icono_transporte(modo_transporte)} {fila['Tiempo desplazamiento (min)']:.0f}'"
         items.append({
             "id": int(fila["ID"]), "n": n, "nombre": str(fila["Nombre"]),
-            "cocina": str(etiqueta_cocina(fila)), "foto": foto_restaurante(fila), "meta": meta,
+            "cocina": detalle(fila) if detalle else str(etiqueta_cocina(fila)), "foto": foto_restaurante(fila),
+            "meta": meta,
             "cerrado": estado_cerrado(fila),
         })
     _LISTA_RESTAURANTES(
@@ -685,6 +714,13 @@ _CSS_INICIO = "<style>\n" + recurso("inicio.css") + "</style>\n"
 
 
 def seccion_inicio(maestro, df_platos, tras_intro, momento, nombre=None):
+    abrir = st.session_state.pop("ficha_abrir", None)   # la ficha a abrir, de la idea o de los amigos
+    idea_del_dia(maestro, df_platos, tras_intro, momento, nombre, abrir)
+    if BD is not None:
+        visitas_de_amigos(abrir)
+
+
+def idea_del_dia(maestro, df_platos, tras_intro, momento, nombre, abrir):
     saludo = f"Hola, {html.escape(nombre)}. " if nombre else ""
     mostrar_portada(len(maestro), tras_intro=tras_intro, maestro=maestro, momento=momento,
                     subtitulo=f"{saludo}Una idea para hoy:")
@@ -720,12 +756,39 @@ def seccion_inicio(maestro, df_platos, tras_intro, momento, nombre=None):
                            width="stretch")
             st.button("Ver ficha", on_click=lambda: st.session_state.update(ficha_abrir=id_restaurante),
                       icon=":material/info:", width="stretch", key="ver_ficha_sugerida")
-    if st.session_state.pop("ficha_abrir", None) == id_restaurante:
+    if abrir == id_restaurante:
         mostrar_ficha(fila, df_platos, plato)
     with st.container(horizontal=True, wrap=True):
         st.button("Otra idea", on_click=otra_sugerencia, icon=":material/casino:", key="otra_idea")
         st.button(f"Más sitios con {plato}", on_click=buscar_sitios_con, args=(plato,),
                   icon=":material/search:", key="buscar_plato")
+
+
+def visitas_de_amigos(abrir):
+    """Inicio: los últimos sitios a los que han ido tus amigos (botón "He ido" de la ficha)."""
+    st.subheader("Tus amigos han ido a")
+    try:
+        df = amigos.cargar_visitas_amigos(BD, usuario)
+    except bd.ErrorSupabase:
+        st.caption("No se puede ver ahora mismo.")
+        return
+    if df is None:
+        st.caption("Añade amigos desde tu **Perfil** y aquí verás los últimos sitios a los que han ido.")
+        st.button("Buscar amigos", on_click=ir_a, args=("perfil",), icon=":material/person_add:", key="ir_a_amigos")
+        return
+    if df.empty:
+        st.caption("Tus amigos todavía no han marcado ningún sitio con «He ido».")
+        return
+    ahora = datetime.now(timezone.utc)
+
+    def detalle(fila):
+        estrellas = f" · {'★' * int(fila['Nota visita'])}" if pd.notna(fila["Nota visita"]) else ""
+        return f"{fila['Amigo']} · {hace_cuanto(fila['Fecha visita'], ahora)}{estrellas}"
+    mostrar_lista(df, key="lista_amigos", detalle=detalle)
+    # Si ese sitio es también la idea del día, ya se ha abierto su ficha arriba.
+    coincide = df[df["ID"] == abrir]
+    if abrir is not None and not coincide.empty and abrir != (st.session_state.get("sugerencia") or (0, None))[1]:
+        mostrar_ficha(coincide.iloc[0], pd.DataFrame(columns=bd.COLUMNAS_PLATOS))
 
 
 # ----------------------- MI LISTA ----------------------- #
@@ -812,7 +875,7 @@ def bloque_datos_personales(usuario, nombre):
     st.subheader("Datos personales")
     nuevo = st.text_input("Nombre", value=nombre, max_chars=bd.LARGO_MAX_NOMBRE, key="perfil_nombre",
                           help="Es el nombre con el que te saluda la app.")
-    st.caption("El correo y la foto son los de tu cuenta de Google: identifican tu lista y no se cambian aquí.")
+    st.caption("El correo identifica tu cuenta y tu lista: no se cambia aquí.")
     if st.button("Guardar nombre", width="stretch", key="guardar_perfil"):
         try:
             BD.guardar_perfil(usuario, bd.validar_nombre(nuevo))
@@ -903,7 +966,7 @@ def bloque_preferencias(usuario, nombre, preferencias):
         st.toast("Preferencias guardadas", icon=":material/check:")
 
 
-def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, preferencias=None):
+def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, preferencias=None, perfil=None):
     if not CONFIG_MULTIUSUARIO:   # modo local: no hay cuenta, solo las estadísticas de la lista
         st.header("Perfil")
         bloque_estadisticas(maestro)
@@ -915,19 +978,33 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
     with st.container(border=True):
         bloque_estadisticas(maestro)
     with st.container(border=True):
+        amigos.bloque_amigos(BD, usuario, nombre, perfil, al_guardar_alias=cargar_perfil.clear)
+    with st.container(border=True):
         bloque_tus_listas(usuario, lista)
     with st.container(border=True):
         bloque_preferencias(usuario, nombre, preferencias)
     with st.container(border=True):
         bloque_datos_personales(usuario, nombre)
-    st.button("Cerrar sesión", on_click=st.logout, icon=":material/logout:", width="stretch", key="cerrar_sesion")
+    st.button("Cerrar sesión", on_click=acceso.cerrar_sesion, args=(CUENTAS,), icon=":material/logout:",
+              width="stretch", key="cerrar_sesion")
 
 
 def pantalla_entrar(tras_intro):
     mostrar_portada(0, tras_intro=tras_intro, momento="🍽️ Tus sitios de Google Maps",
-                    subtitulo="Entra con tu cuenta de Google para ver los restaurantes de tu lista.")
+                    subtitulo="Entra para ver los restaurantes de tu lista.")
     st.button("Entrar con Google", type="primary", icon=":material/login:", width="stretch",
               on_click=st.login, args=("google",))
+    if not confirmacion_de_correo_activa():
+        st.caption("Las cuentas con correo y contraseña están desactivadas hasta que el administrador active "
+                   "«Confirm email» en Supabase.")
+        return
+    st.markdown("<p style='text-align:center;opacity:.7;margin:.5rem 0'>o con tu correo</p>", unsafe_allow_html=True)
+    acceso.formulario_cuentas(CUENTAS)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def confirmacion_de_correo_activa():
+    return CUENTAS.confirmacion_obligatoria()
 
 
 def pantalla_sin_permiso(usuario):
@@ -939,9 +1016,13 @@ st.set_page_config(page_title="¿Dónde comemos?", page_icon="🍽️", layout="
 st.html(_CSS_GLOBAL)
 hay_intro = mostrar_intro()
 
-usuario, mi_lista = None, None
+usuario, mi_lista, cuenta = None, None, None
 if CONFIG_MULTIUSUARIO:
     usuario = usuario_actual()
+    if usuario is None:   # sin Google: ¿sesión con correo y contraseña (o guardada en la cookie)?
+        cuenta = acceso.usuario_con_contrasena(CUENTAS)
+        usuario = cuenta and cuenta["correo"]
+    acceso.sincronizar_cookie()
     if usuario is None:
         pantalla_entrar(hay_intro)
         st.stop()
@@ -962,7 +1043,7 @@ conservar_formularios(seccion)
 momento_portada = nombre_usuario = None
 google, perfil = {}, None
 if CONFIG_MULTIUSUARIO:
-    google = datos_google()
+    google = datos_google() if cuenta is None else {"nombre": cuenta.get("nombre"), "foto": None}
     try:
         perfil = cargar_perfil(usuario)
     except bd.ErrorSupabase:   # p. ej. aún no se ha creado la tabla perfiles: se usa el nombre de Google
@@ -980,7 +1061,7 @@ if seccion == "mi_lista":
     seccion_mi_lista(maestro, df_platos)
     st.stop()
 if seccion == "perfil":
-    seccion_perfil(maestro, usuario, nombre_usuario, google, mi_lista, preferencias)
+    seccion_perfil(maestro, usuario, nombre_usuario, google, mi_lista, preferencias, perfil)
     st.stop()
 
 # ----------------------- COMER HOY: EL BUSCADOR ----------------------- #

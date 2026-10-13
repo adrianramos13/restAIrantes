@@ -12,6 +12,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+import cuentas
 import datos
 import sesion
 
@@ -209,6 +210,13 @@ def multiusuario(monkeypatch):
     monkeypatch.setattr(datos.Supabase, "pedir_actualizacion",
                         lambda self, u, enlace: estado["pedidas"].append((u, enlace)))
     monkeypatch.setattr(datos.Supabase, "todos_los_restaurantes", lambda self: (maestro.copy(), platos.copy()))
+    # Amigos y "He ido": sin amigos salvo que el test diga otra cosa.
+    estado.update(relaciones=[], visitas=[], visitas_guardadas=[], confirmacion=True)
+    monkeypatch.setattr(datos.Supabase, "relaciones_de", lambda self, u: estado["relaciones"])
+    monkeypatch.setattr(datos.Supabase, "visitas_de", lambda self, usuarios, limite=10: estado["visitas"])
+    monkeypatch.setattr(datos.Supabase, "registrar_visita",
+                        lambda self, u, i, nota=None: estado["visitas_guardadas"].append((u, i, nota)))
+    monkeypatch.setattr(cuentas.Cuentas, "confirmacion_obligatoria", lambda self: estado["confirmacion"])
     st.cache_data.clear()
     yield estado
     st.cache_data.clear()
@@ -227,7 +235,15 @@ def correr(at=None, seccion="comer"):
 def test_sin_sesion_pide_entrar(multiusuario):
     multiusuario["usuario"] = None
     at = correr()
+    assert "Entrar con Google" in [b.label for b in at.button]
+    assert at.text_input(key="entrar_correo") and at.text_input(key="entrar_contrasena")
+
+
+def test_sin_confirmacion_de_correo_no_hay_cuentas_con_contrasena(multiusuario):
+    multiusuario["usuario"], multiusuario["confirmacion"] = None, False
+    at = correr()
     assert [b.label for b in at.button] == ["Entrar con Google"]
+    assert any("Confirm email" in c.value for c in at.caption)
 
 
 def test_correo_no_permitido(multiusuario):
@@ -393,3 +409,203 @@ def test_perfil_guarda_preferencias_y_el_buscador_las_usa(multiusuario, monkeypa
     at.session_state["seccion"] = "comer"
     at.run()   # el perfil falso sigue diciendo 35: el buscador arranca con lo guardado en la base de datos
     assert at.slider(key="tiempo").value == 35 and at.slider(key="presupuesto").value == (10, 40)
+
+
+# ---------------------------------------------------------------- amigos y "He ido"
+
+@pytest.mark.parametrize("entrada, esperado", [("@Ana_G", "ana_g"), ("  pepe.99 ", "pepe.99")])
+def test_validar_alias_valido(entrada, esperado):
+    assert datos.validar_alias(entrada) == esperado
+
+
+@pytest.mark.parametrize("entrada", ["ab", "áéí", "con espacio", "a" * 21, "", None, "x,y"])
+def test_validar_alias_no_valido(entrada):
+    with pytest.raises(ValueError):
+        datos.validar_alias(entrada)
+
+
+def test_buscar_usuarios_limpia_el_texto(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
+    assert bd_.buscar_usuarios("a", "yo@x.com") == []                 # muy corto: ni pregunta
+    bd_.buscar_usuarios('@an"a),(alias.eq.*', "yo@x.com")
+    params = llamadas[-1][2]
+    assert params["or"] == '(alias.ilike."*anaalias.eq.*",nombre.ilike."*anaalias.eq.*")'
+    assert params["usuario"] == "neq.yo@x.com" and params["alias"] == "not.is.null"
+    assert "usuario" in params["select"] and len(llamadas) == 1
+
+
+def test_solicitar_amistad(monkeypatch):
+    existentes = []
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: existentes if m == "GET" else None)
+    assert bd_.solicitar_amistad("ana@x.com", "luis@x.com") == "pendiente"
+    assert llamadas[-1][0:2] == ("POST", "amistades")
+    assert llamadas[-1][3] == {"solicitante": "ana@x.com", "destinatario": "luis@x.com"}
+
+    existentes.append({"solicitante": "luis@x.com", "destinatario": "ana@x.com", "estado": "pendiente"})
+    assert bd_.solicitar_amistad("ana@x.com", "luis@x.com") == "aceptada"   # él ya se la había pedido
+    metodo, tabla, params, cuerpo = llamadas[-1]
+    assert (metodo, tabla, cuerpo) == ("PATCH", "amistades", {"estado": "aceptada"})
+    assert params["solicitante"] == "eq.luis@x.com" and params["destinatario"] == "eq.ana@x.com"
+
+    with pytest.raises(ValueError):
+        bd_.solicitar_amistad("ana@x.com", "ana@x.com")
+
+
+def test_alias_repetido_es_value_error(monkeypatch):
+    def _rest(self, metodo, tabla, **kw):
+        raise datos.ErrorSupabase("POST perfiles: 409 duplicate key value violates unique constraint")
+    monkeypatch.setattr(datos.Supabase, "_rest", _rest)
+    with pytest.raises(ValueError, match="@ana_g"):
+        datos.Supabase("https://x.supabase.co", "k").guardar_alias("ana@x.com", "Ana", "ana_g")
+
+
+def test_registrar_visita_valida_la_nota(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
+    bd_.registrar_visita("ana@x.com", np.int64(7), 4)
+    assert llamadas[-1][3] == {"usuario": "ana@x.com", "restaurante_id": 7, "nota": 4}
+    with pytest.raises(ValueError):
+        bd_.registrar_visita("ana@x.com", 7, 6)
+
+
+def test_visitas_a_dataframe():
+    visitas = [{"usuario": "luis@x.com", "nota": 5, "creado_en": "2026-10-12T20:00:00+00:00",
+                "restaurantes": {"id": 7, "datos": {"Nombre": "Casa Pepe"}, "imagen": "casa-pepe.jpg"}},
+               {"usuario": "eva@x.com", "nota": None, "creado_en": "2026-10-11T20:00:00+00:00",
+                "restaurantes": None}]   # restaurante borrado del catálogo: se salta
+    df = datos.visitas_a_dataframe(visitas, {"luis@x.com": "Luis"})
+    assert df.to_dict("records") == [{"Nombre": "Casa Pepe", "ID": 7, "Imagen archivo": "casa-pepe.jpg",
+                                      "Amigo": "Luis", "Nota visita": 5, "Fecha visita": "2026-10-12T20:00:00+00:00"}]
+
+
+# ---------------------------------------------------------------- cuentas con contraseña en la app
+
+SESION_ANA = {"correo": "ana@ejemplo.com", "nombre": "Ana", "acceso": "acc", "renovacion": "ren"}
+
+
+def boton(at, etiqueta):
+    return [b for b in at.button if b.label == etiqueta][0]
+
+
+def test_entrar_con_correo_y_contrasena(multiusuario, monkeypatch):
+    multiusuario["usuario"] = None
+    pedidas = []
+    monkeypatch.setattr(cuentas.Cuentas, "entrar", lambda self, c, p: pedidas.append((c, p)) or SESION_ANA)
+    at = correr(seccion="inicio")
+    at.text_input(key="entrar_correo").input("ana@ejemplo.com")
+    at.text_input(key="entrar_contrasena").input("secreta123")
+    boton(at, "Entrar").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert pedidas == [("ana@ejemplo.com", "secreta123")]
+    assert at.session_state["cuenta"] == SESION_ANA
+    assert "Hola, Ana." in portada(at)                      # dentro, con el nombre del registro
+
+
+def test_contrasena_incorrecta(multiusuario, monkeypatch):
+    multiusuario["usuario"] = None
+
+    def entrar(self, c, p):
+        raise cuentas.ErrorCuenta("Correo o contraseña incorrectos.")
+    monkeypatch.setattr(cuentas.Cuentas, "entrar", entrar)
+    at = correr()
+    at.text_input(key="entrar_correo").input("ana@ejemplo.com")
+    at.text_input(key="entrar_contrasena").input("mala")
+    boton(at, "Entrar").click().run()
+    assert any("incorrectos" in e.value for e in at.error) and "cuenta" not in at.session_state
+
+
+def test_registro_valida_el_nombre_y_las_contrasenas(multiusuario, monkeypatch):
+    multiusuario["usuario"] = None
+    registros = []
+    monkeypatch.setattr(cuentas.Cuentas, "registrar", lambda self, c, p, n: registros.append((c, n)))
+    at = correr()
+    at.segmented_control(key="modo_acceso").set_value("Crear cuenta").run()
+    at.text_input(key="registro_nombre").input("Ana")
+    at.text_input(key="registro_correo").input("ana@ejemplo.com")
+    at.text_input(key="registro_contrasena").input("secreta123")
+    at.text_input(key="registro_repetida").input("otra-cosa")
+    boton(at, "Crear cuenta").click().run()
+    assert any("no coinciden" in e.value for e in at.error) and registros == []
+    at.text_input(key="registro_repetida").input("secreta123")
+    boton(at, "Crear cuenta").click().run()
+    assert registros == [("ana@ejemplo.com", "Ana")]
+    assert any("Te hemos enviado un correo" in m.value for m in at.success)
+
+
+def test_cerrar_sesion_con_contrasena(multiusuario, monkeypatch):
+    multiusuario["usuario"] = None
+    salidas = []
+    monkeypatch.setattr(cuentas.Cuentas, "salir", lambda self, token: salidas.append(token))
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["cuenta"] = SESION_ANA
+    at = correr(at, seccion="perfil")
+    at.button(key="cerrar_sesion").click().run()
+    assert not at.exception and salidas == ["acc"]
+    assert "cuenta" not in at.session_state and at.session_state["cookie_borrar"]
+    assert "Entrar con Google" in [b.label for b in at.button]   # de vuelta a la pantalla de entrar
+
+
+# ---------------------------------------------------------------- amigos en la app
+
+def test_inicio_sin_amigos_invita_a_buscarlos(multiusuario):
+    at = correr(seccion="inicio")
+    assert any(h.value == "Tus amigos han ido a" for h in at.subheader)
+    at.button(key="ir_a_amigos").click().run()
+    assert at.session_state["seccion"] == "perfil"
+
+
+def test_inicio_ensena_las_visitas_de_los_amigos(multiusuario):
+    multiusuario["relaciones"] = [{"usuario": "luis@x.com", "nombre": "Luis", "alias": "luis",
+                                   "estado": "aceptada", "enviada": False}]
+    multiusuario["visitas"] = [{"usuario": "luis@x.com", "nota": 4, "creado_en": "2026-10-12T20:00:00+00:00",
+                                "restaurantes": {"id": 7, "datos": {"Nombre": "Casa Pepe", "Puntuación": 4.5},
+                                                 "imagen": None}}]
+    at = correr(seccion="inicio")
+    assert not at.exception, [e.value for e in at.exception]
+    assert not any("todavía no han marcado" in c.value or "Añade amigos" in c.value for c in at.caption)
+
+
+def test_perfil_pide_elegir_nombre_de_usuario(multiusuario, monkeypatch):
+    guardados = []
+    monkeypatch.setattr(datos.Supabase, "guardar_alias", lambda self, u, n, a: guardados.append((u, n, a)))
+    at = correr(seccion="perfil")
+    at.text_input(key="alias_nuevo").input("Ana G")                     # espacio: no vale
+    at.button(key="guardar_alias").click().run()
+    assert any("3 a 20 caracteres" in e.value for e in at.error) and guardados == []
+    at.text_input(key="alias_nuevo").input("@Ana_G")
+    at.button(key="guardar_alias").click().run()
+    assert guardados == [("ana@ejemplo.com", "Ana García", "ana_g")]
+
+
+def test_perfil_solicitudes_y_busqueda(multiusuario, monkeypatch):
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
+    multiusuario["relaciones"] = [{"usuario": "luis@x.com", "nombre": "Luis", "alias": "luis",
+                                   "estado": "pendiente", "enviada": False}]
+    respuestas, solicitudes = [], []
+    monkeypatch.setattr(datos.Supabase, "responder_solicitud",
+                        lambda self, u, de, aceptar: respuestas.append((u, de, aceptar)))
+    monkeypatch.setattr(datos.Supabase, "buscar_usuarios", lambda self, t, excepto: [
+        {"usuario": "eva@x.com", "nombre": "[Eva](javascript:alert(1))", "alias": "eva"}])
+    monkeypatch.setattr(datos.Supabase, "solicitar_amistad", lambda self, de, a: solicitudes.append((de, a)))
+    at = correr(seccion="perfil")
+    assert any("Luis" in m.value and "quiere ser tu amigo" in m.value for m in at.markdown)
+    at.button(key="aceptar_luis").click().run()
+    assert respuestas == [("ana@ejemplo.com", "luis@x.com", True)]
+
+    at.text_input(key="buscar_amigos").input("eva").run()
+    textos = " ".join(m.value for m in at.markdown)
+    assert "eva@x.com" not in textos                                   # el correo no se enseña nunca
+    assert r"\[Eva\]\(javascript" in textos                          # el nombre no puede meter un enlace
+    at.button(key="anadir_eva").click().run()
+    assert solicitudes == [("ana@ejemplo.com", "eva@x.com")]
+
+
+def test_he_ido_desde_la_ficha(multiusuario):
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    at.button(key="ver_ficha_sugerida").click().run()
+    # En Streamlit real, el botón de la ventana solo recarga la ventana; AppTest recarga todo el script,
+    # así que se vuelve a pedir abrir la ficha antes del clic.
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"he_ido_{id_restaurante}").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert multiusuario["visitas_guardadas"] == [("ana@ejemplo.com", id_restaurante, None)]

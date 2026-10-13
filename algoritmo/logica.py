@@ -5,6 +5,7 @@ Se puede importar y probar sola (tests/test_logica.py).
 
 import re
 import unicodedata
+from datetime import datetime
 
 import pandas as pd
 
@@ -295,3 +296,15 @@ def ordenar_resultados(df, orden):
         return df.sort_values(["Tiempo desplazamiento (min)", "Score"], ascending=[True, False])
     return df.sort_values("Score", ascending=False)
 
+
+
+def hace_cuanto(fecha_iso, ahora):
+    """"hoy", "ayer", "hace 3 días" o la fecha (12/10) si hace más de una semana. `ahora` con zona horaria."""
+    dias = (ahora.date() - datetime.fromisoformat(fecha_iso).astimezone(ahora.tzinfo).date()).days
+    if dias <= 0:
+        return "hoy"
+    if dias == 1:
+        return "ayer"
+    if dias < 7:
+        return f"hace {dias} días"
+    return datetime.fromisoformat(fecha_iso).astimezone(ahora.tzinfo).strftime("%d/%m")

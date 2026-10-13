@@ -324,13 +324,30 @@ flowchart LR
 > **Si ya habías ejecutado `esquema.sql` antes de que existiera el menú de usuario**, ejecuta también `supabase/002_perfiles.sql` (mismo procedimiento: copiar su contenido en el *SQL Editor* → *Run*). Crea la tabla `perfiles`, donde se guarda el nombre que cada usuario elige en **Datos personales**. Sin ella la app funciona, pero usa el nombre de Google y no deja guardar cambios.
 >
 > **Y para las preferencias del Perfil**, ejecuta `supabase/003_preferencias.sql` (añade la columna `preferencias` a `perfiles`). Sin ella todo funciona, pero *Guardar preferencias* da error.
+>
+> **Y para amigos y «He ido»**, ejecuta `supabase/004_amigos.sql` (columna `alias` en `perfiles` y tablas `amistades` y `visitas`).
+
+### Cuentas con correo y contraseña
+
+Además de Google, se puede crear una cuenta con nombre, correo y contraseña. Lo gestiona **Supabase Auth** (el mismo proyecto): guarda las contraseñas cifradas, manda el correo de confirmación y el código para recuperar la contraseña. La app identifica a cada persona por su **correo**, así que una cuenta con contraseña y una de Google con el mismo correo son la misma (misma lista y amigos). Por eso **es obligatorio confirmar el correo**: si en Supabase se desactiva *Confirm email*, la app oculta las cuentas con contraseña.
+
+Una vez, en el panel de Supabase:
+
+1. **Authentication → Sign In / Providers → Email**: activado, con *Confirm email* activado (viene así por defecto).
+2. **Authentication → URL Configuration → Site URL**: la URL de la app (p. ej. `https://tuapp.streamlit.app`). Es a donde lleva el enlace del correo de confirmación.
+3. **Envío de correos (imprescindible para usuarios reales):** el servidor de correo que trae Supabase **solo envía a los miembros de tu equipo** y muy pocos por hora. Configura uno propio en **Project Settings → Authentication → SMTP Settings** (p. ej. [Resend](https://resend.com) o Brevo, ambos con plan gratis).
+4. **Authentication → Email Templates → Reset Password**: cambia el cuerpo para que incluya el código, p. ej. `Tu código para cambiar la contraseña es: {{ .Token }}` (la app pide ese código; no usa el enlace).
+
+La sesión se guarda en una cookie del navegador durante 30 días (solo el token de renovación de Supabase), para no pedir la contraseña cada vez. *Cerrar sesión* la borra y la cierra también en Supabase.
 
 ### Secciones (barra de abajo)
 
-- **Inicio**: una idea para hoy: «¿Te apetece cachopo? Te gustará Casa Pepe», con la ficha del sitio. Elige al azar un plato que las reseñas de tu lista elogian (al menos 2 menciones buenas en un mismo sitio abierto) y el sitio donde más lo elogian. *Otra idea* cambia de plato; *Más sitios con…* lo busca en Comer hoy.
+- **Inicio**: una idea para hoy: «¿Te apetece cachopo? Te gustará Casa Pepe», con la ficha del sitio. Elige al azar un plato que las reseñas de tu lista elogian (al menos 2 menciones buenas en un mismo sitio abierto) y el sitio donde más lo elogian. *Otra idea* cambia de plato; *Más sitios con…* lo busca en Comer hoy. Debajo, **Tus amigos han ido a**: los últimos sitios que tus amigos han marcado con *He ido*.
 - **Comer hoy**: el buscador de siempre (desde dónde, tiempo, cocina, presupuesto y plato).
 - **Mi lista**: todos los restaurantes de tu lista, con buscador por nombre, filtros (cocina, presupuesto, nota mínima, plato, ocultar cerrados) y orden.
-- **Perfil** (el icono es tu foto de Google): *Tus listas*, estadísticas de tu lista, **preferencias** (transporte, tiempo y presupuesto que vienen ya puestos en Comer hoy), *Datos personales* (el nombre con el que te saluda la app; el correo y la foto son los de Google) y *Cerrar sesión*.
+- **Perfil** (el icono es tu foto de Google): estadísticas de tu lista, **Amigos**, *Tus listas*, **preferencias** (transporte, tiempo y presupuesto que vienen ya puestos en Comer hoy), *Datos personales* (el nombre con el que te saluda la app) y *Cerrar sesión*.
+- **Amigos** (en el Perfil): eliges un **@usuario** (3-20 letras sin tildes, números, `_` o `.`) y buscas a otros por su @usuario o nombre. La amistad es con **solicitud**: el otro la acepta o la rechaza. Los correos no se enseñan nunca.
+- **He ido** (en la ficha de cualquier restaurante): marca que has ido, con nota opcional de 1 a 5 estrellas. Lo ven tus amigos en su Inicio.
 
 ### Día a día
   

@@ -157,6 +157,42 @@ def _filtro_in(valores):
     return "(" + ",".join('"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"' for v in valores) + ")"
 
 
+def _par(a, b):
+    """Filtro or/and de PostgREST para la amistad entre a y b, en cualquiera de los dos sentidos."""
+    return (f"(and(solicitante.eq.{_comillas(a)},destinatario.eq.{_comillas(b)}),"
+            f"and(solicitante.eq.{_comillas(b)},destinatario.eq.{_comillas(a)}))")
+
+
+def _comillas(valor):
+    return '"' + str(valor).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+ALIAS_VALIDO = re.compile(r"^[a-z0-9_.]{3,20}$")   # el mismo check que la tabla perfiles
+
+
+def validar_alias(alias):
+    """@usuario elegido por el usuario -> el que se guarda (sin @, en minúsculas). ValueError si no vale."""
+    alias = (alias or "").strip().lstrip("@").lower()
+    if not ALIAS_VALIDO.match(alias):
+        raise ValueError("El nombre de usuario debe tener de 3 a 20 caracteres: letras sin tildes, números, "
+                         "'_' o '.'.")
+    return alias
+
+
+def visitas_a_dataframe(visitas, nombres):
+    """Visitas de amigos (con su restaurante embebido) -> DataFrame como el maestro, más las columnas
+    "Amigo" (su nombre, de `nombres`: {usuario: nombre}), "Nota visita" y "Fecha visita"."""
+    filas = []
+    for v in visitas:
+        r = v.get("restaurantes")
+        if not r:
+            continue
+        filas.append({**(r.get("datos") or {}), "ID": r["id"], "Imagen archivo": r.get("imagen"),
+                      "Amigo": nombres.get(v["usuario"], "Un amigo"), "Nota visita": v.get("nota"),
+                      "Fecha visita": v["creado_en"]})
+    return pd.DataFrame(filas)
+
+
 def _lotes(elementos, tamano=FILAS_POR_PETICION):
     for i in range(0, len(elementos), tamano):
         yield elementos[i:i + tamano]
@@ -268,6 +304,93 @@ class Supabase:
         filas = self._rest("POST", "perfiles", params={"on_conflict": "usuario"}, json=fila,
                            prefer="resolution=merge-duplicates,return=representation")
         return filas[0]
+
+    # ---------------- amigos y "He ido" ----------------
+    # Los usuarios son correos: se usan en las consultas, pero a la app solo le llegan nombre y @alias.
+
+    def guardar_alias(self, usuario, nombre, alias):
+        """Guarda el @usuario (ya validado con validar_alias). ValueError si ya lo tiene otra persona."""
+        try:
+            self._rest("POST", "perfiles", params={"on_conflict": "usuario"},
+                       json={"usuario": usuario, "nombre": nombre, "alias": alias, "actualizado_en": _ahora()},
+                       prefer="resolution=merge-duplicates")
+        except ErrorSupabase as e:
+            if ": 409 " in str(e):   # unique (alias) de la tabla perfiles
+                raise ValueError(f"El nombre de usuario @{alias} ya lo tiene otra persona.") from e
+            raise
+
+    def buscar_usuarios(self, texto, excepto, limite=10):
+        """Usuarios con @alias cuyo alias o nombre contiene `texto`: [{usuario, nombre, alias}]."""
+        texto = re.sub(r"[^\w .]", "", (texto or "").lstrip("@")).strip()   # nada de comas, comillas o paréntesis
+        if len(texto) < 2:
+            return []
+        patron = _comillas(f"*{texto}*")
+        return self._rest("GET", "perfiles", params={
+            "or": f"(alias.ilike.{patron},nombre.ilike.{patron})", "alias": "not.is.null",
+            "usuario": f"neq.{excepto}", "select": "usuario,nombre,alias", "order": "alias.asc", "limit": limite})
+
+    def perfiles_de(self, usuarios):
+        """{usuario: {nombre, alias}} de esos usuarios."""
+        if not usuarios:
+            return {}
+        filas = self._rest("GET", "perfiles", params={"usuario": f"in.{_filtro_in(sorted(usuarios))}",
+                                                      "select": "usuario,nombre,alias"})
+        return {f["usuario"]: f for f in filas}
+
+    def amistades_de(self, usuario):
+        """Filas de amistades donde participa el usuario (enviadas, recibidas y aceptadas)."""
+        u = _comillas(usuario)
+        return self._rest("GET", "amistades", params={"or": f"(solicitante.eq.{u},destinatario.eq.{u})",
+                                                      "select": "*", "order": "creado_en.desc"})
+
+    def relaciones_de(self, usuario):
+        """Amigos y solicitudes del usuario: [{usuario, nombre, alias, estado, enviada}], donde `usuario`
+        es el otro (su correo, solo para las consultas) y `enviada` dice si la pidió el usuario."""
+        filas = self.amistades_de(usuario)
+        otros = [f["destinatario"] if f["solicitante"] == usuario else f["solicitante"] for f in filas]
+        perfiles = self.perfiles_de(set(otros))
+        return [{"usuario": otro, "nombre": perfiles.get(otro, {}).get("nombre"),
+                 "alias": perfiles.get(otro, {}).get("alias"), "estado": f["estado"],
+                 "enviada": f["solicitante"] == usuario} for otro, f in zip(otros, filas)]
+
+    def solicitar_amistad(self, de, a):
+        """Envía una solicitud de `de` a `a`. Si `a` ya se la había enviado a `de`, se aceptan las
+        dos. Devuelve el estado final: "pendiente" o "aceptada"."""
+        if de == a:
+            raise ValueError("No puedes añadirte a ti mismo.")
+        existentes = self._rest("GET", "amistades", params={"or": _par(de, a), "select": "*"})
+        for fila in existentes:
+            if fila["estado"] == "pendiente" and fila["solicitante"] == a:
+                self.responder_solicitud(de, a, aceptar=True)
+                return "aceptada"
+            return fila["estado"]
+        self._rest("POST", "amistades", json={"solicitante": de, "destinatario": a})
+        return "pendiente"
+
+    def responder_solicitud(self, usuario, de, aceptar):
+        """El usuario acepta o rechaza (borra) la solicitud que le envió `de`."""
+        filtro = {"solicitante": f"eq.{de}", "destinatario": f"eq.{usuario}", "estado": "eq.pendiente"}
+        if aceptar:
+            self._rest("PATCH", "amistades", params=filtro, json={"estado": "aceptada"})
+        else:
+            self._rest("DELETE", "amistades", params=filtro)
+
+    def quitar_amistad(self, usuario, otro):
+        """Deja de ser amigo (o cancela una solicitud enviada), en cualquiera de los dos sentidos."""
+        self._rest("DELETE", "amistades", params={"or": _par(usuario, otro)})
+
+    def registrar_visita(self, usuario, restaurante_id, nota=None):
+        if nota is not None and not (isinstance(nota, int) and 1 <= nota <= 5):
+            raise ValueError("La nota tiene que ir de 1 a 5.")
+        self._rest("POST", "visitas", json={"usuario": usuario, "restaurante_id": int(restaurante_id), "nota": nota})
+
+    def visitas_de(self, usuarios, limite=10):
+        """Últimas visitas de esos usuarios, con su restaurante del catálogo embebido."""
+        if not usuarios:
+            return []
+        return self._rest("GET", "visitas", params={
+            "usuario": f"in.{_filtro_in(sorted(usuarios))}", "order": "creado_en.desc", "limit": limite,
+            "select": "usuario,nota,creado_en,restaurantes(id,datos,imagen)"})
 
     # ---------------- catálogo compartido ----------------
 
