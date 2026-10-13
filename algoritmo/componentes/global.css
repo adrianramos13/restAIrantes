@@ -1,3 +1,6 @@
+/* Solo desplazamiento vertical: nada se sale por los lados (p. ej. la cinta de fotos de la portada).
+   clip y no hidden: hidden convertiría estos contenedores en zona de scroll y rompería el botón fijo (sticky). */
+html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-testid="stMain"] { overflow-x: clip; }
 /* abajo, hueco para la barra de secciones fija (componentes/barra.*: ~64 px + la zona segura del móvil) */
 [data-testid="stMainBlockContainer"] { padding-top: 3rem; padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
 .st-key-boton_buscar {

@@ -1,0 +1,6 @@
+/* Inicio: la idea del día, compacta para que quepa entera en el móvil sin deslizar. */
+.sugerida img {
+  display: block; width: 100%; height: 150px; object-fit: cover; border-radius: 12px; margin-bottom: 10px;
+}
+.sugerida p { margin: 0 0 4px; line-height: 1.4; }
+.sugerida .datos { color: var(--st-text-color); opacity: 0.8; font-size: 0.9rem; }

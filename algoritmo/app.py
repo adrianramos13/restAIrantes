@@ -681,6 +681,9 @@ def buscar_sitios_con(plato):
     ir_a("comer")
 
 
+_CSS_INICIO = "<style>\n" + recurso("inicio.css") + "</style>\n"
+
+
 def seccion_inicio(maestro, df_platos, tras_intro, momento, nombre=None):
     saludo = f"Hola, {html.escape(nombre)}. " if nombre else ""
     mostrar_portada(len(maestro), tras_intro=tras_intro, maestro=maestro, momento=momento,
@@ -701,10 +704,24 @@ def seccion_inicio(maestro, df_platos, tras_intro, momento, nombre=None):
 
     plato, id_restaurante, menciones = sugerencia
     fila = maestro[maestro["ID"] == id_restaurante].iloc[0]
-    with st.container(border=True):
+    with st.container(border=True):   # compacta: cabe entera en la pantalla del móvil sin deslizar
         st.subheader(f"¿Te apetece {plato}?")
-        st.markdown(f"Te gustará **{fila['Nombre']}**: {menciones} reseñas hablan bien de su {plato}.")
-        contenido_ficha(fila, df_platos, plato=plato)
+        foto = foto_restaurante(fila, ancho=600)
+        datos = [str(etiqueta_cocina(fila)), f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)}"]
+        if estado_cerrado(fila):
+            datos.append(estado_cerrado(fila))
+        st.html(_CSS_INICIO + '<div class="sugerida">'
+                + (f'<img src="{html.escape(foto)}" alt="" referrerpolicy="no-referrer">' if foto else "")
+                + f'<p>Te gustará <b>{html.escape(str(fila["Nombre"]))}</b>: {menciones} reseñas hablan bien de '
+                  f'su {html.escape(plato)}.</p><p class="datos">{html.escape(" · ".join(datos))}</p></div>')
+        with st.container(horizontal=True):
+            st.link_button("Cómo llegar", f"https://www.google.com/maps/dir/?api=1&destination="
+                           f"{fila['Latitud']},{fila['Longitud']}", type="primary", icon=":material/directions:",
+                           width="stretch")
+            st.button("Ver ficha", on_click=lambda: st.session_state.update(ficha_abrir=id_restaurante),
+                      icon=":material/info:", width="stretch", key="ver_ficha_sugerida")
+    if st.session_state.pop("ficha_abrir", None) == id_restaurante:
+        mostrar_ficha(fila, df_platos, plato)
     with st.container(horizontal=True, wrap=True):
         st.button("Otra idea", on_click=otra_sugerencia, icon=":material/casino:", key="otra_idea")
         st.button(f"Más sitios con {plato}", on_click=buscar_sitios_con, args=(plato,),
@@ -896,9 +913,9 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
             st.image(google["foto"], width=72)
         st.markdown(f"### {nombre}\n{usuario}")
     with st.container(border=True):
-        bloque_tus_listas(usuario, lista)
-    with st.container(border=True):
         bloque_estadisticas(maestro)
+    with st.container(border=True):
+        bloque_tus_listas(usuario, lista)
     with st.container(border=True):
         bloque_preferencias(usuario, nombre, preferencias)
     with st.container(border=True):
