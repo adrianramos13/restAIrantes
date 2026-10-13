@@ -319,15 +319,12 @@ class Supabase:
                 raise ValueError(f"El nombre de usuario @{alias} ya lo tiene otra persona.") from e
             raise
 
-    def buscar_usuarios(self, texto, excepto, limite=10):
-        """Usuarios con @alias cuyo alias o nombre contiene `texto`: [{usuario, nombre, alias}]."""
-        texto = re.sub(r"[^\w .]", "", (texto or "").lstrip("@")).strip()   # nada de comas, comillas o paréntesis
-        if len(texto) < 2:
-            return []
-        patron = _comillas(f"*{texto}*")
+    def directorio(self, excepto, limite=1000):
+        """Toda la gente con @alias menos `excepto`: [{usuario, nombre, alias}], para el buscador de amigos
+        (filtra el navegador mientras se escribe). ponytail: con más de `limite` usuarios, buscar en el servidor."""
         return self._rest("GET", "perfiles", params={
-            "or": f"(alias.ilike.{patron},nombre.ilike.{patron})", "alias": "not.is.null",
-            "usuario": f"neq.{excepto}", "select": "usuario,nombre,alias", "order": "alias.asc", "limit": limite})
+            "alias": "not.is.null", "usuario": f"neq.{excepto}", "select": "usuario,nombre,alias",
+            "order": "alias.asc", "limit": limite})
 
     def perfiles_de(self, usuarios):
         """{usuario: {nombre, alias}} de esos usuarios."""

@@ -424,14 +424,13 @@ def test_validar_alias_no_valido(entrada):
         datos.validar_alias(entrada)
 
 
-def test_buscar_usuarios_limpia_el_texto(monkeypatch):
+def test_directorio_solo_gente_con_alias_y_sin_uno_mismo(monkeypatch):
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
-    assert bd_.buscar_usuarios("a", "yo@x.com") == []                 # muy corto: ni pregunta
-    bd_.buscar_usuarios('@an"a),(alias.eq.*', "yo@x.com")
-    params = llamadas[-1][2]
-    assert params["or"] == '(alias.ilike."*anaalias.eq.*",nombre.ilike."*anaalias.eq.*")'
-    assert params["usuario"] == "neq.yo@x.com" and params["alias"] == "not.is.null"
-    assert "usuario" in params["select"] and len(llamadas) == 1
+    bd_.directorio(excepto="yo@x.com")
+    metodo, tabla, params, _ = llamadas[-1]
+    assert (metodo, tabla) == ("GET", "perfiles")
+    assert params["alias"] == "not.is.null" and params["usuario"] == "neq.yo@x.com"
+    assert params["select"] == "usuario,nombre,alias"
 
 
 def test_solicitar_amistad(monkeypatch):
@@ -583,15 +582,19 @@ def test_perfil_solicitudes_y_busqueda(multiusuario, monkeypatch):
     respuestas, solicitudes = [], []
     monkeypatch.setattr(datos.Supabase, "responder_solicitud",
                         lambda self, u, de, aceptar: respuestas.append((u, de, aceptar)))
-    monkeypatch.setattr(datos.Supabase, "buscar_usuarios", lambda self, t, excepto: [
-        {"usuario": "eva@x.com", "nombre": "[Eva](javascript:alert(1))", "alias": "eva"}])
+    monkeypatch.setattr(datos.Supabase, "directorio", lambda self, excepto: [
+        {"usuario": "eva@x.com", "nombre": "[Eva](javascript:alert(1))", "alias": "eva"},
+        {"usuario": "pepe@x.com", "nombre": "Pepe", "alias": "pepe_99"}])
     monkeypatch.setattr(datos.Supabase, "solicitar_amistad", lambda self, de, a: solicitudes.append((de, a)))
     at = correr(seccion="perfil")
     assert any("Luis" in m.value and "quiere ser tu amigo" in m.value for m in at.markdown)
     at.button(key="aceptar_luis").click().run()
     assert respuestas == [("ana@ejemplo.com", "luis@x.com", True)]
 
-    at.text_input(key="buscar_amigos").input("eva").run()
+    buscador = at.selectbox(key="buscar_amigos")
+    assert buscador.options == ["[Eva](javascript:alert(1)) · @eva", "Pepe · @pepe_99"]   # sugerencias: nombre y @
+    assert not any("@x.com" in o for o in buscador.options)            # sin correos
+    buscador.select("eva").run()
     textos = " ".join(m.value for m in at.markdown)
     assert "eva@x.com" not in textos                                   # el correo no se enseña nunca
     assert r"\[Eva\]\(javascript" in textos                          # el nombre no puede meter un enlace

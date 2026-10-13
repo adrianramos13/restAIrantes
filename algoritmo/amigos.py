@@ -36,6 +36,11 @@ def cargar_visitas_amigos(_bd, usuario, limite=10):
     return bd.visitas_a_dataframe(_bd.visitas_de(list(nombres), limite), nombres)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def cargar_directorio(_bd, usuario):
+    return _bd.directorio(excepto=usuario)
+
+
 def limpiar_cache():
     cargar_relaciones.clear()
     cargar_visitas_amigos.clear()
@@ -107,23 +112,27 @@ def _elegir_alias(cliente, usuario, nombre, al_guardar_alias):
 
 
 def _buscar_amigos(cliente, usuario, conocidos):
-    texto = st.text_input("Buscar amigos", placeholder="Nombre o @usuario", key="buscar_amigos",
-                          icon=":material/person_search:")
-    if len(texto.strip().lstrip("@")) < 2:
-        return
+    """Desplegable con buscador: al escribir, va sugiriendo gente de la base de datos por nombre o @usuario
+    (lo filtra el navegador, sin esperar al servidor). Las opciones son texto plano: ni correos ni formato."""
     try:
-        encontrados = cliente.buscar_usuarios(texto, excepto=usuario)
+        personas = {p["alias"]: p for p in cargar_directorio(cliente, usuario)}
     except bd.ErrorSupabase:
         st.error("No se puede buscar ahora mismo. Inténtalo en un momento.")
         return
-    if not encontrados:
-        st.caption("No hay nadie con ese nombre o @usuario.")
-    for p in encontrados:
-        relacion = conocidos.get(p["usuario"])
-        with st.container(horizontal=True, vertical_alignment="center"):
-            st.markdown(quien(p))
-            if relacion is None:
-                st.button("Añadir", icon=":material/person_add:", key=f"anadir_{p['alias']}",
-                          on_click=_accion, args=(cliente.solicitar_amistad, usuario, p["usuario"]))
-            else:
-                st.caption("Amigos ✓" if relacion["estado"] == "aceptada" else "Pendiente")
+    if not personas:
+        st.caption("Todavía no hay nadie más con nombre de usuario para añadir.")
+        return
+    alias = st.selectbox("Buscar amigos", list(personas), index=None, key="buscar_amigos",
+                         format_func=lambda a: f"{personas[a]['nombre'] or a} · @{a}",
+                         placeholder="Escribe un nombre o @usuario")
+    if alias is None:
+        return
+    p = personas[alias]
+    relacion = conocidos.get(p["usuario"])
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.markdown(quien(p))
+        if relacion is None:
+            st.button("Añadir", icon=":material/person_add:", key=f"anadir_{alias}",
+                      on_click=_accion, args=(cliente.solicitar_amistad, usuario, p["usuario"]))
+        else:
+            st.caption("Amigos ✓" if relacion["estado"] == "aceptada" else "Solicitud pendiente")
