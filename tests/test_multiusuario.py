@@ -659,3 +659,13 @@ def test_ficha_en_verde_si_ya_has_ido(multiusuario):
     assert any(m.value.startswith("**✓ Has ido**") for m in at.markdown)
     assert at.text_area(key=f"comentario_visita_{id_restaurante}").value == "Las bravas"
     assert at.button(key=f"he_ido_{id_restaurante}").label == "Guardar"
+
+
+def test_perfil_ensena_pocas_visitas_y_ver_lista_completa(multiusuario):
+    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com",
+                                "restaurantes": {**VISITA_LUIS["restaurantes"], "id": i}} for i in range(1, 6)]
+    at = correr(seccion="perfil")
+    boton = at.button(key="ver_mis_visitas")
+    assert boton.label == "Ver lista completa (5)"
+    boton.click().run()
+    assert not at.exception and at.button(key="ver_mis_visitas").label == "Ver menos"

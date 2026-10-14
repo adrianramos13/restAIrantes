@@ -1023,6 +1023,9 @@ def bloque_preferencias(usuario, nombre, preferencias):
         st.toast("Preferencias guardadas", icon=":material/check:")
 
 
+MIS_VISITAS_EN_PERFIL = 3   # las más recientes; el resto con "Ver lista completa"
+
+
 def bloque_mis_visitas():
     """Perfil: los sitios que has marcado con "He ido", del más reciente al más antiguo."""
     st.subheader("Los restaurantes a los que has ido")
@@ -1037,9 +1040,14 @@ def bloque_mis_visitas():
         return
     ahora = datetime.now(timezone.utc)
     st.caption(f"{len(df)} restaurante{'s' if len(df) != 1 else ''}")
-    mostrar_lista(df, key="lista_mis_visitas", extra=lambda f: {
+    completa = st.session_state.get("mis_visitas_completa", False)
+    mostrar_lista(df if completa else df.head(MIS_VISITAS_EN_PERFIL), key="lista_mis_visitas", extra=lambda f: {
         "cuando": "Fuiste " + hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
         "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
+    if len(df) > MIS_VISITAS_EN_PERFIL:
+        st.button("Ver menos" if completa else f"Ver lista completa ({len(df)})", width="stretch",
+                  key="ver_mis_visitas", icon=":material/expand_less:" if completa else ":material/expand_more:",
+                  on_click=lambda: st.session_state.update(mis_visitas_completa=not completa))
     coincide = df[df["ID"] == abrir]
     if abrir is not None and not coincide.empty:
         mostrar_ficha(coincide.iloc[0], pd.DataFrame(columns=bd.COLUMNAS_PLATOS))
