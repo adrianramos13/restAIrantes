@@ -326,6 +326,8 @@ flowchart LR
 > **Y para las preferencias del Perfil**, ejecuta `supabase/003_preferencias.sql` (añade la columna `preferencias` a `perfiles`). Sin ella todo funciona, pero *Guardar preferencias* da error.
 >
 > **Y para amigos y «He ido»**, ejecuta `supabase/004_amigos.sql` (columna `alias` en `perfiles` y tablas `amistades` y `visitas`).
+>
+> **Y para las valoraciones** (medias estrellas y comentario, una por restaurante), ejecuta después `supabase/005_valoraciones.sql`.
 
 ### Cuentas con correo y contraseña
 
@@ -347,7 +349,7 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
 - **Mi lista**: todos los restaurantes de tu lista, con buscador por nombre, filtros (cocina, presupuesto, nota mínima, plato, ocultar cerrados) y orden.
 - **Perfil** (el icono es tu foto de Google): estadísticas de tu lista, **Amigos**, *Tus listas*, **preferencias** (transporte, tiempo y presupuesto que vienen ya puestos en Comer hoy), *Datos personales* (el nombre con el que te saluda la app) y *Cerrar sesión*.
 - **Amigos** (en el Perfil): eliges un **@usuario** (3-20 letras sin tildes, números, `_` o `.`) y buscas a otros por su @usuario o nombre. La amistad es con **solicitud**: el otro la acepta o la rechaza. Los correos no se enseñan nunca.
-- **He ido** (en la ficha de cualquier restaurante): marca que has ido, con nota opcional de 1 a 5 estrellas. Lo ven tus amigos en su Inicio.
+- **He ido** (arriba en la ficha de cualquier restaurante): nota opcional de 0,5 a 5 estrellas (medias estrellas) y «lo que más te gustó». Una valoración por restaurante: se puede cambiar o quitar, y el recuadro sale en verde si ya has ido. Lo ven tus amigos en su Inicio; en las listas, los sitios a los que has ido llevan «✓ Has ido», y en tu Perfil está **Los restaurantes a los que has ido**.
 
 ### Día a día
   

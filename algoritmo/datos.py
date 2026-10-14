@@ -179,6 +179,25 @@ def validar_alias(alias):
     return alias
 
 
+LARGO_MAX_COMENTARIO = 280   # el mismo límite que la tabla visitas
+
+
+def validar_nota(nota):
+    """Nota de "He ido": None, o de 0,5 a 5 en pasos de media estrella. ValueError si no vale."""
+    if nota is None:
+        return None
+    if isinstance(nota, bool) or not isinstance(nota, (int, float)) or not 0.5 <= nota <= 5 or (nota * 2) % 1:
+        raise ValueError("La nota tiene que ir de 0,5 a 5 estrellas, en medias estrellas.")
+    return float(nota)
+
+
+def validar_comentario(comentario):
+    comentario = re.sub(r"\s+", " ", comentario or "").strip()
+    if len(comentario) > LARGO_MAX_COMENTARIO:
+        raise ValueError(f"El comentario puede tener como mucho {LARGO_MAX_COMENTARIO} caracteres.")
+    return comentario or None
+
+
 def visitas_a_dataframe(visitas, nombres):
     """Visitas de amigos (con su restaurante embebido) -> DataFrame como el maestro, más las columnas
     "Amigo" (su nombre, de `nombres`: {usuario: nombre}), "Nota visita" y "Fecha visita"."""
@@ -189,7 +208,7 @@ def visitas_a_dataframe(visitas, nombres):
             continue
         filas.append({**(r.get("datos") or {}), "ID": r["id"], "Imagen archivo": r.get("imagen"),
                       "Amigo": nombres.get(v["usuario"], "Un amigo"), "Nota visita": v.get("nota"),
-                      "Fecha visita": v["creado_en"]})
+                      "Comentario visita": v.get("comentario"), "Fecha visita": v["creado_en"]})
     return pd.DataFrame(filas)
 
 
@@ -376,10 +395,17 @@ class Supabase:
         """Deja de ser amigo (o cancela una solicitud enviada), en cualquiera de los dos sentidos."""
         self._rest("DELETE", "amistades", params={"or": _par(usuario, otro)})
 
-    def registrar_visita(self, usuario, restaurante_id, nota=None):
-        if nota is not None and not (isinstance(nota, int) and 1 <= nota <= 5):
-            raise ValueError("La nota tiene que ir de 1 a 5.")
-        self._rest("POST", "visitas", json={"usuario": usuario, "restaurante_id": int(restaurante_id), "nota": nota})
+    def registrar_visita(self, usuario, restaurante_id, nota=None, comentario=None):
+        """"He ido": una valoración por persona y restaurante; si ya existía, se actualiza (y su fecha, para
+        que vuelva a salir arriba en el Inicio de los amigos)."""
+        self._rest("POST", "visitas", params={"on_conflict": "usuario,restaurante_id"},
+                   prefer="resolution=merge-duplicates",
+                   json={"usuario": usuario, "restaurante_id": int(restaurante_id), "nota": validar_nota(nota),
+                         "comentario": validar_comentario(comentario), "creado_en": _ahora()})
+
+    def quitar_visita(self, usuario, restaurante_id):
+        self._rest("DELETE", "visitas", params={"usuario": f"eq.{usuario}",
+                                                "restaurante_id": f"eq.{int(restaurante_id)}"})
 
     def visitas_de(self, usuarios, limite=10):
         """Últimas visitas de esos usuarios, con su restaurante del catálogo embebido."""
@@ -387,7 +413,7 @@ class Supabase:
             return []
         return self._rest("GET", "visitas", params={
             "usuario": f"in.{_filtro_in(sorted(usuarios))}", "order": "creado_en.desc", "limit": limite,
-            "select": "usuario,nota,creado_en,restaurantes(id,datos,imagen)"})
+            "select": "usuario,nota,comentario,creado_en,restaurantes(id,datos,imagen)"})
 
     # ---------------- catálogo compartido ----------------
 

@@ -146,3 +146,10 @@ def test_cambiar_de_seccion_conserva_el_formulario():
     at.run()
     assert at.slider(key="tiempo").value == 45
     assert not at.warning, [w.value for w in at.warning]   # ni el aviso de "default + Session State"
+
+
+def test_los_css_no_llevan_menor_que():
+    """st.html limpia el HTML con DOMPurify, que tira un <style> ENTERO si su texto lleva algo que parezca
+    una etiqueta (p. ej. un comentario con "<id>"): todo ese CSS dejaría de aplicarse sin dar ningún error."""
+    for css in (RAIZ / "algoritmo" / "componentes").glob("*.css"):
+        assert "<" not in css.read_text(encoding="utf-8"), css.name
