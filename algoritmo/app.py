@@ -42,6 +42,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from geopy.exc import GeocoderServiceError
+from streamlit.errors import StreamlitAPIException
 
 from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
                     ORDEN_RESENAS, VOTOS_MIN_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
@@ -277,6 +278,8 @@ def icono_transporte(modo_transporte):
 def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
     """Foto, datos, lo que destacan y enlaces de un restaurante. `modo_transporte` solo viene de una
     búsqueda (trae el tiempo de viaje); `plato`, de una búsqueda con plato o de la idea de Inicio."""
+    if BD is not None and usuario:
+        bloque_valoracion(fila)
     imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
     foto = str(imagen_local) if BD is None and imagen_local.is_file() else foto_restaurante(fila, ancho=800)
     if foto:
@@ -317,26 +320,80 @@ def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
         st.link_button("TikTok", buscar(f'site:tiktok.com "{nombre}" Madrid'), width="stretch")
     st.link_button("Buscar en Google", buscar(f"{nombre} Madrid"), type="tertiary",
                    icon=":material/search:", width="stretch")
-    if BD is not None and usuario:
-        boton_he_ido(fila)
 
 
-def boton_he_ido(fila):
-    """"He ido" (con nota opcional): lo ven tus amigos en su Inicio. Va en la ficha, que es una ventana
-    (st.dialog): pulsar aquí solo recarga la ventana, que sigue abierta."""
-    st.divider()
+# ----------------------- "HE IDO": NOTA EN MEDIAS ESTRELLAS Y COMENTARIO ----------------------- #
+
+_ESTRELLAS = st.components.v2.component(
+    "estrellas_nota", html=recurso("estrellas.html"), css=recurso("estrellas.css"), js=recurso("estrellas.js"),
+)
+
+
+def estrellas(key, guardada=None):
+    """Nota de 0,5 a 5 (medias estrellas). La que se acaba de tocar manda sobre la guardada."""
+    try:
+        tocada = st.session_state[key].nota
+    except (KeyError, AttributeError):
+        tocada = None
+    actual = tocada if tocada is not None else guardada
+    _ESTRELLAS(key=key, data={"valor": actual}, on_nota_change=lambda: None)
+    return actual
+
+
+def mis_visitas():
+    """{id del restaurante: tu valoración} ({} en modo local o si no se puede leer)."""
+    if BD is None or not usuario:
+        return {}
+    try:
+        df = amigos.cargar_mis_visitas(BD, usuario)
+    except bd.ErrorSupabase:
+        return {}
+    return {int(f["ID"]): f for _, f in df.iterrows()}
+
+
+def _o_none(valor):
+    return None if valor is None or (not isinstance(valor, str) and pd.isna(valor)) else valor
+
+
+def bloque_valoracion(fila):
+    """Arriba de la ficha: tu nota, lo que más te gustó y "He ido" (lo ven tus amigos en su Inicio). En
+    verde si ya has ido. La ficha es una ventana (st.dialog): tocar aquí solo recarga la ventana."""
     id_restaurante = int(fila["ID"])
-    nota = st.feedback("stars", key=f"nota_visita_{id_restaurante}")
-    if st.button("He ido", icon=":material/check_circle:", width="stretch", key=f"he_ido_{id_restaurante}"):
-        try:
-            BD.registrar_visita(usuario, id_restaurante, None if nota is None else nota + 1)
-        except bd.ErrorSupabase:
-            st.error("No se ha podido guardar ahora mismo (¿falta ejecutar supabase/004_amigos.sql?).")
-            return
-        amigos.limpiar_cache()
-        st.success("¡Apuntado! Tus amigos lo verán en su Inicio.")
-    else:
-        st.caption("¿Has ido? Márcalo (y ponle nota si quieres): tus amigos lo verán en su Inicio.")
+    visita = mis_visitas().get(id_restaurante)
+    clave = f"{'visitado' if visita is not None else 'valoracion'}_{id_restaurante}"
+    with st.container(border=True, key=clave):
+        if visita is not None:
+            st.markdown(f"**✓ Has ido** · {hace_cuanto(visita['Fecha visita'], datetime.now(timezone.utc))}")
+        else:
+            st.markdown("**¿Has ido?** Puntúalo: tus amigos lo verán en su Inicio.")
+        nota = estrellas(f"nota_visita_{id_restaurante}",
+                         _o_none(visita["Nota visita"]) if visita is not None else None)
+        comentario = st.text_area(
+            "Lo que más te gustó", value=(_o_none(visita["Comentario visita"]) or "") if visita is not None else "",
+            max_chars=bd.LARGO_MAX_COMENTARIO, key=f"comentario_visita_{id_restaurante}", height=80,
+            placeholder="ej. Las croquetas y el trato")
+        with st.container(horizontal=True):
+            guardar = st.button("Guardar" if visita is not None else "He ido", type="primary",
+                                icon=":material/check_circle:", width="stretch", key=f"he_ido_{id_restaurante}")
+            quitar = visita is not None and st.button("Quitar", type="tertiary", key=f"quitar_visita_{id_restaurante}")
+    if not (guardar or quitar):
+        return
+    try:
+        if quitar:
+            BD.quitar_visita(usuario, id_restaurante)
+        else:
+            BD.registrar_visita(usuario, id_restaurante, nota, comentario)
+    except ValueError as e:
+        st.error(str(e))
+        return
+    except bd.ErrorSupabase:
+        st.error("No se ha podido guardar ahora mismo (¿falta ejecutar supabase/005_valoraciones.sql?).")
+        return
+    amigos.limpiar_cache()
+    try:
+        st.rerun(scope="fragment")   # la ventana se vuelve a dibujar ya en verde (o sin verde, si lo has quitado)
+    except StreamlitAPIException:    # no venía de la ventana (p. ej. en AppTest, que recarga todo): recarga entera
+        st.rerun()
 
 
 def mostrar_ficha(fila, df_platos, plato=None, modo_transporte=None):
@@ -373,9 +430,11 @@ def _al_abrir_desde_lista(key):
         st.session_state["ficha_abrir"] = int(valor)
 
 
-def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes", detalle=None):
+def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes", extra=None):
     """Tarjetas de `top`. Con `modo_transporte` (resultados de una búsqueda) enseñan el tiempo de viaje;
-    `detalle(fila)` cambia la línea de la cocina por otro texto (p. ej. qué amigo fue y cuándo)."""
+    `extra(fila)` añade datos a la tarjeta (amigo, cuando, nota, cita: ver componentes/lista.js). Las de
+    sitios a los que ya has ido llevan "✓ Has ido"."""
+    visitados = set(mis_visitas())
     items = []
     for n, (_, fila) in enumerate(top.iterrows(), start=1):
         meta = f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)}"
@@ -383,9 +442,9 @@ def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_re
             meta += f" · {icono_transporte(modo_transporte)} {fila['Tiempo desplazamiento (min)']:.0f}'"
         items.append({
             "id": int(fila["ID"]), "n": n, "nombre": str(fila["Nombre"]),
-            "cocina": detalle(fila) if detalle else str(etiqueta_cocina(fila)), "foto": foto_restaurante(fila),
-            "meta": meta,
-            "cerrado": estado_cerrado(fila),
+            "cocina": str(etiqueta_cocina(fila)), "foto": foto_restaurante(fila), "meta": meta,
+            "cerrado": estado_cerrado(fila), "visitado": int(fila["ID"]) in visitados,
+            **(extra(fila) if extra else {}),
         })
     _LISTA_RESTAURANTES(
         data={"items": items, "seleccionado": seleccionado_id},
@@ -780,11 +839,9 @@ def visitas_de_amigos(abrir):
         st.caption("Tus amigos todavía no han marcado ningún sitio con «He ido».")
         return
     ahora = datetime.now(timezone.utc)
-
-    def detalle(fila):
-        estrellas = f" · {'★' * int(fila['Nota visita'])}" if pd.notna(fila["Nota visita"]) else ""
-        return f"{fila['Amigo']} · {hace_cuanto(fila['Fecha visita'], ahora)}{estrellas}"
-    mostrar_lista(df, key="lista_amigos", detalle=detalle)
+    mostrar_lista(df, key="lista_amigos", extra=lambda f: {
+        "amigo": str(f["Amigo"]), "cuando": hace_cuanto(f["Fecha visita"], ahora),
+        "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
     # Si ese sitio es también la idea del día, ya se ha abierto su ficha arriba.
     coincide = df[df["ID"] == abrir]
     if abrir is not None and not coincide.empty and abrir != (st.session_state.get("sugerencia") or (0, None))[1]:
@@ -966,6 +1023,28 @@ def bloque_preferencias(usuario, nombre, preferencias):
         st.toast("Preferencias guardadas", icon=":material/check:")
 
 
+def bloque_mis_visitas():
+    """Perfil: los sitios que has marcado con "He ido", del más reciente al más antiguo."""
+    st.subheader("Los restaurantes a los que has ido")
+    try:
+        df = amigos.cargar_mis_visitas(BD, usuario)
+    except bd.ErrorSupabase:
+        st.caption("No se pueden ver ahora mismo.")
+        return
+    abrir = st.session_state.pop("ficha_abrir", None)
+    if df.empty:
+        st.caption("Cuando marques «He ido» en la ficha de un restaurante, aparecerá aquí.")
+        return
+    ahora = datetime.now(timezone.utc)
+    st.caption(f"{len(df)} restaurante{'s' if len(df) != 1 else ''}")
+    mostrar_lista(df, key="lista_mis_visitas", extra=lambda f: {
+        "cuando": "Fuiste " + hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
+        "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
+    coincide = df[df["ID"] == abrir]
+    if abrir is not None and not coincide.empty:
+        mostrar_ficha(coincide.iloc[0], pd.DataFrame(columns=bd.COLUMNAS_PLATOS))
+
+
 def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, preferencias=None, perfil=None):
     if not CONFIG_MULTIUSUARIO:   # modo local: no hay cuenta, solo las estadísticas de la lista
         st.header("Perfil")
@@ -974,9 +1053,12 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
     with st.container(horizontal=True, vertical_alignment="center"):
         if google.get("foto"):
             st.image(google["foto"], width=72)
-        st.markdown(f"### {nombre}\n{usuario}")
+        alias = (perfil or {}).get("alias")
+        st.markdown(f"### {nombre}\n" + (f"**@{alias}**  \n" if alias else "") + usuario)
     with st.container(border=True):
         bloque_estadisticas(maestro)
+    with st.container(border=True):
+        bloque_mis_visitas()
     with st.container(border=True):
         amigos.bloque_amigos(BD, usuario, nombre, perfil, al_guardar_alias=cargar_perfil.clear)
     with st.container(border=True):

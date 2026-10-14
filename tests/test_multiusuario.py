@@ -214,8 +214,8 @@ def multiusuario(monkeypatch):
     estado.update(relaciones=[], visitas=[], visitas_guardadas=[], confirmacion=True)
     monkeypatch.setattr(datos.Supabase, "relaciones_de", lambda self, u: estado["relaciones"])
     monkeypatch.setattr(datos.Supabase, "visitas_de", lambda self, usuarios, limite=10: estado["visitas"])
-    monkeypatch.setattr(datos.Supabase, "registrar_visita",
-                        lambda self, u, i, nota=None: estado["visitas_guardadas"].append((u, i, nota)))
+    monkeypatch.setattr(datos.Supabase, "registrar_visita", lambda self, u, i, nota=None, comentario=None:
+                        estado["visitas_guardadas"].append((u, i, nota, comentario)))
     monkeypatch.setattr(cuentas.Cuentas, "confirmacion_obligatoria", lambda self: estado["confirmacion"])
     st.cache_data.clear()
     yield estado
@@ -458,12 +458,28 @@ def test_alias_repetido_es_value_error(monkeypatch):
         datos.Supabase("https://x.supabase.co", "k").guardar_alias("ana@x.com", "Ana", "ana_g")
 
 
-def test_registrar_visita_valida_la_nota(monkeypatch):
+def test_registrar_visita_actualiza_la_que_hubiera(monkeypatch):
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
-    bd_.registrar_visita("ana@x.com", np.int64(7), 4)
-    assert llamadas[-1][3] == {"usuario": "ana@x.com", "restaurante_id": 7, "nota": 4}
+    bd_.registrar_visita("ana@x.com", np.int64(7), 4.5, "  Las   croquetas ")
+    metodo, tabla, params, cuerpo = llamadas[-1]
+    assert (metodo, tabla, params) == ("POST", "visitas", {"on_conflict": "usuario,restaurante_id"})
+    assert {k: cuerpo[k] for k in ("usuario", "restaurante_id", "nota", "comentario")} == {
+        "usuario": "ana@x.com", "restaurante_id": 7, "nota": 4.5, "comentario": "Las croquetas"}
+    bd_.registrar_visita("ana@x.com", 7)
+    assert llamadas[-1][3]["nota"] is None and llamadas[-1][3]["comentario"] is None
+    bd_.quitar_visita("ana@x.com", 7)
+    assert llamadas[-1][:3] == ("DELETE", "visitas", {"usuario": "eq.ana@x.com", "restaurante_id": "eq.7"})
+
+
+@pytest.mark.parametrize("nota", [0, 0.3, 4.25, 5.5, 6, True, "4"])
+def test_nota_no_valida(nota):
     with pytest.raises(ValueError):
-        bd_.registrar_visita("ana@x.com", 7, 6)
+        datos.validar_nota(nota)
+
+
+def test_comentario_demasiado_largo():
+    with pytest.raises(ValueError):
+        datos.validar_comentario("x" * 281)
 
 
 def test_visitas_a_dataframe():
@@ -473,7 +489,8 @@ def test_visitas_a_dataframe():
                 "restaurantes": None}]   # restaurante borrado del catálogo: se salta
     df = datos.visitas_a_dataframe(visitas, {"luis@x.com": "Luis"})
     assert df.to_dict("records") == [{"Nombre": "Casa Pepe", "ID": 7, "Imagen archivo": "casa-pepe.jpg",
-                                      "Amigo": "Luis", "Nota visita": 5, "Fecha visita": "2026-10-12T20:00:00+00:00"}]
+                                      "Amigo": "Luis", "Nota visita": 5, "Comentario visita": None,
+                                      "Fecha visita": "2026-10-12T20:00:00+00:00"}]
 
 
 # ---------------------------------------------------------------- cuentas con contraseña en la app
@@ -555,9 +572,7 @@ def test_inicio_sin_amigos_invita_a_buscarlos(multiusuario):
 def test_inicio_ensena_las_visitas_de_los_amigos(multiusuario):
     multiusuario["relaciones"] = [{"usuario": "luis@x.com", "nombre": "Luis", "alias": "luis",
                                    "estado": "aceptada", "enviada": False}]
-    multiusuario["visitas"] = [{"usuario": "luis@x.com", "nota": 4, "creado_en": "2026-10-12T20:00:00+00:00",
-                                "restaurantes": {"id": 7, "datos": {"Nombre": "Casa Pepe", "Puntuación": 4.5},
-                                                 "imagen": None}}]
+    multiusuario["visitas"] = [VISITA_LUIS]
     at = correr(seccion="inicio")
     assert not at.exception, [e.value for e in at.exception]
     assert not any("todavía no han marcado" in c.value or "Añade amigos" in c.value for c in at.caption)
@@ -609,6 +624,38 @@ def test_he_ido_desde_la_ficha(multiusuario):
     # En Streamlit real, el botón de la ventana solo recarga la ventana; AppTest recarga todo el script,
     # así que se vuelve a pedir abrir la ficha antes del clic.
     at.session_state["ficha_abrir"] = id_restaurante
+    at.text_area(key=f"comentario_visita_{id_restaurante}").input("Las croquetas")
+    at.session_state["ficha_abrir"] = id_restaurante
     at.button(key=f"he_ido_{id_restaurante}").click().run()
     assert not at.exception, [e.value for e in at.exception]
-    assert multiusuario["visitas_guardadas"] == [("ana@ejemplo.com", id_restaurante, None)]
+    assert multiusuario["visitas_guardadas"] == [("ana@ejemplo.com", id_restaurante, None, "Las croquetas")]
+
+
+VISITA_LUIS = {"usuario": "luis@x.com", "nota": 4.5, "comentario": "Las bravas",
+               "creado_en": "2026-10-12T20:00:00+00:00",
+               "restaurantes": {"id": 7, "datos": {"Nombre": "Casa Pepe", "Puntuación": 4.5}, "imagen": None}}
+
+
+def test_perfil_ensena_arroba_y_mis_visitas(multiusuario):
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
+    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com"}]
+    at = correr(seccion="perfil")
+    assert not at.exception, [e.value for e in at.exception]
+    cabecera = [m.value for m in at.markdown if m.value.startswith("### Ana")][0]
+    assert cabecera.index("@ana_g") < cabecera.index("ana@ejemplo.com")   # nombre, @usuario y correo
+    assert any(h.value == "Los restaurantes a los que has ido" for h in at.subheader)
+    assert any(c.value == "1 restaurante" for c in at.caption)
+
+
+def test_ficha_en_verde_si_ya_has_ido(multiusuario):
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com",
+                                "restaurantes": {**VISITA_LUIS["restaurantes"], "id": id_restaurante}}]
+    st.cache_data.clear()
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any(m.value.startswith("**✓ Has ido**") for m in at.markdown)
+    assert at.text_area(key=f"comentario_visita_{id_restaurante}").value == "Las bravas"
+    assert at.button(key=f"he_ido_{id_restaurante}").label == "Guardar"

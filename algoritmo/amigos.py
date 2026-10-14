@@ -41,9 +41,16 @@ def cargar_directorio(_bd, usuario):
     return _bd.directorio(excepto=usuario)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_mis_visitas(_bd, usuario):
+    """Tus valoraciones de "He ido" (DataFrame como el maestro, ver datos.visitas_a_dataframe)."""
+    return bd.visitas_a_dataframe(_bd.visitas_de([usuario], limite=1000), {usuario: "Tú"})
+
+
 def limpiar_cache():
     cargar_relaciones.clear()
     cargar_visitas_amigos.clear()
+    cargar_mis_visitas.clear()
 
 
 def _accion(funcion, *args, **kwargs):

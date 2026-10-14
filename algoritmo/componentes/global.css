@@ -15,3 +15,6 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
   [data-testid="stBaseButton-primary"] *, [data-testid="stBaseLinkButton-primary"] * { color: inherit !important; }
 }
 .st-key-boton_buscar button { min-height: 52px; font-size: 1.05rem; font-weight: 600; }
+
+/* Ficha: el recuadro de la valoración se pone verde si ya has ido (contenedor con key "visitado_" + id del restaurante). */
+[class*="st-key-visitado_"] { background: rgba(22, 163, 74, 0.10); border: 1px solid #16A34A !important; border-radius: 12px; }
