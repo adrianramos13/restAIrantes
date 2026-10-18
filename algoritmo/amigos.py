@@ -164,7 +164,7 @@ def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, 
         listas = {a["usuario"]: cargar_lista_de(cliente, a["usuario"]) for a in amigos}
         mis_valoraciones = cargar_mis_visitas(cliente, usuario)
         _cifras(cliente, amigos, mi_lista, listas)
-        _fila_de_amigos(cliente, amigos, mi_lista, listas, _notas(mis_valoraciones))
+        _fila_de_amigos(amigos)
     except bd.ErrorSupabase:
         st.caption("No se pueden ver los datos de tus amigos ahora mismo.")
 
@@ -214,19 +214,14 @@ def _al_tocar_amigo():
         st.session_state["amigo_abierto"] = clave
 
 
-def _fila_de_amigos(cliente, amigos, mi_lista, listas, mis_notas):
+def _fila_de_amigos(amigos):
     """Tus amigos en una fila de círculos que se desliza; al tocar uno se abre su mini perfil."""
     if not amigos:
         st.caption("Todavía no tienes amigos: búscalos abajo por su nombre o @usuario.")
         return
-    personas = []
-    for a in amigos:
-        afinidad = compatibilidad(mi_lista, listas[a["usuario"]], mis_notas,
-                                  _notas(cargar_valoraciones_de(cliente, a["usuario"], _nombre(a))))
-        personas.append({"clave": a["alias"] or a["usuario"], "nombre": _nombre(a), "alias": a.get("alias"),
-                         "color": _color(a),
-                         "inicial": _nombre(a)[:1].upper(), "foto": bd.foto_valida(a.get("foto")),
-                         "detalle": f"{afinidad} % afín" if afinidad is not None else ""})
+    # Sin % de afinidad: solo se ve al abrir el mini perfil de cada uno.
+    personas = [{"clave": a["alias"] or a["usuario"], "nombre": _nombre(a), "alias": a.get("alias"), "color": _color(a),
+                 "inicial": _nombre(a)[:1].upper(), "foto": bd.foto_valida(a.get("foto"))} for a in amigos]
     personas.sort(key=lambda p: p["nombre"].lower())
     st.components.v2.component("fila_amigos", **_FILA)(
         key="fila_amigos", data={"personas": personas}, on_abrir_change=_al_tocar_amigo)

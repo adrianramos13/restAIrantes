@@ -741,7 +741,8 @@ _BARRA = st.components.v2.component(
 # Widgets de cada sección cuyo valor tiene que sobrevivir mientras se está en otra.
 CLAVES_FORMULARIOS = {
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
-    "mi_lista": ("ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
+    "mi_lista": ("ml_idos", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados",
+                 "ml_orden"),
 }
 
 
@@ -878,8 +879,25 @@ def visitas_de_amigos(abrir):
 MI_LISTA_POR_PAGINA = 20
 
 
+def restaurantes_a_los_que_has_ido():
+    """Tus valoraciones de "He ido" como un maestro (las mismas columnas que tu lista), para filtrarlas igual."""
+    try:
+        df = amigos.cargar_mis_visitas(BD, usuario)
+    except bd.ErrorSupabase:
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    return df.drop(columns=["Amigo", "Nota visita", "Comentario visita", "Fecha visita"]).drop_duplicates("ID")
+
+
 def seccion_mi_lista(maestro, df_platos):
     st.header("Mi lista")
+    # "Solo a los que he ido": lo mismo que Mi lista pero con tus "He ido" (aunque no estén en tu lista).
+    if BD is not None and usuario and st.toggle("Solo los restaurantes a los que he ido", key="ml_idos"):
+        maestro = restaurantes_a_los_que_has_ido()
+        if maestro.empty:
+            st.info("Todavía no has marcado ningún restaurante con «He ido» (está arriba en la ficha de cada uno).")
+            return
     if maestro.empty:
         st.info("Todavía no tienes restaurantes en tu lista. Añádela en tu **Perfil**.")
         st.button("Añadir tu lista", on_click=ir_a, args=("perfil",), icon=":material/add_location_alt:")
@@ -1044,9 +1062,11 @@ def bloque_estadisticas(maestro):
         st.altair_chart(grafica, on_select=_al_tocar_cocina, key="grafica_cocinas", width="stretch")
 
 
-def ver_en_mi_lista(cocina=None):
-    """A "Mi lista": con solo esa cocina filtrada, o sin filtro de cocina."""
+def ver_en_mi_lista(cocina=None, solo_idos=False):
+    """A "Mi lista": con solo esa cocina filtrada, o sin filtro de cocina; con `solo_idos`, solo los
+    restaurantes a los que has ido."""
     st.session_state["ml_cocinas"] = [cocina] if cocina else []
+    st.session_state["ml_idos"] = solo_idos
     ir_a("mi_lista")
 
 
@@ -1092,7 +1112,10 @@ def bloque_mis_visitas():
         st.caption("Cuando marques «He ido» en la ficha de un restaurante, aparecerá aquí.")
         return
     ahora = datetime.now(timezone.utc)
-    st.caption(f"{len(df)} restaurante{'s' if len(df) != 1 else ''}")
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.caption(f"{len(df)} restaurante{'s' if len(df) != 1 else ''}")
+        st.button("Ver en formato lista", type="tertiary", icon=":material/format_list_bulleted:",
+                  key="mis_visitas_en_lista", on_click=ver_en_mi_lista, kwargs={"solo_idos": True})
     # Todas en carrusel (como "Tus amigos han ido a"), de la más reciente a la más antigua.
     mostrar_lista(df, key="lista_mis_visitas", carrusel=True, extra=lambda f: {
         "cuando": "Fuiste " + hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
