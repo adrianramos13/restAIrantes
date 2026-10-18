@@ -167,6 +167,15 @@ def _comillas(valor):
     return '"' + str(valor).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+# Solo fotos de cuentas de Google (las únicas que llegan del login): se enseñan a los amigos como <img>.
+_FOTO_VALIDA = re.compile(r"^https://[a-z0-9.-]+\.googleusercontent\.com/[^\s\"'<>]*$")
+
+
+def foto_valida(url):
+    """La URL de la foto si es una foto de Google; si no, None."""
+    return url if isinstance(url, str) and len(url) <= 500 and _FOTO_VALIDA.match(url) else None
+
+
 ALIAS_VALIDO = re.compile(r"^[a-z0-9_.]{3,20}$")   # el mismo check que la tabla perfiles
 
 
@@ -346,12 +355,19 @@ class Supabase:
             "order": "alias.asc", "limit": limite})
 
     def perfiles_de(self, usuarios):
-        """{usuario: {nombre, alias}} de esos usuarios."""
+        """{usuario: {nombre, alias, foto...}} de esos usuarios. Con "*" para no fallar si aún no existe la
+        columna foto (006_fotos_perfil.sql): son datos del servidor, a la app solo le llegan nombre, alias y foto."""
         if not usuarios:
             return {}
-        filas = self._rest("GET", "perfiles", params={"usuario": f"in.{_filtro_in(sorted(usuarios))}",
-                                                      "select": "usuario,nombre,alias"})
+        filas = self._rest("GET", "perfiles", params={"usuario": f"in.{_filtro_in(sorted(usuarios))}", "select": "*"})
         return {f["usuario"]: f for f in filas}
+
+    def guardar_foto(self, usuario, nombre, foto):
+        """Foto de Google del usuario (la ven sus amigos). Solo se guarda si es una foto de Google."""
+        if foto_valida(foto) is None:
+            raise ValueError("Solo se guardan fotos de cuentas de Google.")
+        self._rest("POST", "perfiles", params={"on_conflict": "usuario"}, prefer="resolution=merge-duplicates",
+                   json={"usuario": usuario, "nombre": nombre, "foto": foto, "actualizado_en": _ahora()})
 
     def amistades_de(self, usuario):
         """Filas de amistades donde participa el usuario (enviadas, recibidas y aceptadas)."""
@@ -366,8 +382,8 @@ class Supabase:
         otros = [f["destinatario"] if f["solicitante"] == usuario else f["solicitante"] for f in filas]
         perfiles = self.perfiles_de(set(otros))
         return [{"usuario": otro, "nombre": perfiles.get(otro, {}).get("nombre"),
-                 "alias": perfiles.get(otro, {}).get("alias"), "estado": f["estado"],
-                 "enviada": f["solicitante"] == usuario} for otro, f in zip(otros, filas)]
+                 "alias": perfiles.get(otro, {}).get("alias"), "foto": foto_valida(perfiles.get(otro, {}).get("foto")),
+                 "estado": f["estado"], "enviada": f["solicitante"] == usuario} for otro, f in zip(otros, filas)]
 
     def solicitar_amistad(self, de, a):
         """Envía una solicitud de `de` a `a`. Si `a` ya se la había enviado a `de`, se aceptan las
@@ -407,13 +423,16 @@ class Supabase:
         self._rest("DELETE", "visitas", params={"usuario": f"eq.{usuario}",
                                                 "restaurante_id": f"eq.{int(restaurante_id)}"})
 
-    def visitas_de(self, usuarios, limite=10):
-        """Últimas visitas de esos usuarios, con su restaurante del catálogo embebido."""
+    def visitas_de(self, usuarios, limite=10, desde=None):
+        """Últimas visitas de esos usuarios (solo las de `desde` en adelante, si se da: un datetime con zona
+        horaria), con su restaurante del catálogo embebido."""
         if not usuarios:
             return []
-        return self._rest("GET", "visitas", params={
-            "usuario": f"in.{_filtro_in(sorted(usuarios))}", "order": "creado_en.desc", "limit": limite,
-            "select": "usuario,nota,comentario,creado_en,restaurantes(id,datos,imagen)"})
+        params = {"usuario": f"in.{_filtro_in(sorted(usuarios))}", "order": "creado_en.desc", "limit": limite,
+                  "select": "usuario,nota,comentario,creado_en,restaurantes(id,datos,imagen)"}
+        if desde is not None:
+            params["creado_en"] = f"gte.{desde.isoformat()}"
+        return self._rest("GET", "visitas", params=params)
 
     # ---------------- catálogo compartido ----------------
 

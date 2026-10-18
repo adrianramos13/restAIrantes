@@ -328,6 +328,8 @@ flowchart LR
 > **Y para amigos y «He ido»**, ejecuta `supabase/004_amigos.sql` (columna `alias` en `perfiles` y tablas `amistades` y `visitas`).
 >
 > **Y para las valoraciones** (medias estrellas y comentario, una por restaurante), ejecuta después `supabase/005_valoraciones.sql`.
+>
+> **Y para las fotos de los amigos**, ejecuta `supabase/006_fotos_perfil.sql` (la app guarda sola la foto de Google de cada uno al entrar; sin la columna, se ven sus iniciales).
 
 ### Cuentas con correo y contraseña
 
@@ -344,11 +346,12 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
 
 ### Secciones (barra de abajo)
 
-- **Inicio**: una idea para hoy: «¿Te apetece cachopo? Te gustará Casa Pepe», con la ficha del sitio. Elige al azar un plato que las reseñas de tu lista elogian (al menos 2 menciones buenas en un mismo sitio abierto) y el sitio donde más lo elogian. *Otra idea* cambia de plato; *Más sitios con…* lo busca en Comer hoy. Debajo, **Tus amigos han ido a**: los últimos sitios que tus amigos han marcado con *He ido*.
+- **Inicio**: una idea para hoy: «¿Te apetece cachopo? Te gustará Casa Pepe», con la ficha del sitio. Elige al azar un plato que las reseñas de tu lista elogian (al menos 2 menciones buenas en un mismo sitio abierto) y el sitio donde más lo elogian. *Otra idea* cambia de plato; *Más sitios con…* lo busca en Comer hoy. Debajo, **Tus amigos han ido a**: tarjetas pequeñas que se deslizan hacia la derecha con los sitios que tus amigos han marcado con *He ido* en las **dos últimas semanas** (quién, cuándo, el restaurante, su nota y su comentario).
 - **Comer hoy**: el buscador de siempre (desde dónde, tiempo, cocina, presupuesto y plato).
 - **Mi lista**: todos los restaurantes de tu lista, con buscador por nombre, filtros (cocina, presupuesto, nota mínima, plato, ocultar cerrados) y orden.
 - **Perfil** (el icono es tu foto de Google): estadísticas de tu lista, **Amigos**, *Tus listas*, **preferencias** (transporte, tiempo y presupuesto que vienen ya puestos en Comer hoy), *Datos personales* (el nombre con el que te saluda la app) y *Cerrar sesión*.
-- **Amigos** (en el Perfil): eliges un **@usuario** (3-20 letras sin tildes, números, `_` o `.`) y buscas a otros por su @usuario o nombre. La amistad es con **solicitud**: el otro la acepta o la rechaza. Los correos no se enseñan nunca.
+- **Amigos** (en el Perfil): eliges un **@usuario** (3-20 letras sin tildes, números, `_` o `.`) y buscas a otros por su @usuario o nombre. La amistad es con **solicitud**: el otro la acepta o la rechaza; las pendientes salen arriba en una tarjeta de color y con un globito con el número sobre tu foto en la barra de abajo. Cifras (amigos, visitas de tus amigos en 30 días, sitios en común) y tus amigos en una **fila de círculos** (su foto de Google o su inicial sobre un color) con su **% de afinidad**. Al tocar uno se abre su **mini perfil**: % de gustos en común, nota media, a cuántos sitios ha ido, cocina favorita, sus últimas valoraciones y los restaurantes en común. Los correos no se enseñan nunca.
+  - *Afinidad*: lo parecidas que son las cocinas de vuestras listas (60 %) y, si habéis valorado al menos 2 sitios en común, lo parecidas que son vuestras notas (40 %).
 - **He ido** (arriba en la ficha de cualquier restaurante): nota opcional de 0,5 a 5 estrellas (medias estrellas) y «lo que más te gustó». Una valoración por restaurante: se puede cambiar o quitar, y el recuadro sale en verde si ya has ido. Lo ven tus amigos en su Inicio; en las listas, los sitios a los que has ido llevan «✓ Has ido», y en tu Perfil está **Los restaurantes a los que has ido**.
 
 ### Día a día

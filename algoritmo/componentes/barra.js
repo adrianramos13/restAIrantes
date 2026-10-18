@@ -19,4 +19,17 @@ export default function (component) {
   } else {
     sinFoto();
   }
+
+  // Globito con las solicitudes de amistad pendientes, sobre el icono de Perfil.
+  const perfil = parentElement.querySelector('[data-seccion="perfil"]');
+  const avatar = perfil.querySelector('.avatar');
+  let globo = perfil.querySelector('.aviso');
+  if (data.avisos > 0) {
+    if (!globo) { globo = document.createElement('span'); globo.className = 'aviso'; avatar.after(globo); }
+    globo.textContent = data.avisos > 9 ? '9+' : String(data.avisos);
+    perfil.setAttribute('aria-label', `Perfil, ${data.avisos} ${data.avisos === 1 ? 'solicitud' : 'solicitudes'} de amistad`);
+  } else {
+    if (globo) globo.remove();
+    perfil.removeAttribute('aria-label');
+  }
 }

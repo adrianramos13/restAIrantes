@@ -39,6 +39,7 @@ import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 from geopy.exc import GeocoderServiceError
@@ -430,7 +431,8 @@ def _al_abrir_desde_lista(key):
         st.session_state["ficha_abrir"] = int(valor)
 
 
-def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes", extra=None):
+def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes", extra=None,
+                  carrusel=False, estatica=False):
     """Tarjetas de `top`. Con `modo_transporte` (resultados de una búsqueda) enseñan el tiempo de viaje;
     `extra(fila)` añade datos a la tarjeta (amigo, cuando, nota, cita: ver componentes/lista.js). Las de
     sitios a los que ya has ido llevan "✓ Has ido"."""
@@ -447,7 +449,8 @@ def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_re
             **(extra(fila) if extra else {}),
         })
     _LISTA_RESTAURANTES(
-        data={"items": items, "seleccionado": seleccionado_id},
+        # carrusel: fila que se desliza; estatica: solo para mirar (no abre la ficha)
+        data={"items": items, "seleccionado": seleccionado_id, "carrusel": carrusel, "estatica": estatica},
         key=key, on_abrir_change=lambda: _al_abrir_desde_lista(key),
     )
 
@@ -734,8 +737,10 @@ def _al_cambiar_seccion():
         ir_a(seccion)
 
 
-def barra_secciones(seccion, foto=None):
-    _BARRA(key="barra_secciones", data={"activa": seccion, "foto": foto}, on_seccion_change=_al_cambiar_seccion)
+def barra_secciones(seccion, foto=None, avisos=0):
+    """`avisos`: solicitudes de amistad pendientes (globito sobre el icono de Perfil)."""
+    _BARRA(key="barra_secciones", data={"activa": seccion, "foto": foto, "avisos": avisos},
+           on_seccion_change=_al_cambiar_seccion)
 
 
 def conservar_formularios(seccion):
@@ -836,10 +841,11 @@ def visitas_de_amigos(abrir):
         st.button("Buscar amigos", on_click=ir_a, args=("perfil",), icon=":material/person_add:", key="ir_a_amigos")
         return
     if df.empty:
-        st.caption("Tus amigos todavía no han marcado ningún sitio con «He ido».")
+        st.caption(f"Tus amigos no han marcado ningún sitio con «He ido» en las últimas "
+                   f"{amigos.DIAS_VISITAS_AMIGOS // 7} semanas.")
         return
     ahora = datetime.now(timezone.utc)
-    mostrar_lista(df, key="lista_amigos", extra=lambda f: {
+    mostrar_lista(df, key="lista_amigos", carrusel=True, extra=lambda f: {
         "amigo": str(f["Amigo"]), "cuando": hace_cuanto(f["Fecha visita"], ahora),
         "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
     # Si ese sitio es también la idea del día, ya se ha abierto su ficha arriba.
@@ -863,7 +869,13 @@ def seccion_mi_lista(maestro, df_platos):
 
     texto = st.text_input("Buscar por nombre", placeholder="Buscar por nombre", key="ml_texto",
                           label_visibility="collapsed", icon=":material/search:")
-    with st.expander("Filtros"):
+    # Cuántos filtros hay puestos, para que se vea aunque el desplegable esté cerrado (p. ej. al llegar
+    # desde la gráfica de cocinas del Perfil con una cocina ya elegida).
+    estado = st.session_state
+    activos = sum([bool(estado.get("ml_cocinas")), bool(estado.get("ml_nota")), bool(estado.get("ml_plato", "").strip()),
+                   bool(estado.get("ml_cerrados")),
+                   tuple(estado.get("ml_presupuesto", (0, PRESUPUESTO_SIN_LIMITE))) != (0, PRESUPUESTO_SIN_LIMITE)])
+    with st.expander(f"Filtros ({activos})" if activos else "Filtros", icon=":material/tune:"):
         cocinas = st.multiselect("Cocina", cocinas_disponibles(maestro), key="ml_cocinas", placeholder="Cualquiera")
         presupuesto_min, presupuesto_max = st.slider(
             "Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, (0, PRESUPUESTO_SIN_LIMITE), step=5,
@@ -989,15 +1001,36 @@ def bloque_estadisticas(maestro):
     if e is None:
         st.caption("Aparecerán cuando tengas restaurantes en tu lista.")
         return
-    with st.container(horizontal=True):
-        st.metric("Restaurantes", e["total"])
+    with st.container(horizontal=True, vertical_alignment="center"):
+        # el nº de restaurantes lleva a "Mi lista" (estilo de cifra grande en global.css, .st-key-ver_mi_lista)
+        st.button(f"**{e['total']}** Restaurantes", type="tertiary", icon=":material/chevron_right:",
+                  icon_position="right", key="ver_mi_lista", on_click=ver_en_mi_lista, help="Verlos en Mi lista")
         st.metric("Nota media", "–" if e["nota_media"] is None else f"{e['nota_media']:.1f} ⭐".replace(".", ","))
         st.metric("Precio medio", "–" if e["precio_medio"] is None else f"{e['precio_medio']:.0f} €")
     if not e["cocinas"].empty:
         st.markdown("**Las cocinas que más se repiten**")
+        st.caption("Toca una para ver esos restaurantes en Mi lista.")
+        datos_grafica = e["cocinas"].rename_axis("Cocina").reset_index(name="Restaurantes")
+        tocada = alt.selection_point(name="cocina", fields=["Cocina"], on="click")
         # naranja intermedio entre el acento claro (#C2410C) y el oscuro (#FB923C): se ve bien en los dos
-        st.bar_chart(e["cocinas"].rename("Restaurantes"), horizontal=True, sort="-Restaurantes", color="#EA580C",
-                     x_label="", y_label="", height=220)
+        grafica = alt.Chart(datos_grafica).mark_bar(color="#EA580C", cornerRadiusEnd=4, cursor="pointer").encode(
+            x=alt.X("Restaurantes:Q", title=None, axis=alt.Axis(tickMinStep=1)),
+            y=alt.Y("Cocina:N", sort="-x", title=None),
+            tooltip=["Cocina", "Restaurantes"],
+        ).add_params(tocada).properties(height=220)
+        st.altair_chart(grafica, on_select=_al_tocar_cocina, key="grafica_cocinas", width="stretch")
+
+
+def ver_en_mi_lista(cocina=None):
+    """A "Mi lista": con solo esa cocina filtrada, o sin filtro de cocina."""
+    st.session_state["ml_cocinas"] = [cocina] if cocina else []
+    ir_a("mi_lista")
+
+
+def _al_tocar_cocina():
+    puntos = st.session_state["grafica_cocinas"].selection.get("cocina") or []
+    if puntos and puntos[0].get("Cocina"):
+        ver_en_mi_lista(puntos[0]["Cocina"])
 
 
 def bloque_preferencias(usuario, nombre, preferencias):
@@ -1023,7 +1056,7 @@ def bloque_preferencias(usuario, nombre, preferencias):
         st.toast("Preferencias guardadas", icon=":material/check:")
 
 
-MIS_VISITAS_EN_PERFIL = 3   # las más recientes; el resto con "Ver lista completa"
+MIS_VISITAS_EN_PERFIL = 10   # las más recientes, en el carrusel; el resto con "Ver lista completa"
 
 
 def bloque_mis_visitas():
@@ -1040,10 +1073,12 @@ def bloque_mis_visitas():
         return
     ahora = datetime.now(timezone.utc)
     st.caption(f"{len(df)} restaurante{'s' if len(df) != 1 else ''}")
+    # Las más recientes en carrusel (como "Tus amigos han ido a"); con "Ver lista completa", todas en lista.
     completa = st.session_state.get("mis_visitas_completa", False)
-    mostrar_lista(df if completa else df.head(MIS_VISITAS_EN_PERFIL), key="lista_mis_visitas", extra=lambda f: {
-        "cuando": "Fuiste " + hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
-        "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
+    mostrar_lista(df if completa else df.head(MIS_VISITAS_EN_PERFIL), key="lista_mis_visitas",
+                  carrusel=not completa, extra=lambda f: {
+                      "cuando": "Fuiste " + hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
+                      "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
     if len(df) > MIS_VISITAS_EN_PERFIL:
         st.button("Ver menos" if completa else f"Ver lista completa ({len(df)})", width="stretch",
                   key="ver_mis_visitas", icon=":material/expand_less:" if completa else ":material/expand_more:",
@@ -1068,7 +1103,8 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
     with st.container(border=True):
         bloque_mis_visitas()
     with st.container(border=True):
-        amigos.bloque_amigos(BD, usuario, nombre, perfil, al_guardar_alias=cargar_perfil.clear)
+        amigos.bloque_amigos(BD, usuario, nombre, perfil, al_guardar_alias=cargar_perfil.clear,
+                             mi_lista=maestro, mostrar_lista=mostrar_lista)
     with st.container(border=True):
         bloque_tus_listas(usuario, lista)
     with st.container(border=True):
@@ -1095,6 +1131,19 @@ def pantalla_entrar(tras_intro):
 @st.cache_data(ttl=600, show_spinner=False)
 def confirmacion_de_correo_activa():
     return CUENTAS.confirmacion_obligatoria()
+
+
+def guardar_foto_de_google(usuario, nombre, perfil, google):
+    """Guarda (una vez por visita) la foto de Google del usuario en su perfil, para que la vean sus amigos."""
+    foto = bd.foto_valida(google.get("foto"))
+    if not foto or (perfil or {}).get("foto") == foto or st.session_state.get("foto_guardada"):
+        return
+    st.session_state["foto_guardada"] = True
+    try:
+        BD.guardar_foto(usuario, nombre, foto)
+        cargar_perfil.clear()
+    except (bd.ErrorSupabase, ValueError):   # p. ej. aún no existe la columna (006_fotos_perfil.sql)
+        pass
 
 
 def pantalla_sin_permiso(usuario):
@@ -1139,9 +1188,11 @@ if CONFIG_MULTIUSUARIO:
     except bd.ErrorSupabase:   # p. ej. aún no se ha creado la tabla perfiles: se usa el nombre de Google
         perfil = None
     nombre_usuario = nombre_visible(usuario, perfil, google)
-    momento_portada = f"🍽️ Lista de {html.escape(nombre_usuario)} · {len(maestro)} sitios"
+    guardar_foto_de_google(usuario, nombre_usuario, perfil, google)
+    dueno = f"@{perfil['alias']}" if (perfil or {}).get("alias") else nombre_usuario   # sin @usuario aún: el nombre
+    momento_portada = f"🍽️ Los restaurantes de {html.escape(dueno)} · {len(maestro)} sitios"
 preferencias = bd.preferencias_validas((perfil or {}).get("preferencias"))
-barra_secciones(seccion, google.get("foto"))
+barra_secciones(seccion, google.get("foto"), amigos.solicitudes_pendientes(BD, usuario) if BD is not None else 0)
 
 # Inicio, Mi lista y Perfil trabajan siempre con la lista del usuario; "Comer hoy" es lo de debajo.
 if seccion == "inicio":

@@ -308,3 +308,44 @@ def hace_cuanto(fecha_iso, ahora):
     if dias < 7:
         return f"hace {dias} días"
     return datetime.fromisoformat(fecha_iso).astimezone(ahora.tzinfo).strftime("%d/%m")
+
+
+def _columna_cocina(maestro):
+    return COL_CATEGORIA if tiene_categorias_jev(maestro) else "Tipo de cocina"
+
+
+def cocina_favorita(maestro):
+    """La cocina que más se repite en una lista, o None."""
+    if maestro.empty or _columna_cocina(maestro) not in maestro.columns:
+        return None
+    cocinas = maestro[_columna_cocina(maestro)].dropna()
+    return cocinas.value_counts().index[0] if not cocinas.empty else None
+
+
+def en_comun(maestro_a, maestro_b):
+    """IDs de los restaurantes que están en las dos listas."""
+    if maestro_a.empty or maestro_b.empty:
+        return set()
+    return set(maestro_a["ID"]) & set(maestro_b["ID"])
+
+
+PESO_NOTAS_COMPATIBILIDAD = 0.4   # el resto, lo parecidas que son vuestras cocinas
+MIN_NOTAS_EN_COMUN = 2            # con menos sitios valorados por los dos, solo cuentan las cocinas
+
+
+def compatibilidad(maestro_a, maestro_b, notas_a, notas_b):
+    """% (0-100) de gustos en común entre dos personas, o None si alguna no tiene lista.
+    Cocinas: lo parecidas que son las proporciones de cada cocina en sus listas (similitud del coseno).
+    Notas (`notas_*`: {id restaurante: nota de "He ido"}): si han valorado al menos 2 sitios en común,
+    1 - diferencia media / 4,5, y cuenta un 40 %."""
+    if maestro_a.empty or maestro_b.empty:
+        return None
+    va = maestro_a[_columna_cocina(maestro_a)].dropna().value_counts()
+    vb = maestro_b[_columna_cocina(maestro_b)].dropna().value_counts()
+    norma = (sum(v * v for v in va) ** 0.5) * (sum(v * v for v in vb) ** 0.5)
+    cocinas = sum(va.get(c, 0) * vb.get(c, 0) for c in set(va.index) | set(vb.index)) / norma if norma else 0.0
+    comunes = [i for i in set(notas_a) & set(notas_b) if notas_a[i] is not None and notas_b[i] is not None]
+    if len(comunes) < MIN_NOTAS_EN_COMUN:
+        return round(100 * cocinas)
+    notas = 1 - sum(abs(notas_a[i] - notas_b[i]) for i in comunes) / len(comunes) / 4.5
+    return round(100 * ((1 - PESO_NOTAS_COMPATIBILIDAD) * cocinas + PESO_NOTAS_COMPATIBILIDAD * notas))

@@ -1,0 +1,25 @@
+/* Perfil: tus amigos en una fila de círculos que se desliza (como las historias de Instagram). */
+.fila {
+  list-style: none; margin: 0; padding: 4px 2px 8px; display: flex; gap: 14px;
+  overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+  font-family: var(--st-font, sans-serif);
+}
+.fila > li { flex: 0 0 auto; scroll-snap-align: start; }
+.persona {
+  all: unset; box-sizing: border-box; width: 76px; cursor: pointer; border-radius: 12px; padding: 2px 0;
+  display: flex; flex-direction: column; align-items: center; gap: 5px; color: var(--st-text-color);
+}
+.persona:focus-visible { outline: 2px solid var(--st-primary-color); outline-offset: 2px; }
+.avatar {
+  position: relative; width: 64px; height: 64px; border-radius: 50%; overflow: hidden; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 2px var(--st-background-color), 0 0 0 4px var(--st-primary-color);
+  transition: transform 0.08s ease-out;
+}
+.persona:active .avatar { transform: scale(0.94); }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.inicial { color: #FFFFFF; font-size: 26px; font-weight: 700; }
+.nombre { width: 100%; font-size: 12px; line-height: 1.25; text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detalle { font-size: 11px; line-height: 1.2; opacity: 0.75; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .avatar { transition: none; } .persona:active .avatar { transform: none; } }
