@@ -18,6 +18,7 @@ from logica import cocina_favorita, compatibilidad, en_comun, hace_cuanto
 
 _COMPONENTES = Path(__file__).resolve().parent / "componentes"
 _FILA = {n: (_COMPONENTES / f"amigos_fila.{n}").read_text(encoding="utf-8") for n in ("html", "css", "js")}
+_BUSCADOR = {n: (_COMPONENTES / f"buscador_amigos.{n}").read_text(encoding="utf-8") for n in ("html", "css", "js")}
 
 # Colores de los avatares sin foto (siempre el mismo para cada persona); todos con texto blanco legible.
 PALETA = ["#C2410C", "#0F766E", "#7C3AED", "#BE185D", "#1D4ED8", "#15803D", "#B45309", "#475569"]
@@ -222,7 +223,8 @@ def _fila_de_amigos(cliente, amigos, mi_lista, listas, mis_notas):
     for a in amigos:
         afinidad = compatibilidad(mi_lista, listas[a["usuario"]], mis_notas,
                                   _notas(cargar_valoraciones_de(cliente, a["usuario"], _nombre(a))))
-        personas.append({"clave": a["alias"] or a["usuario"], "nombre": _nombre(a), "color": _color(a),
+        personas.append({"clave": a["alias"] or a["usuario"], "nombre": _nombre(a), "alias": a.get("alias"),
+                         "color": _color(a),
                          "inicial": _nombre(a)[:1].upper(), "foto": bd.foto_valida(a.get("foto")),
                          "detalle": f"{afinidad} % afín" if afinidad is not None else ""})
     personas.sort(key=lambda p: p["nombre"].lower())
@@ -295,27 +297,33 @@ def _elegir_alias(cliente, usuario, nombre, al_guardar_alias):
 
 
 def _buscar_amigos(cliente, usuario, conocidos):
-    """Desplegable con buscador: al escribir, va sugiriendo gente de la base de datos por nombre o @usuario
-    (lo filtra el navegador, sin esperar al servidor). Las opciones son texto plano: ni correos ni formato."""
+    """Buscador propio: al escribir, salen las personas de la base de datos cuyo nombre o @usuario coincide (lo
+    filtra el navegador, al momento). Al navegador solo le llegan nombre y @usuario; "Añadir" devuelve el
+    @usuario y aquí se busca a quién corresponde."""
     try:
-        personas = {p["alias"]: p for p in cargar_directorio(cliente, usuario)}
+        directorio = cargar_directorio(cliente, usuario)
     except bd.ErrorSupabase:
         st.error("No se puede buscar ahora mismo. Inténtalo en un momento.")
         return
-    if not personas:
+    if not directorio:
         st.caption("Todavía no hay nadie más con nombre de usuario para añadir.")
         return
-    alias = st.selectbox("Buscar amigos", list(personas), index=None, key="buscar_amigos",
-                         format_func=lambda a: f"{personas[a]['nombre'] or a} · @{a}",
-                         placeholder="Escribe un nombre o @usuario")
-    if alias is None:
-        return
-    p = personas[alias]
-    relacion = conocidos.get(p["usuario"])
-    with st.container(horizontal=True, vertical_alignment="center"):
-        st.markdown(quien(p))
-        if relacion is None:
-            st.button("Añadir", icon=":material/person_add:", key=f"anadir_{alias}",
-                      on_click=_accion, args=(cliente.solicitar_amistad, usuario, p["usuario"]))
-        else:
-            st.caption("Amigos ✓" if relacion["estado"] == "aceptada" else "Solicitud pendiente")
+    por_alias = {p["alias"]: p for p in directorio}
+    personas = []
+    for p in directorio:
+        relacion = conocidos.get(p["usuario"])
+        estado = "nuevo" if relacion is None else ("amigo" if relacion["estado"] == "aceptada" else "pendiente")
+        personas.append({"alias": p["alias"], "nombre": _nombre(p), "inicial": _nombre(p)[:1].upper(),
+                         "color": _color(p), "estado": estado})
+    st.markdown("**Buscar amigos**")
+    st.components.v2.component("buscador_amigos", **_BUSCADOR)(
+        key="buscador_amigos", data={"personas": personas},
+        on_anadir_change=lambda: solicitar_por_alias(cliente, usuario, st.session_state["buscador_amigos"].anadir,
+                                                     por_alias))
+
+
+def solicitar_por_alias(cliente, usuario, alias, por_alias):
+    """"Añadir" del buscador: el navegador solo manda un @usuario; si no es de nadie del directorio, no se hace nada."""
+    persona = por_alias.get(alias) if alias else None
+    if persona is not None:
+        _accion(cliente.solicitar_amistad, usuario, persona["usuario"])

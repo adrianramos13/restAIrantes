@@ -8,7 +8,8 @@ export default function (component) {
     const li = document.createElement('li');
     const boton = document.createElement('button');
     boton.type = 'button'; boton.className = 'persona';
-    boton.setAttribute('aria-label', `${p.nombre}${p.detalle ? '. ' + p.detalle : ''}. Ver su perfil`);
+    boton.setAttribute('aria-label',
+      `${p.nombre}${p.alias ? ', @' + p.alias : ''}${p.detalle ? '. ' + p.detalle : ''}. Ver su perfil`);
 
     const avatar = document.createElement('span'); avatar.className = 'avatar'; avatar.style.background = p.color;
     const inicial = document.createElement('span'); inicial.className = 'inicial'; inicial.textContent = p.inicial;
@@ -21,6 +22,10 @@ export default function (component) {
     }
     const nombre = document.createElement('span'); nombre.className = 'nombre'; nombre.textContent = p.nombre;
     boton.append(avatar, nombre);
+    if (p.alias) {
+      const alias = document.createElement('span'); alias.className = 'alias'; alias.textContent = `@${p.alias}`;
+      boton.appendChild(alias);
+    }
     if (p.detalle) {
       const detalle = document.createElement('span'); detalle.className = 'detalle'; detalle.textContent = p.detalle;
       boton.appendChild(detalle);
