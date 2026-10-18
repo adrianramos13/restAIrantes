@@ -331,19 +331,19 @@ def portada(at):
 
 def test_portada_saluda_con_el_nombre_de_google(multiusuario):
     at = correr()
-    assert "Los restaurantes de Ana García · " in portada(at)
+    assert "Los restaurantes de Ana García<br>" in portada(at)
 
 
 def test_portada_saluda_con_el_nombre_elegido(multiusuario):
     multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Anita"}
     at = correr()
-    assert "Los restaurantes de Anita · " in portada(at)
+    assert "Los restaurantes de Anita<br>" in portada(at)
 
 
 def test_sin_tabla_perfiles_la_app_sigue_funcionando(multiusuario):
     multiusuario["perfil_falla"] = True
     at = correr()
-    assert "Los restaurantes de Ana García · " in portada(at)
+    assert "Los restaurantes de Ana García<br>" in portada(at)
     assert "Buscar restaurantes" in [b.label for b in at.button]
 
 
@@ -390,7 +390,7 @@ def test_guardar_perfil_con_preferencias(monkeypatch):
 
 def test_inicio_saluda_y_propone_un_plato(multiusuario):
     at = correr(seccion="inicio")
-    assert "Hola, Ana García." in portada(at) and "Los restaurantes de Ana García · " in portada(at)
+    assert "Hola, Ana García." in portada(at) and "Los restaurantes de Ana García<br>" in portada(at)
     assert any(h.value.startswith("¿Te apetece ") for h in at.subheader)
 
 
@@ -608,14 +608,15 @@ def test_perfil_solicitudes_y_busqueda(multiusuario, monkeypatch):
     at.button(key="aceptar_luis").click().run()
     assert respuestas == [("ana@ejemplo.com", "luis@x.com", True)]
 
-    buscador = at.selectbox(key="buscar_amigos")
-    assert buscador.options == ["[Eva](javascript:alert(1)) · @eva", "Pepe · @pepe_99"]   # sugerencias: nombre y @
-    assert not any("@x.com" in o for o in buscador.options)            # sin correos
-    buscador.select("eva").run()
-    textos = " ".join(m.value for m in at.markdown)
-    assert "eva@x.com" not in textos                                   # el correo no se enseña nunca
-    assert r"\[Eva\]\(javascript" in textos                          # el nombre no puede meter un enlace
-    at.button(key="anadir_eva").click().run()
+    # El buscador (componente propio) filtra en el navegador; aquí: qué le llega y qué hace "Añadir".
+    buscador = [c for c in at.get("bidi_component") if "pepe_99" in str(c.proto)]
+    assert buscador, "falta el buscador de amigos"
+    assert "@x.com" not in str(buscador[0].proto)                      # al navegador no le llegan correos
+    import amigos
+    directorio = {"eva": {"usuario": "eva@x.com", "alias": "eva"}}
+    cliente = datos.Supabase("https://x.supabase.co", "k")
+    amigos.solicitar_por_alias(cliente, "ana@ejemplo.com", "eva", directorio)
+    amigos.solicitar_por_alias(cliente, "ana@ejemplo.com", "no_existe", directorio)   # un @ inventado: nada
     assert solicitudes == [("ana@ejemplo.com", "eva@x.com")]
 
 
@@ -663,14 +664,12 @@ def test_ficha_en_verde_si_ya_has_ido(multiusuario):
     assert at.button(key=f"he_ido_{id_restaurante}").label == "Guardar"
 
 
-def test_perfil_ensena_pocas_visitas_y_ver_lista_completa(multiusuario):
+def test_perfil_ensena_todas_mis_visitas_en_carrusel(multiusuario):
     multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com",
                                 "restaurantes": {**VISITA_LUIS["restaurantes"], "id": i}} for i in range(1, 13)]
     at = correr(seccion="perfil")
-    boton = at.button(key="ver_mis_visitas")
-    assert boton.label == "Ver lista completa (12)"   # 10 en el carrusel y el resto con el botón
-    boton.click().run()
-    assert not at.exception and at.button(key="ver_mis_visitas").label == "Ver menos"
+    assert any(c.value == "12 restaurantes" for c in at.caption)
+    assert "ver_mis_visitas" not in [b.key for b in at.button]          # ya no hay "Ver lista completa"
 
 
 
@@ -699,7 +698,7 @@ def test_inicio_pide_las_visitas_de_las_dos_ultimas_semanas(multiusuario, monkey
 def test_portada_con_el_arroba_si_lo_tiene(multiusuario):
     multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Anita", "alias": "ana_g"}
     at = correr(seccion="inicio")
-    assert "Los restaurantes de @ana_g · " in portada(at)
+    assert "Los restaurantes de @ana_g<br>" in portada(at)
     assert "Hola, Anita." in portada(at)   # el saludo sigue con el nombre
 
 

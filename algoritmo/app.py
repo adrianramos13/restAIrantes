@@ -1021,8 +1021,8 @@ def bloque_estadisticas(maestro):
         return
     with st.container(horizontal=True, vertical_alignment="center"):
         # el nº de restaurantes lleva a "Mi lista" (estilo de cifra grande en global.css, .st-key-ver_mi_lista)
-        st.button(f"**{e['total']}** Restaurantes", type="tertiary", icon=":material/chevron_right:",
-                  icon_position="right", key="ver_mi_lista", on_click=ver_en_mi_lista, help="Verlos en Mi lista")
+        st.button(f"**{e['total']}** Restaurantes", type="tertiary", key="ver_mi_lista", on_click=ver_en_mi_lista,
+                  help="Verlos en Mi lista")
         st.metric("Nota media", "–" if e["nota_media"] is None else f"{e['nota_media']:.1f} ⭐".replace(".", ","))
         st.metric("Precio medio", "–" if e["precio_medio"] is None else f"{e['precio_medio']:.0f} €")
     if not e["cocinas"].empty:
@@ -1030,12 +1030,17 @@ def bloque_estadisticas(maestro):
         st.caption("Toca una para ver esos restaurantes en Mi lista.")
         datos_grafica = e["cocinas"].rename_axis("Cocina").reset_index(name="Restaurantes")
         tocada = alt.selection_point(name="cocina", fields=["Cocina"], on="click")
+        # Los nombres de las cocinas no son las etiquetas del eje (esas no se pueden tocar): son texto de la propia
+        # gráfica, a la izquierda de cada barra, con la misma selección que las barras.
+        base = alt.Chart(datos_grafica).encode(
+            y=alt.Y("Cocina:N", sort=datos_grafica["Cocina"].tolist(), title=None, axis=None),
+            tooltip=["Cocina", "Restaurantes"])
         # naranja intermedio entre el acento claro (#C2410C) y el oscuro (#FB923C): se ve bien en los dos
-        grafica = alt.Chart(datos_grafica).mark_bar(color="#EA580C", cornerRadiusEnd=4, cursor="pointer").encode(
-            x=alt.X("Restaurantes:Q", title=None, axis=alt.Axis(tickMinStep=1)),
-            y=alt.Y("Cocina:N", sort="-x", title=None),
-            tooltip=["Cocina", "Restaurantes"],
-        ).add_params(tocada).properties(height=220)
+        barras = base.mark_bar(color="#EA580C", cornerRadiusEnd=4, cursor="pointer").encode(
+            x=alt.X("Restaurantes:Q", title=None, axis=alt.Axis(tickMinStep=1)))
+        nombres = base.mark_text(align="right", dx=-8, fontSize=13, cursor="pointer", color="#8A8079").encode(
+            x=alt.value(0), text="Cocina:N")
+        grafica = alt.layer(barras, nombres).add_params(tocada).properties(height=220)
         st.altair_chart(grafica, on_select=_al_tocar_cocina, key="grafica_cocinas", width="stretch")
 
 
@@ -1074,9 +1079,6 @@ def bloque_preferencias(usuario, nombre, preferencias):
         st.toast("Preferencias guardadas", icon=":material/check:")
 
 
-MIS_VISITAS_EN_PERFIL = 10   # las más recientes, en el carrusel; el resto con "Ver lista completa"
-
-
 def bloque_mis_visitas():
     """Perfil: los sitios que has marcado con "He ido", del más reciente al más antiguo."""
     st.subheader("Los restaurantes a los que has ido")
@@ -1091,16 +1093,10 @@ def bloque_mis_visitas():
         return
     ahora = datetime.now(timezone.utc)
     st.caption(f"{len(df)} restaurante{'s' if len(df) != 1 else ''}")
-    # Las más recientes en carrusel (como "Tus amigos han ido a"); con "Ver lista completa", todas en lista.
-    completa = st.session_state.get("mis_visitas_completa", False)
-    mostrar_lista(df if completa else df.head(MIS_VISITAS_EN_PERFIL), key="lista_mis_visitas",
-                  carrusel=not completa, extra=lambda f: {
-                      "cuando": "Fuiste " + hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
-                      "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
-    if len(df) > MIS_VISITAS_EN_PERFIL:
-        st.button("Ver menos" if completa else f"Ver lista completa ({len(df)})", width="stretch",
-                  key="ver_mis_visitas", icon=":material/expand_less:" if completa else ":material/expand_more:",
-                  on_click=lambda: st.session_state.update(mis_visitas_completa=not completa))
+    # Todas en carrusel (como "Tus amigos han ido a"), de la más reciente a la más antigua.
+    mostrar_lista(df, key="lista_mis_visitas", carrusel=True, extra=lambda f: {
+        "cuando": "Fuiste " + hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
+        "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
     coincide = df[df["ID"] == abrir]
     if abrir is not None and not coincide.empty:
         mostrar_ficha(coincide.iloc[0], pd.DataFrame(columns=bd.COLUMNAS_PLATOS))
@@ -1208,7 +1204,7 @@ if CONFIG_MULTIUSUARIO:
     nombre_usuario = nombre_visible(usuario, perfil, google)
     guardar_foto_de_google(usuario, nombre_usuario, perfil, google)
     dueno = f"@{perfil['alias']}" if (perfil or {}).get("alias") else nombre_usuario   # sin @usuario aún: el nombre
-    momento_portada = f"🍽️ Los restaurantes de {html.escape(dueno)} · {len(maestro)} sitios"
+    momento_portada = f"🍽️ Los restaurantes de {html.escape(dueno)}<br>{len(maestro)} sitios"
 preferencias = bd.preferencias_validas((perfil or {}).get("preferencias"))
 barra_secciones(seccion, google.get("foto"), amigos.solicitudes_pendientes(BD, usuario) if BD is not None else 0)
 
