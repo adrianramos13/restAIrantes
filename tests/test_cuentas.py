@@ -16,6 +16,8 @@ class Respuesta:
         self.ok, self.content = estado < 400, b"x"
 
     def json(self):
+        if isinstance(self._cuerpo, str):   # cuerpo que no es JSON (p. ej. "upstream request timeout")
+            raise ValueError("no es JSON")
         return self._cuerpo
 
 
@@ -27,6 +29,9 @@ def auth(monkeypatch):
     def request(metodo, url, json=None, params=None, headers=None, timeout=None):
         ruta = url.split("/auth/v1", 1)[1]
         estado["pedidas"].append((metodo, ruta, json, params, headers))
+        estado["timeout"] = timeout
+        if estado.get("colgado"):
+            raise cuentas.requests.Timeout("sin respuesta")
         return Respuesta(*estado["respuestas"].get(ruta, ({}, 200)))
     monkeypatch.setattr(cuentas.requests, "request", request)
     estado["cuentas"] = Cuentas("https://x.supabase.co", "sb_secret_abc")
@@ -109,3 +114,25 @@ def test_cambiar_contrasena_con_codigo(auth):
     assert (m2, r2, c2, h2["Authorization"]) == ("PUT", "/user", {"password": "nueva-secreta"}, "Bearer acc")
     with pytest.raises(ErrorCuenta):
         auth["cuentas"].cambiar_contrasena_con_codigo("ana@ejemplo.com", "123456", "corta")
+
+
+def test_registro_sin_poder_enviar_el_correo(auth):
+    # Lo que pasa con el SMTP mal configurado: Supabase se queda esperando y su pasarela corta con un 504.
+    auth["respuestas"]["/signup"] = ("upstream request timeout", 504)
+    with pytest.raises(ErrorCuenta, match="enviar el correo"):
+        auth["cuentas"].registrar("ana@ejemplo.com", "secreta123", "Ana")
+    assert auth["timeout"] == cuentas.TIMEOUT_CORREO_S                 # espera más que Supabase
+
+
+def test_registro_que_tarda_demasiado(auth):
+    auth["colgado"] = True
+    with pytest.raises(ErrorCuenta, match="enviar el correo"):
+        auth["cuentas"].registrar("ana@ejemplo.com", "secreta123", "Ana")
+    with pytest.raises(ErrorCuenta, match="no responde"):
+        auth["cuentas"].entrar("ana@ejemplo.com", "secreta123")
+
+
+def test_codigo_de_recuperacion_sin_poder_enviar_el_correo(auth):
+    auth["respuestas"]["/recover"] = ({"error_code": "unexpected_failure"}, 500)
+    with pytest.raises(ErrorCuenta, match="enviar el correo"):
+        auth["cuentas"].pedir_codigo_recuperacion("ana@ejemplo.com")

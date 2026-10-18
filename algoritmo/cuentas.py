@@ -12,6 +12,9 @@ Supabase obliga a confirmar el correo antes de entrar; si está desactivado, aqu
 import requests
 
 TIMEOUT_S = 20
+# Registrarse y pedir el código hacen que Supabase envíe un correo ANTES de responder: con el SMTP lento
+# puede tardar, y Supabase corta a los ~35 s (504). Se espera un poco más que él para ver su respuesta.
+TIMEOUT_CORREO_S = 45
 LARGO_MIN_CONTRASENA = 8
 
 
@@ -31,6 +34,8 @@ _MENSAJES = {
     "otp_expired": "El código no es correcto o ha caducado. Pide otro.",
     "validation_failed": "Revisa el correo: no parece válido.",
 }
+SIN_CORREO = ("No se ha podido enviar el correo ahora mismo, así que no se ha hecho nada. Inténtalo más tarde; "
+              "si sigue pasando, avisa al administrador (tiene que revisar el envío de correos en Supabase).")
 
 
 def validar_registro(correo, contrasena, nombre):
@@ -51,16 +56,24 @@ class Cuentas:
         if not clave.startswith("sb_"):   # las claves antiguas son JWT y van también como Bearer
             self._cabeceras["Authorization"] = f"Bearer {clave}"
 
-    def _pedir(self, metodo, ruta, *, json=None, params=None, token=None):
+    def _pedir(self, metodo, ruta, *, json=None, params=None, token=None, envia_correo=False):
+        """`envia_correo`: Supabase manda un correo antes de responder (registro, código de recuperación)."""
         cabeceras = dict(self._cabeceras)
         if token:
             cabeceras["Authorization"] = f"Bearer {token}"
         try:
             r = requests.request(metodo, self.url + ruta, json=json, params=params, headers=cabeceras,
-                                 timeout=TIMEOUT_S)
+                                 timeout=TIMEOUT_CORREO_S if envia_correo else TIMEOUT_S)
+        except requests.Timeout as e:
+            raise ErrorCuenta(SIN_CORREO if envia_correo else "Supabase no responde ahora mismo. Inténtalo en un momento.") from e
         except requests.RequestException as e:
             raise ErrorCuenta("No se puede conectar ahora mismo. Inténtalo en un momento.") from e
-        cuerpo = r.json() if r.content else {}
+        try:
+            cuerpo = r.json() if r.content else {}
+        except ValueError:   # p. ej. el 504 "upstream request timeout" de Supabase viene en texto plano
+            cuerpo = {}
+        if envia_correo and r.status_code >= 500:   # el correo no ha salido (SMTP mal configurado o caído)
+            raise ErrorCuenta(SIN_CORREO)
         if not r.ok:
             codigo = cuerpo.get("error_code") or cuerpo.get("error") or ""
             if r.status_code == 429:
@@ -81,8 +94,8 @@ class Cuentas:
     def registrar(self, correo, contrasena, nombre):
         """Crea la cuenta; Supabase manda el correo de confirmación. No inicia sesión."""
         correo = validar_registro(correo, contrasena, nombre)
-        respuesta = self._pedir("POST", "/signup", json={"email": correo, "password": contrasena,
-                                                         "data": {"nombre": nombre.strip()}})
+        respuesta = self._pedir("POST", "/signup", envia_correo=True,
+                                json={"email": correo, "password": contrasena, "data": {"nombre": nombre.strip()}})
         if respuesta.get("access_token"):   # se ha confirmado sola: la confirmación está desactivada
             raise ErrorCuenta("La cuenta se ha creado sin confirmar el correo. El administrador tiene que "
                               "activar 'Confirm email' en Supabase antes de usar cuentas con contraseña.")
@@ -104,7 +117,7 @@ class Cuentas:
 
     def pedir_codigo_recuperacion(self, correo):
         """Supabase manda un correo con un código de 6 cifras (plantilla "Reset password" con {{ .Token }})."""
-        self._pedir("POST", "/recover", json={"email": (correo or "").strip().lower()})
+        self._pedir("POST", "/recover", json={"email": (correo or "").strip().lower()}, envia_correo=True)
 
     def cambiar_contrasena_con_codigo(self, correo, codigo, contrasena_nueva):
         if len(contrasena_nueva or "") < LARGO_MIN_CONTRASENA:
