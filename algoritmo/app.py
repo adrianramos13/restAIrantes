@@ -31,8 +31,11 @@ DESPLIEGUE (para tener una URL pública desde el móvil):
 """
 
 import html
+import importlib
 import io
+import os
 import re
+import sys
 import base64
 import random
 import urllib.parse
@@ -45,6 +48,17 @@ import streamlit as st
 from geopy.exc import GeocoderServiceError
 from streamlit.errors import StreamlitAPIException
 
+# Streamlit Cloud, tras desplegar, vuelve a ejecutar este archivo ya nuevo pero puede seguir con la versión
+# vieja de los módulos que ya tenía importados (p. ej. "AttributeError: datos.foto_valida"). Se recarga
+# cada módulo propio cuyo archivo haya cambiado desde que se cargó, antes de importar nada de él (en
+# orden: primero los que no dependen de otros). En los tests no: desharía lo que sustituyen (monkeypatch).
+_MODULOS_PROPIOS = ("logica", "servicios", "datos", "sesion", "cuentas", "acceso", "amigos")
+if "PYTEST_CURRENT_TEST" not in os.environ:
+    for _nombre in _MODULOS_PROPIOS:
+        _modulo = sys.modules.get(_nombre)
+        if _modulo is not None and getattr(_modulo, "_mtime_cargado", None) != os.path.getmtime(_modulo.__file__):
+            importlib.reload(_modulo)
+
 from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
                     ORDEN_RESENAS, VOTOS_MIN_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, sugerencia_plato, tiene_categorias_jev)
@@ -55,6 +69,10 @@ import datos as bd
 from cuentas import Cuentas
 from logica import hace_cuanto
 from sesion import config_multiusuario, datos_google, usuario_actual
+
+for _nombre in _MODULOS_PROPIOS:   # se apunta qué versión de cada archivo está cargada (ver arriba)
+    if _nombre in sys.modules:
+        sys.modules[_nombre]._mtime_cargado = os.path.getmtime(sys.modules[_nombre].__file__)
 
 
 # ----------------------- CONFIGURACIÓN ----------------------- #
