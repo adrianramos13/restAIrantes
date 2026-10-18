@@ -761,8 +761,9 @@ def test_amigos_cifras_solicitudes_y_fila(multiusuario):
     assert metricas["Sitios en común"] == str(len(pd.read_excel(EXCEL, sheet_name="Restaurantes")))   # misma lista
     assert any("Eva" in m.value and "quiere ser tu amigo" in m.value for m in at.markdown)
     assert at.button(key="aceptar_eva").label == "Aceptar"
-    fila = [c for c in at.get("bidi_component") if "luis" in str(c.proto) and "% af" in str(c.proto)]   # "% afín" (la tilde va codificada)
-    assert fila, "falta la fila de amigos con su % de afinidad"
+    fila = [c for c in at.get("bidi_component") if "luis" in str(c.proto) and "inicial" in str(c.proto)]
+    assert fila, "falta la fila de amigos"
+    assert "% af" not in str(fila[0].proto)                             # la afinidad solo en su mini perfil
     assert "luis@x.com" not in str(fila[0].proto)                       # el correo no llega al navegador
 
 
@@ -786,3 +787,18 @@ def test_globito_de_solicitudes_en_la_barra(multiusuario):
     at = correr(seccion="inicio")
     barra = [c for c in at.get("bidi_component") if "barra_secciones" in str(c.proto)][0]
     assert re.search(r"avisos\W+2\b", str(barra.proto))                # 2 solicitudes recibidas (Luis ya es amigo)
+
+
+
+def test_ver_mis_visitas_en_formato_lista(multiusuario):
+    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com",
+                                "restaurantes": {"id": 900 + i, "imagen": None, "datos": {
+                                    "Nombre": f"Sitio {i}", "Puntuación": 4.0 + i / 10, "Nº Reseñas": 100,
+                                    "Rango de precios": "20-30 €", "Tipo de cocina": "Bar"}}} for i in range(3)]
+    at = correr(seccion="perfil")
+    at.button(key="mis_visitas_en_lista").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state["seccion"] == "mi_lista" and at.toggle(key="ml_idos").value
+    assert any(c.value == "3 de 3 restaurantes" for c in at.caption)    # solo los 3 a los que has ido
+    at.toggle(key="ml_idos").set_value(False).run()                     # y se puede volver a la lista entera
+    assert not any(c.value == "3 de 3 restaurantes" for c in at.caption)
