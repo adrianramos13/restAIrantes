@@ -153,3 +153,21 @@ def test_los_css_no_llevan_menor_que():
     una etiqueta (p. ej. un comentario con "<id>"): todo ese CSS dejaría de aplicarse sin dar ningún error."""
     for css in (RAIZ / "algoritmo" / "componentes").glob("*.css"):
         assert "<" not in css.read_text(encoding="utf-8"), css.name
+
+
+def test_estadisticas_llevan_a_mi_lista():
+    at = nueva_app(seccion="perfil")
+    at.session_state["ml_cocinas"] = ["Italiana"]          # un filtro de antes: "ver todos" lo quita
+    at.button(key="ver_mi_lista").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state["seccion"] == "mi_lista" and at.multiselect(key="ml_cocinas").value == []
+    assert at.status[0].label == "Filtros"
+
+
+def test_mi_lista_dice_cuantos_filtros_hay_puestos():
+    at = nueva_app(seccion="mi_lista")
+    at.session_state["ml_cocinas"] = ["Italiana"]            # lo que hace tocar "Italiana" en la gráfica del Perfil
+    at.run()
+    assert at.status[0].label == "Filtros (1)"
+    at.slider(key="ml_nota").set_value(4.0).run()
+    assert at.status[0].label == "Filtros (2)"

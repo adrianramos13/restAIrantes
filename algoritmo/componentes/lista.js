@@ -3,6 +3,7 @@ export default function (component) {
   const { parentElement, data, setTriggerValue } = component;
   const lista = parentElement.querySelector('.lr');
   lista.textContent = '';
+  lista.classList.toggle('lr-carrusel', !!data.carrusel);   // tarjetas pequeñas en una fila que se desliza
 
   data.items.forEach((r) => {
     const li = document.createElement('li');
@@ -80,7 +81,11 @@ export default function (component) {
     flecha.className = 'lr-flecha'; flecha.setAttribute('aria-hidden', 'true'); flecha.textContent = '›';
 
     boton.append(foto, info, flecha);
-    boton.onclick = () => setTriggerValue('abrir', r.id);
+    if (data.estatica) {   // solo para mirar (p. ej. dentro del mini perfil de un amigo): no abre la ficha
+      boton.disabled = true; boton.classList.add('lr-estatica'); flecha.hidden = true;
+    } else {
+      boton.onclick = () => setTriggerValue('abrir', r.id);
+    }
     li.appendChild(boton);
     lista.appendChild(li);
   });

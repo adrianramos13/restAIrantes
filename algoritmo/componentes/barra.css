@@ -21,3 +21,12 @@
 [aria-current="page"] .avatar { border-color: var(--st-primary-color); }
 .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .avatar [hidden] { display: none; }   /* si no, el display:block de arriba anula el atributo hidden */
+
+/* Globito de solicitudes de amistad pendientes */
+[data-seccion="perfil"] { position: relative; }
+.aviso {
+  position: absolute; top: 2px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px;
+  box-sizing: border-box; border-radius: 9px; background: #DC2626; color: #FFFFFF;
+  font: 700 11px/18px var(--st-font, sans-serif); text-align: center;
+  box-shadow: 0 0 0 2px var(--st-background-color);
+}

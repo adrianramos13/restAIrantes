@@ -213,10 +213,12 @@ def multiusuario(monkeypatch):
     # Amigos y "He ido": sin amigos salvo que el test diga otra cosa.
     estado.update(relaciones=[], visitas=[], visitas_guardadas=[], confirmacion=True)
     monkeypatch.setattr(datos.Supabase, "relaciones_de", lambda self, u: estado["relaciones"])
-    monkeypatch.setattr(datos.Supabase, "visitas_de", lambda self, usuarios, limite=10: estado["visitas"])
+    monkeypatch.setattr(datos.Supabase, "visitas_de", lambda self, usuarios, limite=10, desde=None: estado["visitas"])
     monkeypatch.setattr(datos.Supabase, "registrar_visita", lambda self, u, i, nota=None, comentario=None:
                         estado["visitas_guardadas"].append((u, i, nota, comentario)))
     monkeypatch.setattr(cuentas.Cuentas, "confirmacion_obligatoria", lambda self: estado["confirmacion"])
+    estado["fotos_guardadas"] = []
+    monkeypatch.setattr(datos.Supabase, "guardar_foto", lambda self, u, n, f: estado["fotos_guardadas"].append((u, f)))
     st.cache_data.clear()
     yield estado
     st.cache_data.clear()
@@ -329,19 +331,19 @@ def portada(at):
 
 def test_portada_saluda_con_el_nombre_de_google(multiusuario):
     at = correr()
-    assert "Lista de Ana García · " in portada(at)
+    assert "Los restaurantes de Ana García · " in portada(at)
 
 
 def test_portada_saluda_con_el_nombre_elegido(multiusuario):
     multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Anita"}
     at = correr()
-    assert "Lista de Anita · " in portada(at)
+    assert "Los restaurantes de Anita · " in portada(at)
 
 
 def test_sin_tabla_perfiles_la_app_sigue_funcionando(multiusuario):
     multiusuario["perfil_falla"] = True
     at = correr()
-    assert "Lista de Ana García · " in portada(at)
+    assert "Los restaurantes de Ana García · " in portada(at)
     assert "Buscar restaurantes" in [b.label for b in at.button]
 
 
@@ -388,7 +390,7 @@ def test_guardar_perfil_con_preferencias(monkeypatch):
 
 def test_inicio_saluda_y_propone_un_plato(multiusuario):
     at = correr(seccion="inicio")
-    assert "Hola, Ana García." in portada(at) and "Lista de Ana García · " in portada(at)
+    assert "Hola, Ana García." in portada(at) and "Los restaurantes de Ana García · " in portada(at)
     assert any(h.value.startswith("¿Te apetece ") for h in at.subheader)
 
 
@@ -663,9 +665,125 @@ def test_ficha_en_verde_si_ya_has_ido(multiusuario):
 
 def test_perfil_ensena_pocas_visitas_y_ver_lista_completa(multiusuario):
     multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com",
-                                "restaurantes": {**VISITA_LUIS["restaurantes"], "id": i}} for i in range(1, 6)]
+                                "restaurantes": {**VISITA_LUIS["restaurantes"], "id": i}} for i in range(1, 13)]
     at = correr(seccion="perfil")
     boton = at.button(key="ver_mis_visitas")
-    assert boton.label == "Ver lista completa (5)"
+    assert boton.label == "Ver lista completa (12)"   # 10 en el carrusel y el resto con el botón
     boton.click().run()
     assert not at.exception and at.button(key="ver_mis_visitas").label == "Ver menos"
+
+
+
+def test_visitas_de_solo_desde_una_fecha(monkeypatch):
+    from datetime import datetime, timezone
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
+    bd_.visitas_de(["luis@x.com"], desde=datetime(2026, 10, 4, 9, 0, tzinfo=timezone.utc))
+    assert llamadas[-1][2]["creado_en"] == "gte.2026-10-04T09:00:00+00:00"
+    bd_.visitas_de(["luis@x.com"])
+    assert "creado_en" not in llamadas[-1][2]
+
+
+def test_inicio_pide_las_visitas_de_las_dos_ultimas_semanas(multiusuario, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    pedidas = []
+    monkeypatch.setattr(datos.Supabase, "visitas_de", lambda self, usuarios, limite=10, desde=None:
+                        pedidas.append(desde) or [VISITA_LUIS])
+    multiusuario["relaciones"] = [{"usuario": "luis@x.com", "nombre": "Luis", "alias": "luis",
+                                   "estado": "aceptada", "enviada": False}]
+    at = correr(seccion="inicio")
+    assert not at.exception, [e.value for e in at.exception]
+    hace_dos_semanas = datetime.now(timezone.utc) - timedelta(days=14)
+    assert any(d is not None and abs((d - hace_dos_semanas).total_seconds()) < 120 for d in pedidas)
+
+
+def test_portada_con_el_arroba_si_lo_tiene(multiusuario):
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Anita", "alias": "ana_g"}
+    at = correr(seccion="inicio")
+    assert "Los restaurantes de @ana_g · " in portada(at)
+    assert "Hola, Anita." in portada(at)   # el saludo sigue con el nombre
+
+
+
+@pytest.mark.parametrize("url, valida", [
+    ("https://lh3.googleusercontent.com/a/ACg8ocJ=s96-c", True),
+    ("http://lh3.googleusercontent.com/a/x", False),                 # sin https
+    ("https://googleusercontent.com.evil.com/a/x", False),
+    ("https://evil.com/?u=https://lh3.googleusercontent.com/a", False),
+    ('https://lh3.googleusercontent.com/a/x" onerror="alert(1)', False),
+    (None, False),
+])
+def test_foto_valida(url, valida):
+    assert (datos.foto_valida(url) is not None) is valida
+
+
+def test_guardar_foto_solo_de_google(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
+    bd_.guardar_foto("ana@x.com", "Ana", "https://lh3.googleusercontent.com/a/foto")
+    assert llamadas[-1][3]["foto"] == "https://lh3.googleusercontent.com/a/foto"
+    with pytest.raises(ValueError):
+        bd_.guardar_foto("ana@x.com", "Ana", "https://evil.com/foto.jpg")
+
+
+def test_relaciones_traen_la_foto_si_es_valida(monkeypatch):
+    def respuestas(m, t, p):
+        if t == "amistades":
+            return [{"solicitante": "ana@x.com", "destinatario": "luis@x.com", "estado": "aceptada"},
+                    {"solicitante": "eva@x.com", "destinatario": "ana@x.com", "estado": "pendiente"}]
+        return [{"usuario": "luis@x.com", "nombre": "Luis", "alias": "luis",
+                 "foto": "https://lh3.googleusercontent.com/a/luis"},
+                {"usuario": "eva@x.com", "nombre": "Eva", "alias": "eva", "foto": "https://evil.com/x.jpg"}]
+    bd_, _ = _supabase_falso(monkeypatch, respuestas)
+    luis, eva = bd_.relaciones_de("ana@x.com")
+    assert luis["foto"] == "https://lh3.googleusercontent.com/a/luis" and luis["enviada"]
+    assert eva["foto"] is None and not eva["enviada"]
+
+
+
+# ---------------------------------------------------------------- amigos más visuales
+
+LUIS = {"usuario": "luis@x.com", "nombre": "Luis", "alias": "luis", "estado": "aceptada", "enviada": False,
+        "foto": "https://lh3.googleusercontent.com/a/luis"}
+EVA = {"usuario": "eva@x.com", "nombre": "Eva", "alias": "eva", "estado": "pendiente", "enviada": False, "foto": None}
+
+
+def test_se_guarda_la_foto_de_google_una_vez(multiusuario):
+    at = correr(seccion="inicio")
+    at.run()
+    assert multiusuario["fotos_guardadas"] == [("ana@ejemplo.com", "https://lh3.googleusercontent.com/a/foto")]
+
+
+def test_amigos_cifras_solicitudes_y_fila(multiusuario):
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
+    multiusuario["relaciones"] = [LUIS, EVA]
+    at = correr(seccion="perfil")
+    assert not at.exception, [e.value for e in at.exception]
+    metricas = {m.label: m.value for m in at.metric}
+    assert metricas["Amigos"] == "1"
+    assert metricas["Sitios en común"] == str(len(pd.read_excel(EXCEL, sheet_name="Restaurantes")))   # misma lista
+    assert any("Eva" in m.value and "quiere ser tu amigo" in m.value for m in at.markdown)
+    assert at.button(key="aceptar_eva").label == "Aceptar"
+    fila = [c for c in at.get("bidi_component") if "luis" in str(c.proto) and "% af" in str(c.proto)]   # "% afín" (la tilde va codificada)
+    assert fila, "falta la fila de amigos con su % de afinidad"
+    assert "luis@x.com" not in str(fila[0].proto)                       # el correo no llega al navegador
+
+
+def test_mini_perfil_de_un_amigo(multiusuario):
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
+    multiusuario["relaciones"] = [LUIS]
+    multiusuario["visitas"] = [VISITA_LUIS]
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["amigo_abierto"] = "luis"                          # lo que hace tocar su círculo
+    at = correr(at, seccion="perfil")
+    assert any("% de gustos en común" in m.value for m in at.markdown)
+    metricas = {m.label: m.value for m in at.metric}
+    assert metricas["Ha ido a"] == "1" and metricas["Nota media"] == "4,5 ★"
+    assert any(m.value.startswith("🍽️ Cocina favorita: **") for m in at.markdown)
+    assert any(m.value.startswith("**En común**") for m in at.markdown)
+
+
+def test_globito_de_solicitudes_en_la_barra(multiusuario):
+    import re
+    multiusuario["relaciones"] = [EVA, {**EVA, "usuario": "pepe@x.com", "alias": "pepe"}, LUIS]
+    at = correr(seccion="inicio")
+    barra = [c for c in at.get("bidi_component") if "barra_secciones" in str(c.proto)][0]
+    assert re.search(r"avisos\W+2\b", str(barra.proto))                # 2 solicitudes recibidas (Luis ya es amigo)

@@ -18,3 +18,25 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
 
 /* Ficha: el recuadro de la valoración se pone verde si ya has ido (contenedor con key "visitado_" + id del restaurante). */
 [class*="st-key-visitado_"] { background: rgba(22, 163, 74, 0.10); border: 1px solid #16A34A !important; border-radius: 12px; }
+
+/* Perfil, "Tus estadísticas": el nº de restaurantes es un botón (lleva a Mi lista) con pinta de cifra grande. */
+/* Como st.metric: la palabra pequeña arriba y la cifra grande debajo (column-reverse: en el texto va primero
+   la cifra), con la flecha al lado para que se vea que se puede tocar. */
+.st-key-ver_mi_lista button { padding: 0; min-height: 0; color: var(--st-text-color); }
+.st-key-ver_mi_lista button p {
+  display: flex; flex-direction: column-reverse; align-items: flex-start; font-size: 14px; line-height: 1.6;
+}
+.st-key-ver_mi_lista button strong { font-size: 2.25rem; font-weight: 400; line-height: 1.15; }
+
+/* Perfil, gráfica de cocinas: solo se toca (lleva a Mi lista). Sin barra de herramientas (tabla, descargar,
+   pantalla completa), sin seleccionar el texto al arrastrar y, en el móvil, el dedo desplaza la página. */
+.st-key-grafica_cocinas [data-testid="stElementToolbar"] { display: none; }
+.st-key-grafica_cocinas .vega-embed { user-select: none; -webkit-user-select: none; touch-action: pan-y; }
+
+/* Amigos: avatar redondo (foto de Google o inicial sobre su color) y solicitudes destacadas */
+.avatar-amigo {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 50%; overflow: hidden; color: #FFFFFF; font-weight: 700; vertical-align: middle;
+}
+.avatar-amigo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+[class*="st-key-solicitud_"] { background: rgba(194, 65, 12, 0.08); border: 1px solid var(--st-primary-color) !important; }

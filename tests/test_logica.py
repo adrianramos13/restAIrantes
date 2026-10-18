@@ -11,7 +11,7 @@ from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_1, COL_VOTOS_2, OR
                     ORDEN_NOMBRE, ORDEN_PUNTUACION, ORDEN_RESENAS, SCORE_COCINA_DESCONOCIDA,
                     SCORE_COCINA_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, parsear_rango_precio, puntuacion_cocina, solapamiento,
-                    sugerencia_plato, hace_cuanto)
+                    sugerencia_plato, hace_cuanto, compatibilidad, cocina_favorita, en_comun)
 
 
 @pytest.mark.parametrize("texto, esperado", [
@@ -178,3 +178,23 @@ def test_hace_cuanto():
     assert hace_cuanto("2026-10-12T23:59:00+00:00", ahora) == "ayer"
     assert hace_cuanto("2026-10-10T12:00:00.123456+00:00", ahora) == "hace 3 días"
     assert hace_cuanto("2026-09-01T12:00:00+00:00", ahora) == "01/09"
+
+
+
+def test_cocina_favorita_y_en_comun():
+    m = maestro_de_prueba()
+    assert cocina_favorita(m) == "Italiana"
+    assert cocina_favorita(pd.DataFrame()) is None
+    assert en_comun(m, m[m["ID"].isin([2, 3, 9])]) == {2, 3}
+    assert en_comun(m, pd.DataFrame()) == set()
+
+
+def test_compatibilidad():
+    m = maestro_de_prueba()                                  # 5 italianos y 1 japonés
+    assert compatibilidad(m, m, {}, {}) == 100               # mismas cocinas, sin notas en común
+    japones = m[m["ID"] == 3]
+    assert compatibilidad(m, japones, {}, {}) == 20          # coseno de (5, 1) y (0, 1) = 1/raíz(26) -> 20 %
+    # dos sitios valorados por los dos con 1 estrella de diferencia: notas = 1 - 1/4,5 -> 78 %
+    assert compatibilidad(m, m, {1: 5, 2: 4}, {1: 4, 2: 5}) == round(100 * (0.6 + 0.4 * (1 - 1 / 4.5)))
+    assert compatibilidad(m, m, {1: 5}, {1: 1}) == 100       # un solo sitio en común: no cuenta todavía
+    assert compatibilidad(m, pd.DataFrame(), {}, {}) is None
