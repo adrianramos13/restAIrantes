@@ -171,3 +171,22 @@ def test_mi_lista_dice_cuantos_filtros_hay_puestos():
     assert at.status[0].label == "Filtros (1)"
     at.slider(key="ml_nota").set_value(4.0).run()
     assert at.status[0].label == "Filtros (2)"
+
+
+
+def test_tocar_mi_lista_en_la_barra_quita_todos_los_filtros():
+    at = nueva_app(seccion="mi_lista")
+    at.text_input(key="ml_texto").input("sushi").run()
+    at.multiselect(key="ml_cocinas").select("Japonesa").run()
+    at.slider(key="ml_nota").set_value(4.5).run()
+    at.toggle(key="ml_cerrados").set_value(True).run()
+    assert at.status[0].label == "Filtros (3)"
+    at.session_state["seccion"] = "perfil"
+    at.run()
+    at.session_state["seccion"] = "mi_lista"
+    at.session_state["limpiar_mi_lista"] = True                         # lo que hace tocar "Mi lista" en la barra
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.text_input(key="ml_texto").value == "" and at.multiselect(key="ml_cocinas").value == []
+    assert at.slider(key="ml_nota").value == 0.0 and at.toggle(key="ml_cerrados").value is False
+    assert at.status[0].label == "Filtros"

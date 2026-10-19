@@ -750,10 +750,25 @@ def ir_a(seccion):
     st.session_state["seccion"] = seccion
 
 
+# Filtros de "Mi lista": entrar desde la barra (o volver a tocarla) los quita todos. Los atajos que llevan a
+# Mi lista con un filtro puesto ("Ver en formato lista", una cocina de la gráfica) no pasan por aquí.
+FILTROS_MI_LISTA = ("ml_idos", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados",
+                    "ml_orden")
+
+
 def _al_cambiar_seccion():
     seccion = st.session_state["barra_secciones"].seccion
+    if seccion == "mi_lista":
+        st.session_state["limpiar_mi_lista"] = True
     if seccion in SECCIONES:
         ir_a(seccion)
+
+
+def limpiar_filtros_mi_lista():
+    """Si se ha tocado "Mi lista" en la barra, vuelve a dibujarse sin ningún filtro (como recién abierta)."""
+    if st.session_state.pop("limpiar_mi_lista", False):
+        for clave in FILTROS_MI_LISTA:
+            st.session_state.pop(clave, None)
 
 
 def barra_secciones(seccion, foto=None, avisos=0):
@@ -1260,6 +1275,7 @@ else:
     maestro, df_platos = cargar_datos()
 
 seccion = st.session_state.setdefault("seccion", "inicio")
+limpiar_filtros_mi_lista()
 conservar_formularios(seccion)
 
 momento_portada = nombre_usuario = None
