@@ -44,6 +44,11 @@ def _color(p):
     return PALETA[zlib.crc32(str(p.get("alias") or p.get("usuario") or "").encode()) % len(PALETA)]
 
 
+def datos_avatar(p):
+    """Lo que necesita un avatar en el navegador: inicial, color y foto (si es válida)."""
+    return {"inicial": _nombre(p)[:1].upper(), "color": _color(p), "foto": bd.foto_valida(p.get("foto"))}
+
+
 def avatar_html(p, tam=48):
     """Círculo con la foto de Google de la persona o, si no tiene, su inicial sobre su color."""
     foto = bd.foto_valida(p.get("foto"))

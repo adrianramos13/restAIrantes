@@ -872,8 +872,9 @@ def test_foto_propia_manda_sobre_la_de_google(multiusuario):
     assert multiusuario["fotos_guardadas"] == []                        # la de Google no la pisa
     barra = [c for c in at.get("bidi_component") if "barra_secciones" in str(c.proto)][0]
     assert FOTO_PROPIA in str(barra.proto)                              # la barra enseña la propia
-    assert any("Ahora tienes tu propia foto." in c.value for c in at.caption)
-    assert at.button(key="guardar_foto").disabled                      # sin archivo elegido, nada que guardar
+    avatar = [c for c in at.get("bidi_component") if "avatar_perfil" in str(c.proto)]
+    assert avatar and FOTO_PROPIA in str(avatar[0].proto)                # arriba, la foto que se toca para cambiarla
+    assert "foto_perfil_0" not in str(at.main)                          # ya no hay barra para subir archivos
 
 
 def test_quitar_mi_foto(multiusuario, monkeypatch):
@@ -889,4 +890,17 @@ def test_quitar_mi_foto(multiusuario, monkeypatch):
 def test_sin_foto_propia_no_hay_boton_de_quitar(multiusuario):
     at = correr(seccion="perfil")
     assert "quitar_foto" not in [b.key for b in at.button]
-    assert any("Ahora se ve la de tu cuenta de Google." in c.value for c in at.caption)
+
+
+@pytest.mark.parametrize("texto", ["no es una foto", "data:text/html;base64,PGh0bWw+", "data:image/svg+xml;base64,PHN2Zz4=",
+                                   "data:image/jpeg;base64," + "A" * (8 * 1024 * 1024)],
+                         ids=["texto", "html", "svg", "demasiado_grande"])
+def test_foto_desde_data_url_rechaza(texto):
+    with pytest.raises(ValueError):
+        datos.foto_desde_data_url(texto)
+
+
+def test_foto_desde_data_url():
+    import base64
+    jpeg = datos.preparar_foto_perfil(_imagen(100, 100))
+    assert datos.foto_desde_data_url("data:image/jpeg;base64," + base64.b64encode(jpeg).decode()) == jpeg
