@@ -741,8 +741,8 @@ _BARRA = st.components.v2.component(
 # Widgets de cada sección cuyo valor tiene que sobrevivir mientras se está en otra.
 CLAVES_FORMULARIOS = {
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
-    "mi_lista": ("ml_idos", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados",
-                 "ml_orden"),
+    # sin "ml_idos" (solo los que he ido): lo activa "Ver en formato lista" y se olvida al salir de Mi lista
+    "mi_lista": ("ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
 }
 
 
@@ -994,6 +994,44 @@ def bloque_datos_personales(usuario, nombre):
         st.rerun()   # todo saluda ya con el nombre nuevo
 
 
+def bloque_foto_perfil(usuario, nombre, perfil, foto):
+    """Foto de perfil propia: se sube desde la galería o la cámara, se guarda cuadrada y pequeña (sin datos
+    ocultos como el GPS) y manda sobre la de Google. `foto`: la que se ve ahora."""
+    st.markdown("**Foto de perfil**")
+    propia = (perfil or {}).get("foto") if bd.es_foto_propia((perfil or {}).get("foto")) else None
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.html(amigos.avatar_html({"nombre": nombre, "usuario": usuario, "alias": (perfil or {}).get("alias"),
+                                    "foto": foto}, 64), width="content")
+        st.caption("Es la que ven tus amigos. " + ("Ahora tienes tu propia foto." if propia else
+                   "Ahora se ve la de tu cuenta de Google." if foto else "Ahora se ve tu inicial."))
+    vez = st.session_state.get("fotos_subidas", 0)   # cambia la key del selector para vaciarlo tras guardar
+    archivo = st.file_uploader("Elegir una foto", type=["jpg", "jpeg", "png", "webp"], key=f"foto_perfil_{vez}",
+                               help=f"JPG, PNG o WEBP de menos de {bd.MAX_BYTES_FOTO // (1024 * 1024)} MB.")
+    with st.container(horizontal=True):
+        guardar = st.button("Guardar foto", type="primary", icon=":material/check:", key="guardar_foto",
+                            disabled=archivo is None)
+        quitar = bool(propia) and st.button("Quitar mi foto", type="tertiary", icon=":material/delete:",
+                                            key="quitar_foto")
+    if not (guardar or quitar):
+        return
+    try:
+        if guardar:
+            BD.subir_foto_perfil(usuario, nombre, archivo.getvalue(), anterior=propia)
+        else:
+            BD.quitar_foto_perfil(usuario, nombre, anterior=propia)
+    except ValueError as e:
+        st.error(str(e))
+        return
+    except bd.ErrorSupabase:
+        st.error("No se ha podido guardar la foto ahora mismo (¿falta ejecutar supabase/007_foto_propia.sql?).")
+        return
+    cargar_perfil.clear()
+    amigos.limpiar_cache()
+    st.session_state["fotos_subidas"] = vez + 1
+    st.session_state["foto_guardada"] = True   # que la de Google no se ponga encima en esta visita
+    st.rerun()
+
+
 def pedir_sincronizar_lista(usuario, enlace):
     """Devuelve un mensaje de error para el usuario, o None si se ha pedido bien."""
     enlace = (enlace or "").strip()
@@ -1131,9 +1169,9 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
         bloque_estadisticas(maestro)
         return
     with st.container(horizontal=True, vertical_alignment="center"):
-        if google.get("foto"):
-            st.image(google["foto"], width=72)
         alias = (perfil or {}).get("alias")
+        st.html(amigos.avatar_html({"nombre": nombre, "usuario": usuario, "alias": alias, "foto": google.get("foto")}, 72),
+                width="content")
         st.markdown(f"### {nombre}\n" + (f"**@{alias}**  \n" if alias else "") + usuario)
     with st.container(border=True):
         bloque_estadisticas(maestro)
@@ -1148,6 +1186,7 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
         bloque_preferencias(usuario, nombre, preferencias)
     with st.container(border=True):
         bloque_datos_personales(usuario, nombre)
+        bloque_foto_perfil(usuario, nombre, perfil, google.get("foto"))
     st.button("Cerrar sesión", on_click=acceso.cerrar_sesion, args=(CUENTAS,), icon=":material/logout:",
               width="stretch", key="cerrar_sesion")
 
@@ -1173,8 +1212,9 @@ def confirmacion_de_correo_activa():
 def guardar_foto_de_google(usuario, nombre, perfil, google):
     """Guarda (una vez por visita) la foto de Google del usuario en su perfil, para que la vean sus amigos."""
     foto = bd.foto_valida(google.get("foto"))
-    if not foto or (perfil or {}).get("foto") == foto or st.session_state.get("foto_guardada"):
-        return
+    actual = (perfil or {}).get("foto")
+    if not foto or actual == foto or bd.es_foto_propia(actual) or st.session_state.get("foto_guardada"):
+        return   # sin foto de Google, ya guardada, o el usuario ha puesto la suya (esa manda)
     st.session_state["foto_guardada"] = True
     try:
         BD.guardar_foto(usuario, nombre, foto)
@@ -1226,6 +1266,8 @@ if CONFIG_MULTIUSUARIO:
         perfil = None
     nombre_usuario = nombre_visible(usuario, perfil, google)
     guardar_foto_de_google(usuario, nombre_usuario, perfil, google)
+    # La foto que se ve en todas partes: la propia si la ha subido; si no, la de Google; si no, la inicial.
+    google = {**google, "foto": bd.foto_valida((perfil or {}).get("foto")) or bd.foto_valida(google.get("foto"))}
     dueno = f"@{perfil['alias']}" if (perfil or {}).get("alias") else nombre_usuario   # sin @usuario aún: el nombre
     momento_portada = f"🍽️ Los restaurantes de {html.escape(dueno)}<br>{len(maestro)} sitios"
 preferencias = bd.preferencias_validas((perfil or {}).get("preferencias"))
