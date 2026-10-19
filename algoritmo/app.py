@@ -994,42 +994,44 @@ def bloque_datos_personales(usuario, nombre):
         st.rerun()   # todo saluda ya con el nombre nuevo
 
 
-def bloque_foto_perfil(usuario, nombre, perfil, foto):
-    """Foto de perfil propia: se sube desde la galería o la cámara, se guarda cuadrada y pequeña (sin datos
-    ocultos como el GPS) y manda sobre la de Google. `foto`: la que se ve ahora."""
-    st.markdown("**Foto de perfil**")
+_AVATAR_PERFIL = st.components.v2.component(
+    "avatar_perfil", html=recurso("avatar_perfil.html"), css=recurso("avatar_perfil.css"),
+    js=recurso("avatar_perfil.js"),
+)
+
+
+def foto_de_perfil_editable(usuario, nombre, perfil, foto):
+    """Arriba en el Perfil: tu foto (o tu inicial). Al tocarla se elige otra en el móvil y se sube sola; manda
+    sobre la de Google. Devuelve la foto propia (o None) para el "Quitar foto" de al lado."""
     propia = (perfil or {}).get("foto") if bd.es_foto_propia((perfil or {}).get("foto")) else None
-    with st.container(horizontal=True, vertical_alignment="center"):
-        st.html(amigos.avatar_html({"nombre": nombre, "usuario": usuario, "alias": (perfil or {}).get("alias"),
-                                    "foto": foto}, 64), width="content")
-        st.caption("Es la que ven tus amigos. " + ("Ahora tienes tu propia foto." if propia else
-                   "Ahora se ve la de tu cuenta de Google." if foto else "Ahora se ve tu inicial."))
-    vez = st.session_state.get("fotos_subidas", 0)   # cambia la key del selector para vaciarlo tras guardar
-    archivo = st.file_uploader("Elegir una foto", type=["jpg", "jpeg", "png", "webp"], key=f"foto_perfil_{vez}",
-                               help=f"JPG, PNG o WEBP de menos de {bd.MAX_BYTES_FOTO // (1024 * 1024)} MB.")
-    with st.container(horizontal=True):
-        guardar = st.button("Guardar foto", type="primary", icon=":material/check:", key="guardar_foto",
-                            disabled=archivo is None)
-        quitar = bool(propia) and st.button("Quitar mi foto", type="tertiary", icon=":material/delete:",
-                                            key="quitar_foto")
-    if not (guardar or quitar):
-        return
+    _AVATAR_PERFIL(key="avatar_perfil", width="content", data=amigos.datos_avatar({"nombre": nombre, "usuario": usuario,
+                                                                  "alias": (perfil or {}).get("alias"), "foto": foto}),
+                   on_foto_change=lambda: cambiar_foto_de_perfil(usuario, nombre, propia),
+                   on_error_change=lambda: st.session_state.update(
+                       error_foto="No se ha podido leer esa foto: prueba con otra (JPG, PNG o WEBP)."))
+    return propia
+
+
+def cambiar_foto_de_perfil(usuario, nombre, propia, quitar=False):
+    """Callback del avatar (foto nueva desde el navegador) y de "Quitar foto"."""
     try:
-        if guardar:
-            BD.subir_foto_perfil(usuario, nombre, archivo.getvalue(), anterior=propia)
-        else:
+        if quitar:
             BD.quitar_foto_perfil(usuario, nombre, anterior=propia)
+        else:
+            nueva = st.session_state["avatar_perfil"].foto
+            if not nueva:
+                return
+            BD.subir_foto_perfil(usuario, nombre, bd.foto_desde_data_url(nueva), anterior=propia)
     except ValueError as e:
-        st.error(str(e))
+        st.session_state["error_foto"] = str(e)
         return
     except bd.ErrorSupabase:
-        st.error("No se ha podido guardar la foto ahora mismo (¿falta ejecutar supabase/007_foto_propia.sql?).")
+        st.session_state["error_foto"] = ("No se ha podido guardar la foto ahora mismo (¿falta ejecutar "
+                                          "supabase/007_foto_propia.sql?).")
         return
     cargar_perfil.clear()
     amigos.limpiar_cache()
-    st.session_state["fotos_subidas"] = vez + 1
     st.session_state["foto_guardada"] = True   # que la de Google no se ponga encima en esta visita
-    st.rerun()
 
 
 def pedir_sincronizar_lista(usuario, enlace):
@@ -1168,11 +1170,16 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
         st.header("Perfil")
         bloque_estadisticas(maestro)
         return
+    alias = (perfil or {}).get("alias")
     with st.container(horizontal=True, vertical_alignment="center"):
-        alias = (perfil or {}).get("alias")
-        st.html(amigos.avatar_html({"nombre": nombre, "usuario": usuario, "alias": alias, "foto": google.get("foto")}, 72),
-                width="content")
-        st.markdown(f"### {nombre}\n" + (f"**@{alias}**  \n" if alias else "") + usuario)
+        propia = foto_de_perfil_editable(usuario, nombre, perfil, google.get("foto"))
+        with st.container(gap="small"):
+            st.markdown(f"### {nombre}\n" + (f"**@{alias}**  \n" if alias else "") + usuario)
+            if propia:
+                st.button("Quitar foto", type="tertiary", icon=":material/delete:", key="quitar_foto",
+                          on_click=cambiar_foto_de_perfil, args=(usuario, nombre, propia, True))
+    if st.session_state.get("error_foto"):
+        st.error(st.session_state.pop("error_foto"))
     with st.container(border=True):
         bloque_estadisticas(maestro)
     with st.container(border=True):
@@ -1186,7 +1193,6 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
         bloque_preferencias(usuario, nombre, preferencias)
     with st.container(border=True):
         bloque_datos_personales(usuario, nombre)
-        bloque_foto_perfil(usuario, nombre, perfil, google.get("foto"))
     st.button("Cerrar sesión", on_click=acceso.cerrar_sesion, args=(CUENTAS,), icon=":material/logout:",
               width="stretch", key="cerrar_sesion")
 

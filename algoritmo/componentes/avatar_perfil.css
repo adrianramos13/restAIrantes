@@ -1,0 +1,28 @@
+/* Perfil: tu foto. Al tocarla se elige otra (galería o cámara) y se sube sola. */
+.avatar-perfil { display: inline-block; font-family: var(--st-font, sans-serif); }
+.cambiar { all: unset; position: relative; display: block; cursor: pointer; border-radius: 50%; }
+.cambiar:focus-visible { outline: 2px solid var(--st-primary-color); outline-offset: 3px; }
+.circulo {
+  position: relative; width: 76px; height: 76px; border-radius: 50%; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.circulo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.circulo [hidden] { display: none; }
+.inicial { color: #FFFFFF; font-size: 32px; font-weight: 700; }
+.camara {
+  position: absolute; right: -2px; bottom: -2px; width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--st-primary-color); box-shadow: 0 0 0 3px var(--st-background-color);
+}
+.camara svg { width: 16px; height: 16px; fill: var(--st-background-color); }
+.cargando {
+  position: absolute; inset: 0; border-radius: 50%; display: none;
+  background: rgba(0, 0, 0, 0.45);
+}
+.cargando::after {
+  content: ""; position: absolute; inset: 26px; border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.35); border-top-color: #FFFFFF; animation: girar 0.8s linear infinite;
+}
+.subiendo .cargando { display: block; }
+@keyframes girar { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .cargando::after { animation: none; } }

@@ -7,6 +7,7 @@ SOLO desde el servidor de Streamlit o tu ordenador, nunca en el navegador. Las t
 supabase/esquema.sql.
 """
 
+import base64
 import io
 import math
 import re
@@ -183,6 +184,19 @@ def foto_valida(url):
     if not isinstance(url, str) or len(url) > 500:
         return None
     return url if _FOTO_GOOGLE.match(url) or _FOTO_PROPIA.match(url) else None
+
+
+_DATA_URL_FOTO = re.compile(r"^data:image/(?:jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$")
+
+
+def foto_desde_data_url(texto):
+    """La foto que manda el navegador ("data:image/jpeg;base64,...") -> sus bytes. ValueError si no vale."""
+    if not isinstance(texto, str) or len(texto) > MAX_BYTES_FOTO * 4 // 3 + 100:
+        raise ValueError(f"La foto tiene que ocupar menos de {MAX_BYTES_FOTO // (1024 * 1024)} MB.")
+    encontrada = _DATA_URL_FOTO.match(texto)
+    if not encontrada:
+        raise ValueError("No parece una foto: usa una imagen JPG, PNG o WEBP.")
+    return base64.b64decode(encontrada.group(1))
 
 
 def es_foto_propia(url):
