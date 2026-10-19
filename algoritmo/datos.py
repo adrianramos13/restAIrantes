@@ -7,10 +7,12 @@ SOLO desde el servidor de Streamlit o tu ordenador, nunca en el navegador. Las t
 supabase/esquema.sql.
 """
 
+import io
 import math
 import re
 import unicodedata
 import urllib.parse
+import uuid
 from datetime import datetime, timezone
 
 import numpy as np
@@ -167,13 +169,43 @@ def _comillas(valor):
     return '"' + str(valor).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-# Solo fotos de cuentas de Google (las únicas que llegan del login): se enseñan a los amigos como <img>.
-_FOTO_VALIDA = re.compile(r"^https://[a-z0-9.-]+\.googleusercontent\.com/[^\s\"'<>]*$")
+# Fotos de perfil: la de la cuenta de Google o una propia subida a nuestro almacenamiento (perfiles/<hex>.jpg).
+# Se enseñan a los amigos como <img>, así que no vale cualquier URL (lo mismo exige 007_foto_propia.sql).
+_FOTO_GOOGLE = re.compile(r"^https://[a-z0-9.-]+\.googleusercontent\.com/[^\s\"'<>]*$")
+_FOTO_PROPIA = re.compile(r"^https://[a-z0-9-]+\.supabase\.co/storage/v1/object/public/fotos/perfiles/[0-9a-f]{32}\.jpg$")
+LADO_FOTO_PERFIL = 256                  # px: se guarda cuadrada y pequeña
+MAX_BYTES_FOTO = 5 * 1024 * 1024        # lo más grande que se acepta al subirla
+MAX_PIXELES_FOTO = 40_000_000           # imágenes enormes (o "bombas" de descompresión): fuera
 
 
 def foto_valida(url):
-    """La URL de la foto si es una foto de Google; si no, None."""
-    return url if isinstance(url, str) and len(url) <= 500 and _FOTO_VALIDA.match(url) else None
+    """La URL de la foto si es una foto de Google o una propia de nuestro almacenamiento; si no, None."""
+    if not isinstance(url, str) or len(url) > 500:
+        return None
+    return url if _FOTO_GOOGLE.match(url) or _FOTO_PROPIA.match(url) else None
+
+
+def es_foto_propia(url):
+    return isinstance(url, str) and bool(_FOTO_PROPIA.match(url))
+
+
+def preparar_foto_perfil(contenido):
+    """Foto subida por el usuario -> JPEG cuadrado de 256 px (recortada al centro, girada según el móvil y
+    sin metadatos: ni GPS ni nada). ValueError con un mensaje para el usuario si no vale."""
+    from PIL import Image, ImageOps, UnidentifiedImageError
+    if not contenido or len(contenido) > MAX_BYTES_FOTO:
+        raise ValueError(f"La foto tiene que ocupar menos de {MAX_BYTES_FOTO // (1024 * 1024)} MB.")
+    try:
+        with Image.open(io.BytesIO(contenido)) as img:
+            if img.width * img.height > MAX_PIXELES_FOTO:
+                raise ValueError("La foto es demasiado grande.")
+            img = ImageOps.exif_transpose(img).convert("RGB")
+            img = ImageOps.fit(img, (LADO_FOTO_PERFIL, LADO_FOTO_PERFIL), method=Image.Resampling.LANCZOS)
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as e:
+        raise ValueError("No parece una foto: usa una imagen JPG, PNG o WEBP.") from e
+    salida = io.BytesIO()
+    img.save(salida, format="JPEG", quality=85)
+    return salida.getvalue()
 
 
 ALIAS_VALIDO = re.compile(r"^[a-z0-9_.]{3,20}$")   # el mismo check que la tabla perfiles
@@ -363,9 +395,9 @@ class Supabase:
         return {f["usuario"]: f for f in filas}
 
     def guardar_foto(self, usuario, nombre, foto):
-        """Foto de Google del usuario (la ven sus amigos). Solo se guarda si es una foto de Google."""
+        """Foto de perfil del usuario (la ven sus amigos): la de Google o una propia (subir_foto_perfil)."""
         if foto_valida(foto) is None:
-            raise ValueError("Solo se guardan fotos de cuentas de Google.")
+            raise ValueError("Solo se guardan fotos de Google o subidas a la app.")
         self._rest("POST", "perfiles", params={"on_conflict": "usuario"}, prefer="resolution=merge-duplicates",
                    json={"usuario": usuario, "nombre": nombre, "foto": foto, "actualizado_en": _ahora()})
 
@@ -475,6 +507,32 @@ class Supabase:
                           headers={**self._cabeceras, "Content-Type": "image/jpeg", "x-upsert": "true"})
         if not r.ok:
             raise ErrorSupabase(f"subir foto {archivo}: {r.status_code} {r.text[:200]}")
+
+    def subir_foto_perfil(self, usuario, nombre, contenido, anterior=None):
+        """Sube una foto propia (ya preparada aquí: cuadrada, pequeña y sin metadatos) y la pone en el perfil.
+        El nombre del archivo es aleatorio; si había otra propia, se borra. Devuelve la URL."""
+        archivo = f"perfiles/{uuid.uuid4().hex}.jpg"
+        self.subir_foto(archivo, preparar_foto_perfil(contenido))
+        url = self.url_foto(archivo)
+        self.guardar_foto(usuario, nombre, url)
+        self._borrar_foto_propia(anterior)
+        return url
+
+    def quitar_foto_perfil(self, usuario, nombre, anterior=None):
+        """Sin foto propia: se ve la de Google (si entra con Google) o la inicial."""
+        self._rest("POST", "perfiles", params={"on_conflict": "usuario"}, prefer="resolution=merge-duplicates",
+                   json={"usuario": usuario, "nombre": nombre, "foto": None, "actualizado_en": _ahora()})
+        self._borrar_foto_propia(anterior)
+
+    def _borrar_foto_propia(self, url):
+        if not es_foto_propia(url):
+            return
+        archivo = url.split(f"/public/{BUCKET_FOTOS}/", 1)[1]
+        try:
+            requests.delete(f"{self.url}/storage/v1/object/{BUCKET_FOTOS}/{archivo}", headers=self._cabeceras,
+                            timeout=TIMEOUT_S)
+        except requests.RequestException:
+            pass   # solo queda un archivo sin usar en el almacenamiento: no merece fallar por eso
 
     def url_foto(self, archivo):
         return url_foto(self.url, archivo)

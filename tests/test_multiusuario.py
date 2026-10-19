@@ -705,6 +705,9 @@ def test_portada_con_el_arroba_si_lo_tiene(multiusuario):
 
 @pytest.mark.parametrize("url, valida", [
     ("https://lh3.googleusercontent.com/a/ACg8ocJ=s96-c", True),
+    ("https://abcd.supabase.co/storage/v1/object/public/fotos/perfiles/" + "a1" * 16 + ".jpg", True),   # propia
+    ("https://abcd.supabase.co/storage/v1/object/public/fotos/casa-pepe.jpg", False),   # foto de restaurante
+    ("https://abcd.supabase.co/storage/v1/object/public/fotos/perfiles/x.svg", False),
     ("http://lh3.googleusercontent.com/a/x", False),                 # sin https
     ("https://googleusercontent.com.evil.com/a/x", False),
     ("https://evil.com/?u=https://lh3.googleusercontent.com/a", False),
@@ -802,3 +805,88 @@ def test_ver_mis_visitas_en_formato_lista(multiusuario):
     assert any(c.value == "3 de 3 restaurantes" for c in at.caption)    # solo los 3 a los que has ido
     at.toggle(key="ml_idos").set_value(False).run()                     # y se puede volver a la lista entera
     assert not any(c.value == "3 de 3 restaurantes" for c in at.caption)
+
+
+def test_solo_los_que_he_ido_se_olvida_al_cambiar_de_pestana(multiusuario):
+    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com"}]
+    at = correr(seccion="perfil")
+    at.button(key="mis_visitas_en_lista").click().run()
+    assert at.toggle(key="ml_idos").value
+    at.session_state["seccion"] = "inicio"
+    at.run()
+    at.session_state["seccion"] = "mi_lista"                            # volver a Mi lista desde la barra
+    at.run()
+    assert not at.exception and at.toggle(key="ml_idos").value is False
+
+
+
+def _imagen(ancho, alto, formato="PNG"):
+    import io
+    from PIL import Image
+    salida = io.BytesIO()
+    Image.new("RGB", (ancho, alto), (200, 80, 20)).save(salida, format=formato)
+    return salida.getvalue()
+
+
+def test_preparar_foto_perfil_la_deja_cuadrada_y_pequena():
+    import io
+    from PIL import Image
+    jpeg = datos.preparar_foto_perfil(_imagen(1200, 800))
+    with Image.open(io.BytesIO(jpeg)) as img:
+        assert (img.format, img.size) == ("JPEG", (256, 256))
+        assert not img.getexif()                                     # sin metadatos (ni GPS)
+
+
+@pytest.mark.parametrize("contenido", [b"", b"esto no es una imagen", b"x" * (5 * 1024 * 1024 + 1)],
+                         ids=["vacio", "no_es_imagen", "mas_de_5_mb"])
+def test_preparar_foto_perfil_rechaza(contenido):
+    with pytest.raises(ValueError):
+        datos.preparar_foto_perfil(contenido)
+
+
+def test_subir_foto_perfil(monkeypatch):
+    subidas, borradas = [], []
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
+    monkeypatch.setattr(datos.Supabase, "subir_foto", lambda self, archivo, contenido: subidas.append((archivo, contenido)))
+    monkeypatch.setattr(datos.requests, "delete", lambda url, **kw: borradas.append(url))
+    anterior = "https://x.supabase.co/storage/v1/object/public/fotos/perfiles/" + "b2" * 16 + ".jpg"
+    url = bd_.subir_foto_perfil("ana@x.com", "Ana", _imagen(300, 300), anterior=anterior)
+    archivo, contenido = subidas[0]
+    assert archivo.startswith("perfiles/") and archivo.endswith(".jpg") and contenido[:2] == b"\xff\xd8"   # JPEG
+    assert datos.es_foto_propia(url) and llamadas[-1][3]["foto"] == url
+    assert borradas == ["https://x.supabase.co/storage/v1/object/fotos/perfiles/" + "b2" * 16 + ".jpg"]
+    bd_.quitar_foto_perfil("ana@x.com", "Ana", anterior=url)
+    assert llamadas[-1][3]["foto"] is None and len(borradas) == 2
+    bd_.quitar_foto_perfil("ana@x.com", "Ana", anterior="https://lh3.googleusercontent.com/a/x")
+    assert len(borradas) == 2                                         # la de Google no es nuestra: no se borra
+
+
+
+FOTO_PROPIA = "https://x.supabase.co/storage/v1/object/public/fotos/perfiles/" + "c3" * 16 + ".jpg"
+
+
+def test_foto_propia_manda_sobre_la_de_google(multiusuario):
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g", "foto": FOTO_PROPIA}
+    at = correr(seccion="perfil")
+    assert not at.exception, [e.value for e in at.exception]
+    assert multiusuario["fotos_guardadas"] == []                        # la de Google no la pisa
+    barra = [c for c in at.get("bidi_component") if "barra_secciones" in str(c.proto)][0]
+    assert FOTO_PROPIA in str(barra.proto)                              # la barra enseña la propia
+    assert any("Ahora tienes tu propia foto." in c.value for c in at.caption)
+    assert at.button(key="guardar_foto").disabled                      # sin archivo elegido, nada que guardar
+
+
+def test_quitar_mi_foto(multiusuario, monkeypatch):
+    quitadas = []
+    monkeypatch.setattr(datos.Supabase, "quitar_foto_perfil",
+                        lambda self, u, n, anterior=None: quitadas.append((u, anterior)))
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g", "foto": FOTO_PROPIA}
+    at = correr(seccion="perfil")
+    at.button(key="quitar_foto").click().run()
+    assert not at.exception and quitadas == [("ana@ejemplo.com", FOTO_PROPIA)]
+
+
+def test_sin_foto_propia_no_hay_boton_de_quitar(multiusuario):
+    at = correr(seccion="perfil")
+    assert "quitar_foto" not in [b.key for b in at.button]
+    assert any("Ahora se ve la de tu cuenta de Google." in c.value for c in at.caption)
