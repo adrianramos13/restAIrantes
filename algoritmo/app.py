@@ -294,10 +294,9 @@ def icono_transporte(modo_transporte):
     return "🚗" if modo_transporte == "En coche" else "🚶"
 
 
-def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None, con_eatlist=True):
+def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
     """Foto, datos, lo que destacan y enlaces de un restaurante. `modo_transporte` solo viene de una
-    búsqueda (trae el tiempo de viaje); `plato`, de una búsqueda con plato o de la idea de Inicio.
-    `con_eatlist=False`: sin el botón de la eatlist (dentro de la propia ventana de la eatlist)."""
+    búsqueda (trae el tiempo de viaje); `plato`, de una búsqueda con plato o de la idea de Inicio."""
     if BD is not None and usuario:
         bloque_valoracion(fila)
     imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
@@ -331,8 +330,7 @@ def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None, con_eatli
         url_ruta += "&travelmode=" + ("driving" if modo_transporte == "En coche" else "walking")
     st.link_button("Cómo llegar", url_ruta, type="primary", icon=":material/directions:", width="stretch")
     if BD is not None and usuario:
-        if con_eatlist:
-            bloque_eatlist(fila)
+        bloque_eatlist(fila)
         bloque_quitar_de_mi_lista(fila)
 
     # Instagram/TikTok no tienen una búsqueda por palabra clave fiable sin iniciar
@@ -390,32 +388,33 @@ def quitar_de_la_eatlist(id_restaurante):
 
 
 def bloque_eatlist(fila):
-    """En la ficha: el botón de la eatlist. Abre su propia ventana (una ventana no puede abrirse dentro de otra, así
-    que se cierra la ficha): ver dialogo_eatlist."""
+    """En la ficha: el botón de la eatlist. Abre "Tu eatlist" como una ventanita encima de la ficha (Streamlit no
+    deja abrir una ventana dentro de otra: es una capa flotante, ver .st-key-capa_eatlist en global.css)."""
     id_restaurante = int(fila["ID"])
     orden = [int(i) for i in mi_eatlist().get("ID", [])]
     esta = id_restaurante in orden
-    if st.button(f"Nº {orden.index(id_restaurante) + 1} en tu eatlist" if esta else "Añadir a mi eatlist",
-                 width="stretch", icon=":material/bookmark_added:" if esta else ":material/bookmark_add:",
-                 key=f"eat_abrir_{id_restaurante}"):
-        st.session_state["eatlist_abrir"] = fila   # la ventana enseña también toda la info del restaurante
-        st.rerun()   # recarga entera: se cierra la ficha y se abre la ventana de la eatlist
+    abierta = f"eat_capa_{id_restaurante}"
+    st.button(f"Nº {orden.index(id_restaurante) + 1} en tu eatlist" if esta else "Añadir a mi eatlist",
+              width="stretch", icon=":material/bookmark_added:" if esta else ":material/bookmark_add:",
+              key=f"eat_abrir_{id_restaurante}", on_click=lambda: st.session_state.update({abierta: True}))
+    if st.session_state.get(abierta):
+        capa_eatlist(fila, orden, abierta)
 
 
-def dialogo_eatlist(fila):
-    """Ventana "Tu eatlist": arriba, en qué puesto va el restaurante (o moverlo / quitarlo); al cambiar el número se
-    ve, sin guardar nada todavía, quién queda justo antes y justo después. Debajo, toda su info (como en la ficha).
-    Al guardar se vuelve a la ficha del restaurante."""
+def capa_eatlist(fila, orden, abierta):
+    """"Tu eatlist" encima de la ficha: en qué puesto va el restaurante (o moverlo / quitarlo). Al cambiar el número
+    se ve, sin guardar nada todavía, quién queda justo antes y justo después."""
     id_restaurante, nombre = int(fila["ID"]), str(fila["Nombre"])
-
-    @st.dialog("Tu eatlist", width="medium")
-    def _ventana():
-        eatlist = mi_eatlist()
-        orden = [int(i) for i in eatlist.get("ID", [])]
-        nombres = dict(zip(orden, eatlist.get("Nombre", [])))
-        nombres[id_restaurante] = nombre
-        esta = id_restaurante in orden
-        actual = orden.index(id_restaurante) + 1 if esta else None
+    nombres = dict(zip(orden, mi_eatlist().get("Nombre", [])))
+    nombres[id_restaurante] = nombre
+    esta = id_restaurante in orden
+    actual = orden.index(id_restaurante) + 1 if esta else None
+    with st.container(key="capa_eatlist"):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.markdown("#### Tu eatlist")
+            st.space("stretch")
+            st.button(":material/close:", type="tertiary", key=f"eat_cerrar_{id_restaurante}", help="Cerrar",
+                      on_click=lambda: st.session_state.pop(abierta, None))
         st.markdown(f"**{amigos.texto_seguro(nombre)}**  \n" + (f"Ahora es el nº {actual} de tu eatlist."
                     if esta else "¿En qué puesto lo quieres? (1 = el que más te apetece)"))
         ultimo = len(orden) if esta else len(orden) + 1
@@ -431,16 +430,8 @@ def dialogo_eatlist(fila):
             guardar = st.button("Mover a este puesto" if esta else "Añadir a la eatlist", type="primary",
                                 width="stretch", key=f"eat_guardar_{id_restaurante}", disabled=esta and puesto == actual)
             quitar = esta and st.button("Quitar", type="tertiary", key=f"eat_quitar_{id_restaurante}")
-        if guardar or quitar:
-            guardar_en_eatlist(orden, id_restaurante, puesto, quitar)
-        st.divider()
-        contenido_ficha(fila, pd.DataFrame(columns=bd.COLUMNAS_PLATOS), con_eatlist=False)   # la info del restaurante
-
-    _ventana()
-
-
-def guardar_en_eatlist(orden, id_restaurante, puesto, quitar):
-    """Guarda el cambio de la ventana de la eatlist, la cierra y vuelve a abrir la ficha del restaurante."""
+    if not (guardar or quitar):
+        return
     nuevo = [i for i in orden if i != id_restaurante] if quitar else insertar_en_orden(orden, id_restaurante, puesto)
     try:
         BD.guardar_eatlist(usuario, nuevo)
@@ -448,10 +439,13 @@ def guardar_en_eatlist(orden, id_restaurante, puesto, quitar):
         st.error("No se ha podido guardar ahora mismo (¿falta ejecutar supabase/008_eatlist.sql?).")
         return
     cargar_eatlist.clear()
+    st.session_state.pop(abierta, None)
     st.toast("Quitado de tu eatlist" if quitar else f"Nº {nuevo.index(id_restaurante) + 1} en tu eatlist",
              icon=":material/bookmark:")
-    st.session_state["ficha_abrir"] = id_restaurante   # de vuelta a la ficha del restaurante
-    st.rerun()   # cierra la ventana
+    try:
+        st.rerun(scope="fragment")   # se cierra la capa y queda la ficha, ya con el botón actualizado
+    except StreamlitAPIException:    # no venía de la ficha (p. ej. en AppTest, que recarga todo)
+        st.rerun()
 
 
 def ids_de_mi_lista():
@@ -1551,8 +1545,6 @@ if CONFIG_MULTIUSUARIO:
     momento_portada = f"🍽️ Los restaurantes de {html.escape(dueno)}<br>{len(maestro)} sitios"
 preferencias = bd.preferencias_validas((perfil or {}).get("preferencias"))
 barra_secciones(seccion, google.get("foto"), amigos.solicitudes_pendientes(BD, usuario) if BD is not None else 0)
-if BD is not None and (pedida := st.session_state.pop("eatlist_abrir", None)) is not None:   # una fila de pandas
-    dialogo_eatlist(pedida)
 
 # Inicio, Mi lista y Perfil trabajan siempre con la lista del usuario; "Comer hoy" es lo de debajo.
 if seccion == "inicio":
