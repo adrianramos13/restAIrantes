@@ -17,7 +17,6 @@ import datos as bd
 from logica import cocina_favorita, compatibilidad, en_comun, hace_cuanto
 
 _COMPONENTES = Path(__file__).resolve().parent / "componentes"
-_FILA = {n: (_COMPONENTES / f"amigos_fila.{n}").read_text(encoding="utf-8") for n in ("html", "css", "js")}
 _BUSCADOR = {n: (_COMPONENTES / f"buscador_amigos.{n}").read_text(encoding="utf-8") for n in ("html", "css", "js")}
 
 # Colores de los avatares sin foto (siempre el mismo para cada persona); todos con texto blanco legible.
@@ -147,8 +146,9 @@ def solicitudes_pendientes(cliente, usuario):
 # ---------------------------------------------------------------- el bloque del Perfil
 
 def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, mostrar_lista):
-    """`mi_lista`: tu lista (DataFrame), para comparar. `mostrar_lista`: la función de app.py que dibuja
-    tarjetas de restaurantes (se usa en el mini perfil de cada amigo)."""
+    """La página de tus amigos (al tocar "amigos" en la cabecera del Perfil): solicitudes, cifras y el listado; al
+    tocar uno, su mini perfil. `mi_lista`: tu lista (DataFrame), para comparar. `mostrar_lista`: la función de
+    app.py que dibuja tarjetas de restaurantes (en el mini perfil). Buscar gente está en Buscar -> Personas."""
     st.subheader("Amigos")
     alias = (perfil or {}).get("alias")
     if not alias:
@@ -169,7 +169,7 @@ def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, 
         listas = {a["usuario"]: cargar_lista_de(cliente, a["usuario"]) for a in amigos}
         mis_valoraciones = cargar_mis_visitas(cliente, usuario)
         _cifras(cliente, amigos, mi_lista, listas)
-        _fila_de_amigos(amigos)
+        _lista_de_amigos(amigos)
     except bd.ErrorSupabase:
         st.caption("No se pueden ver los datos de tus amigos ahora mismo.")
 
@@ -179,8 +179,8 @@ def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, 
             st.button("Cancelar", type="tertiary", key=f"cancelar_{r['alias'] or r['usuario']}",
                       on_click=_accion, args=(cliente.quitar_amistad, usuario, r["usuario"]))
 
-    _buscar_amigos(cliente, usuario, {r["usuario"]: r for r in relaciones})
-    st.caption(f"Tu nombre de usuario es **@{alias}**: dáselo a tus amigos para que te encuentren.")
+    st.caption(f"Tu nombre de usuario es **@{alias}**: dáselo a tus amigos para que te encuentren. Para añadir "
+               "a alguien, búscalo en **Buscar → Personas**.")
 
     abierto = st.session_state.pop("amigo_abierto", None)
     elegido = next((a for a in amigos if (a["alias"] or a["usuario"]) == abierto), None)
@@ -212,23 +212,22 @@ def _cifras(cliente, amigos, mi_lista, listas):
         st.metric("Sitios en común", len(comunes), help="Restaurantes de tu lista que también tiene algún amigo.")
 
 
-def _al_tocar_amigo():
-    clave = st.session_state["fila_amigos"].abrir
-    if clave:
-        st.session_state["amigo_abierto"] = clave
+def _abrir_amigo(clave):
+    st.session_state["amigo_abierto"] = clave
 
 
-def _fila_de_amigos(amigos):
-    """Tus amigos en una fila de círculos que se desliza; al tocar uno se abre su mini perfil."""
+def _lista_de_amigos(amigos):
+    """Tus amigos uno debajo de otro (foto, nombre y @usuario); al tocar "Ver" se abre su mini perfil."""
     if not amigos:
-        st.caption("Todavía no tienes amigos: búscalos abajo por su nombre o @usuario.")
+        st.caption("Todavía no tienes amigos: búscalos en **Buscar → Personas** por su nombre o @usuario.")
         return
-    # Sin % de afinidad: solo se ve al abrir el mini perfil de cada uno.
-    personas = [{"clave": a["alias"] or a["usuario"], "nombre": _nombre(a), "alias": a.get("alias"), "color": _color(a),
-                 "inicial": _nombre(a)[:1].upper(), "foto": bd.foto_valida(a.get("foto"))} for a in amigos]
-    personas.sort(key=lambda p: p["nombre"].lower())
-    st.components.v2.component("fila_amigos", **_FILA)(
-        key="fila_amigos", data={"personas": personas}, on_abrir_change=_al_tocar_amigo)
+    for a in sorted(amigos, key=lambda a: _nombre(a).lower()):
+        clave = a["alias"] or a["usuario"]
+        with st.container(horizontal=True, vertical_alignment="center", key=f"amigo_{re.sub(r'[^a-z0-9_]', '_', clave.lower())}"):
+            st.html(avatar_html(a, 44), width="content")
+            st.markdown(quien(a))
+            st.button("Ver", type="tertiary", icon=":material/chevron_right:", icon_position="right",
+                      key=f"ver_amigo_{clave}", on_click=_abrir_amigo, args=(clave,))
 
 
 def _mini_perfil(cliente, usuario, amigo, mi_lista, su_lista, mis_valoraciones, mostrar_lista):
@@ -295,6 +294,22 @@ def _elegir_alias(cliente, usuario, nombre, al_guardar_alias):
         st.rerun()
 
 
+def buscador_de_personas(cliente, usuario, nombre, perfil, al_guardar_alias):
+    """Buscar -> Personas: buscar gente registrada por su nombre o @usuario y añadirla. Si aún no tienes @usuario,
+    se pide aquí también (sin él no te pueden encontrar)."""
+    if not (perfil or {}).get("alias"):
+        _elegir_alias(cliente, usuario, nombre, al_guardar_alias)
+        st.divider()
+    if st.session_state.get("error_amigos"):
+        st.error(st.session_state.pop("error_amigos"))
+    try:
+        relaciones = cargar_relaciones(cliente, usuario)
+    except bd.ErrorSupabase:
+        st.error("No se puede buscar ahora mismo (¿falta ejecutar supabase/004_amigos.sql?).")
+        return
+    _buscar_amigos(cliente, usuario, {r["usuario"]: r for r in relaciones})
+
+
 def _buscar_amigos(cliente, usuario, conocidos):
     """Buscador propio: al escribir, salen las personas de la base de datos cuyo nombre o @usuario coincide (lo
     filtra el navegador, al momento). Al navegador solo le llegan nombre y @usuario; "Añadir" devuelve el
@@ -314,7 +329,6 @@ def _buscar_amigos(cliente, usuario, conocidos):
         estado = "nuevo" if relacion is None else ("amigo" if relacion["estado"] == "aceptada" else "pendiente")
         personas.append({"alias": p["alias"], "nombre": _nombre(p), "inicial": _nombre(p)[:1].upper(),
                          "color": _color(p), "estado": estado})
-    st.markdown("**Buscar amigos**")
     st.components.v2.component("buscador_amigos", **_BUSCADOR)(
         key="buscador_amigos", data={"personas": personas},
         on_anadir_change=lambda: solicitar_por_alias(cliente, usuario, st.session_state["buscador_amigos"].anadir,
