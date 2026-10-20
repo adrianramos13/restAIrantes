@@ -267,6 +267,15 @@ def visitas_a_dataframe(visitas, nombres):
     return pd.DataFrame(filas)
 
 
+def eatlist_a_dataframe(filas):
+    """Filas de la eatlist (con su restaurante embebido, ya en orden) -> DataFrame como el maestro, más
+    "Posición" (1 = el que más te apetece)."""
+    registros = [{**(f["restaurantes"].get("datos") or {}), "ID": f["restaurantes"]["id"],
+                  "Imagen archivo": f["restaurantes"].get("imagen"), "Posición": f["posicion"]}
+                 for f in filas if f.get("restaurantes")]
+    return pd.DataFrame(registros)
+
+
 def _lotes(elementos, tamano=FILAS_POR_PETICION):
     for i in range(0, len(elementos), tamano):
         yield elementos[i:i + tamano]
@@ -479,6 +488,24 @@ class Supabase:
         if desde is not None:
             params["creado_en"] = f"gte.{desde.isoformat()}"
         return self._rest("GET", "visitas", params=params)
+
+    # ---------------- eatlist (los que quieres probar, en orden) ----------------
+
+    def eatlist_de(self, usuario):
+        return self._rest("GET", "eatlist", params={"usuario": f"eq.{usuario}", "order": "posicion.asc",
+                                                    "select": "posicion,restaurantes(id,datos,imagen)"})
+
+    def guardar_eatlist(self, usuario, ids):
+        """Deja la eatlist del usuario con esos restaurantes y en ese orden (el primero, el nº 1)."""
+        ids = list(dict.fromkeys(int(i) for i in ids))
+        if ids:
+            self._rest("POST", "eatlist", params={"on_conflict": "usuario,restaurante_id"},
+                       prefer="resolution=merge-duplicates",
+                       json=[{"usuario": usuario, "restaurante_id": i, "posicion": n} for n, i in enumerate(ids, 1)])
+        sobran = {"usuario": f"eq.{usuario}"}
+        if ids:
+            sobran["restaurante_id"] = f"not.in.({','.join(map(str, ids))})"
+        self._rest("DELETE", "eatlist", params=sobran)
 
     # ---------------- catálogo compartido ----------------
 

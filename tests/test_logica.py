@@ -11,7 +11,8 @@ from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_1, COL_VOTOS_2, OR
                     ORDEN_NOMBRE, ORDEN_PUNTUACION, ORDEN_RESENAS, SCORE_COCINA_DESCONOCIDA,
                     SCORE_COCINA_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, parsear_rango_precio, puntuacion_cocina, solapamiento,
-                    sugerencia_plato, hace_cuanto, compatibilidad, cocina_favorita, en_comun)
+                    sugerencia_plato, hace_cuanto, compatibilidad, cocina_favorita, en_comun,
+                    insertar_en_orden, insights_perfil, vista_previa_posicion)
 
 
 @pytest.mark.parametrize("texto, esperado", [
@@ -198,3 +199,37 @@ def test_compatibilidad():
     assert compatibilidad(m, m, {1: 5, 2: 4}, {1: 4, 2: 5}) == round(100 * (0.6 + 0.4 * (1 - 1 / 4.5)))
     assert compatibilidad(m, m, {1: 5}, {1: 1}) == 100       # un solo sitio en común: no cuenta todavía
     assert compatibilidad(m, pd.DataFrame(), {}, {}) is None
+
+
+
+def test_insertar_en_orden():
+    assert insertar_en_orden(["A", "B", "C"], "D", 2) == ["A", "D", "B", "C"]
+    assert insertar_en_orden(["A", "B", "C"], "D", 99) == ["A", "B", "C", "D"]      # fuera de rango: al final
+    assert insertar_en_orden(["A", "B", "C"], "D", 0) == ["D", "A", "B", "C"]
+    assert insertar_en_orden(["A", "B", "C"], "A", 3) == ["B", "C", "A"]            # ya estaba: se mueve
+    assert insertar_en_orden([], "D", 5) == ["D"]
+
+
+def test_vista_previa_posicion():
+    # el ejemplo: A, B, C y se quiere poner D en el 2 -> en el 1 queda A y en el 3 queda B
+    assert vista_previa_posicion(["A", "B", "C"], "D", 2) == [(1, "A", False), (2, "D", True), (3, "B", False)]
+    assert vista_previa_posicion(["A", "B", "C"], "D", 1) == [(1, "D", True), (2, "A", False)]
+    assert vista_previa_posicion(["A", "B", "C"], "D", 4) == [(3, "C", False), (4, "D", True)]
+    assert vista_previa_posicion([], "D", 1) == [(1, "D", True)]
+
+
+def test_insights_perfil():
+    from datetime import datetime, timezone
+    m = maestro_de_prueba()                                   # 6 sitios, 5 italianos
+    visitas = pd.DataFrame([
+        {"ID": 1, "Nombre": "Italiano cerca", "Nota visita": 4.5, "Fecha visita": "2026-10-18T20:00:00+00:00"},
+        {"ID": 3, "Nombre": "Japonés", "Nota visita": 5.0, "Fecha visita": "2026-10-02T20:00:00+00:00"},
+        {"ID": 99, "Nombre": "Fuera de mi lista", "Nota visita": None, "Fecha visita": "2026-09-30T20:00:00+00:00"},
+    ])
+    i = insights_perfil(m, visitas, datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc))
+    assert (i["cocina_favorita"], i["sitios_cocina_favorita"]) == ("Italiana", 5)
+    assert i["probado"] == pytest.approx(2 / 6)               # el 99 no está en tu lista
+    assert i["este_mes"] == 2 and i["nota_media"] == pytest.approx(4.75)
+    assert i["favorito"] == ("Japonés", 5.0)
+    vacio = insights_perfil(pd.DataFrame(), pd.DataFrame(), datetime(2026, 10, 20, tzinfo=timezone.utc))
+    assert vacio["cocina_favorita"] is None and vacio["probado"] is None and vacio["favorito"] is None

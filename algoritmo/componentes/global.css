@@ -40,3 +40,31 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
 }
 .avatar-amigo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 [class*="st-key-solicitud_"] { background: rgba(194, 65, 12, 0.08); border: 1px solid var(--st-primary-color) !important; }
+
+/* Perfil, cabecera estilo Instagram: nombre, @usuario pegado debajo y las tres cifras (número arriba, texto debajo). */
+.perfil-nombre { font-family: var(--st-heading-font, serif); font-size: 1.35rem; font-weight: 700; line-height: 1.2; }
+.perfil-alias { font-size: 0.95rem; opacity: 0.7; line-height: 1.3; }
+[class*="st-key-contador_"] button { padding: 0; min-height: 0; color: var(--st-text-color); }
+[class*="st-key-contador_"] button p {
+  display: flex; flex-direction: column; align-items: flex-start; font-size: 13px; line-height: 1.3;
+}
+[class*="st-key-contador_"] button strong { font-size: 1.3rem; font-weight: 700; line-height: 1.2; }
+
+/* Perfil, "Tus datos": tarjetas de dos en dos */
+.insights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.insight {
+  display: flex; flex-direction: column; gap: 2px; padding: 12px; border-radius: 12px;
+  background: var(--st-secondary-background-color); border: 1px solid var(--st-border-color);
+}
+.insight-icono { font-size: 1.2rem; }
+.insight-valor { font-size: 1.25rem; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.insight-texto { font-size: 0.85rem; opacity: 0.75; line-height: 1.3; }
+
+/* Ficha, eatlist: vista previa sutil de cómo quedaría la lista alrededor del puesto elegido */
+.eat-previa {
+  margin-top: -4px; padding: 6px 10px; border-radius: 10px; font-size: 0.88rem;
+  background: var(--st-secondary-background-color); border: 1px dashed var(--st-border-color);
+}
+.eat-fila { display: flex; gap: 10px; padding: 2px 0; opacity: 0.7; }
+.eat-fila.eat-este { opacity: 1; font-weight: 700; color: var(--st-primary-color); }
+.eat-n { min-width: 1.4em; text-align: right; font-variant-numeric: tabular-nums; }

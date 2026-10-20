@@ -349,3 +349,45 @@ def compatibilidad(maestro_a, maestro_b, notas_a, notas_b):
         return round(100 * cocinas)
     notas = 1 - sum(abs(notas_a[i] - notas_b[i]) for i in comunes) / len(comunes) / 4.5
     return round(100 * ((1 - PESO_NOTAS_COMPATIBILIDAD) * cocinas + PESO_NOTAS_COMPATIBILIDAD * notas))
+
+
+def insertar_en_orden(ids, nuevo, posicion):
+    """`ids` en orden con `nuevo` en el puesto `posicion` (1 = el primero); si ya estaba, se mueve allí.
+    Un puesto fuera de rango va al principio o al final."""
+    resto = [i for i in ids if i != nuevo]
+    puesto = max(1, min(int(posicion), len(resto) + 1))
+    return resto[:puesto - 1] + [nuevo] + resto[puesto - 1:]
+
+
+def vista_previa_posicion(ids, nuevo, posicion):
+    """Cómo quedaría la lista alrededor de `nuevo` si se pone en `posicion`: [(puesto, id, es_el_nuevo)] con el
+    de justo antes, el nuevo y el de justo después (los que existan)."""
+    orden = insertar_en_orden(ids, nuevo, posicion)
+    i = orden.index(nuevo)
+    return [(j + 1, orden[j], j == i) for j in range(max(0, i - 1), min(len(orden), i + 2))]
+
+
+def insights_perfil(maestro, visitas, ahora):
+    """Datos directos para el Perfil. `visitas`: tus valoraciones de "He ido" (columnas del restaurante más
+    "Nota visita" y "Fecha visita", de la más reciente a la más antigua); `ahora` con zona horaria."""
+    favorita = cocina_favorita(maestro)
+    columna = _columna_cocina(maestro) if not maestro.empty else None
+    idos = set(visitas["ID"]) if not visitas.empty else set()
+    notas = visitas["Nota visita"].dropna() if not visitas.empty else pd.Series(dtype=float)
+    este_mes = 0 if visitas.empty else sum(
+        1 for f in visitas["Fecha visita"]
+        if (d := datetime.fromisoformat(f).astimezone(ahora.tzinfo)).year == ahora.year and d.month == ahora.month)
+    mejor = None
+    if not notas.empty:
+        fila = visitas.loc[notas.idxmax()]
+        mejor = (str(fila.get("Nombre", "")), float(fila["Nota visita"]))
+    stats = estadisticas_lista(maestro)
+    return {
+        "cocina_favorita": favorita,
+        "sitios_cocina_favorita": int((maestro[columna] == favorita).sum()) if favorita else 0,
+        "probado": len(idos & set(maestro["ID"])) / len(maestro) if not maestro.empty else None,
+        "este_mes": este_mes,
+        "nota_media": float(notas.mean()) if not notas.empty else None,
+        "favorito": mejor,
+        "precio_medio": stats["precio_medio"] if stats else None,
+    }

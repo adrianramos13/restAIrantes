@@ -141,7 +141,7 @@ def test_cambiar_de_seccion_conserva_el_formulario():
     at.slider(key="tiempo").set_value(45).run()
     at.session_state["seccion"] = "perfil"
     at.run()
-    assert not at.exception and any(h.value == "Tus estadísticas" for h in at.subheader)
+    assert not at.exception and any(h.value == "Tus datos" for h in at.subheader)
     at.session_state["seccion"] = "comer"
     at.run()
     assert at.slider(key="tiempo").value == 45
@@ -153,15 +153,6 @@ def test_los_css_no_llevan_menor_que():
     una etiqueta (p. ej. un comentario con "<id>"): todo ese CSS dejaría de aplicarse sin dar ningún error."""
     for css in (RAIZ / "algoritmo" / "componentes").glob("*.css"):
         assert "<" not in css.read_text(encoding="utf-8"), css.name
-
-
-def test_estadisticas_llevan_a_mi_lista():
-    at = nueva_app(seccion="perfil")
-    at.session_state["ml_cocinas"] = ["Italiana"]          # un filtro de antes: "ver todos" lo quita
-    at.button(key="ver_mi_lista").click().run()
-    assert not at.exception, [e.value for e in at.exception]
-    assert at.session_state["seccion"] == "mi_lista" and at.multiselect(key="ml_cocinas").value == []
-    assert at.status[0].label == "Filtros"
 
 
 def test_mi_lista_dice_cuantos_filtros_hay_puestos():

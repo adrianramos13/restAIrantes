@@ -1,0 +1,34 @@
+/* Perfil, pestañas "Diario" y "Eatlist": como un diario (estilo Letterboxd). Cabecera por mes y, en cada fila,
+   un recuadro con el día (o el puesto en la eatlist), la foto, el nombre y la nota. */
+.diario { font-family: var(--st-font, sans-serif); color: var(--st-text-color); }
+.mes {
+  margin: 14px 0 0; padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase; background: var(--st-secondary-background-color); opacity: 0.85;
+}
+.mes:first-child { margin-top: 0; }
+.filas { list-style: none; margin: 0; padding: 0; }
+.fila {
+  all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: flex; align-items: center; gap: 12px;
+  padding: 10px 4px; border-bottom: 1px solid var(--st-border-color);
+}
+.fila:focus-visible { outline: 2px solid var(--st-primary-color); outline-offset: -2px; border-radius: 8px; }
+.fila:active { background: var(--st-secondary-background-color); }
+.caja {
+  flex: none; width: 48px; height: 54px; box-sizing: border-box; border: 1px solid var(--st-border-color);
+  border-radius: 6px; display: flex; align-items: center; justify-content: center;
+  font-size: 24px; font-weight: 300; font-variant-numeric: tabular-nums;
+}
+.caja.puesto { font-weight: 600; color: var(--st-primary-color); }
+.foto { flex: none; width: 54px; height: 54px; border-radius: 8px; overflow: hidden; background: var(--st-primary-color);
+  display: flex; align-items: center; justify-content: center; color: #FFFFFF; font-weight: 700; font-size: 20px; }
+.foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.nombre { font-family: var(--st-heading-font, var(--st-font, serif)); font-size: 17px; font-weight: 600; line-height: 1.25;
+  overflow-wrap: anywhere; }
+.nombre .detalle { font-family: var(--st-font, sans-serif); font-size: 13px; font-weight: 400; opacity: 0.65; }
+.linea { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.estrellas { position: relative; display: inline-block; font-size: 16px; line-height: 1; }
+.estrellas .fondo { color: var(--st-border-color); }
+.estrellas .relleno { position: absolute; left: 0; top: 0; overflow: hidden; white-space: nowrap; color: #F5A524; }
+.icono { width: 16px; height: 16px; fill: currentColor; opacity: 0.6; }
+.vacio { margin: 8px 4px; font-size: 14px; opacity: 0.7; }

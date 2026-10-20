@@ -4,6 +4,7 @@ usuario y la base de datos sustituidos por versiones falsas hechas con el excel 
 """
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -218,6 +219,10 @@ def multiusuario(monkeypatch):
                         estado["visitas_guardadas"].append((u, i, nota, comentario)))
     monkeypatch.setattr(cuentas.Cuentas, "confirmacion_obligatoria", lambda self: estado["confirmacion"])
     estado["fotos_guardadas"] = []
+    # Eatlist: filas como las devuelve Supabase (con el restaurante embebido) y lo que se guarda.
+    estado.update(eatlist=[], eatlists_guardadas=[])
+    monkeypatch.setattr(datos.Supabase, "eatlist_de", lambda self, u: estado["eatlist"])
+    monkeypatch.setattr(datos.Supabase, "guardar_eatlist", lambda self, u, ids: estado["eatlists_guardadas"].append(list(ids)))
     monkeypatch.setattr(datos.Supabase, "guardar_foto", lambda self, u, n, f: estado["fotos_guardadas"].append((u, f)))
     st.cache_data.clear()
     yield estado
@@ -401,7 +406,7 @@ def test_perfil_guarda_preferencias_y_el_buscador_las_usa(multiusuario, monkeypa
     multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Anita",
                               "preferencias": {"transporte": "A pie", "tiempo": 35, "presupuesto": [10, 40]}}
     at = correr(seccion="perfil")
-    assert any("Anita" in m.value and "ana@ejemplo.com" in m.value for m in at.markdown)
+    assert "Anita" in cabecera(at)
     assert at.slider(key="pref_tiempo").value == 35
     at.slider(key="pref_tiempo").set_value(50).run()
     at.button(key="guardar_preferencias").click().run()
@@ -639,17 +644,6 @@ VISITA_LUIS = {"usuario": "luis@x.com", "nota": 4.5, "comentario": "Las bravas",
                "restaurantes": {"id": 7, "datos": {"Nombre": "Casa Pepe", "Puntuación": 4.5}, "imagen": None}}
 
 
-def test_perfil_ensena_arroba_y_mis_visitas(multiusuario):
-    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
-    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com"}]
-    at = correr(seccion="perfil")
-    assert not at.exception, [e.value for e in at.exception]
-    cabecera = [m.value for m in at.markdown if m.value.startswith("### Ana")][0]
-    assert cabecera.index("@ana_g") < cabecera.index("ana@ejemplo.com")   # nombre, @usuario y correo
-    assert any(h.value == "Los restaurantes a los que has ido" for h in at.subheader)
-    assert any(c.value == "1 restaurante" for c in at.caption)
-
-
 def test_ficha_en_verde_si_ya_has_ido(multiusuario):
     at = correr(seccion="inicio")
     _, id_restaurante, _ = at.session_state["sugerencia"]
@@ -662,15 +656,6 @@ def test_ficha_en_verde_si_ya_has_ido(multiusuario):
     assert any(m.value.startswith("**✓ Has ido**") for m in at.markdown)
     assert at.text_area(key=f"comentario_visita_{id_restaurante}").value == "Las bravas"
     assert at.button(key=f"he_ido_{id_restaurante}").label == "Guardar"
-
-
-def test_perfil_ensena_todas_mis_visitas_en_carrusel(multiusuario):
-    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com",
-                                "restaurantes": {**VISITA_LUIS["restaurantes"], "id": i}} for i in range(1, 13)]
-    at = correr(seccion="perfil")
-    assert any(c.value == "12 restaurantes" for c in at.caption)
-    assert "ver_mis_visitas" not in [b.key for b in at.button]          # ya no hay "Ver lista completa"
-
 
 
 def test_visitas_de_solo_desde_una_fecha(monkeypatch):
@@ -760,7 +745,7 @@ def test_amigos_cifras_solicitudes_y_fila(multiusuario):
     at = correr(seccion="perfil")
     assert not at.exception, [e.value for e in at.exception]
     metricas = {m.label: m.value for m in at.metric}
-    assert metricas["Amigos"] == "1"
+    assert "Amigos" not in metricas and at.button(key="contador_amigos").label == "**1** amigos"   # solo arriba
     assert metricas["Sitios en común"] == str(len(pd.read_excel(EXCEL, sheet_name="Restaurantes")))   # misma lista
     assert any("Eva" in m.value and "quiere ser tu amigo" in m.value for m in at.markdown)
     assert at.button(key="aceptar_eva").label == "Aceptar"
@@ -798,7 +783,9 @@ def test_ver_mis_visitas_en_formato_lista(multiusuario):
                                 "restaurantes": {"id": 900 + i, "imagen": None, "datos": {
                                     "Nombre": f"Sitio {i}", "Puntuación": 4.0 + i / 10, "Nº Reseñas": 100,
                                     "Rango de precios": "20-30 €", "Tipo de cocina": "Bar"}}} for i in range(3)]
-    at = correr(seccion="perfil")
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["perfil_pestana"] = "Diario"                       # el botón está en la pestaña Diario
+    at = correr(at, seccion="perfil")
     at.button(key="mis_visitas_en_lista").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert at.session_state["seccion"] == "mi_lista" and at.toggle(key="ml_idos").value
@@ -809,7 +796,9 @@ def test_ver_mis_visitas_en_formato_lista(multiusuario):
 
 def test_solo_los_que_he_ido_se_olvida_al_cambiar_de_pestana(multiusuario):
     multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com"}]
-    at = correr(seccion="perfil")
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["perfil_pestana"] = "Diario"                       # el botón está en la pestaña Diario
+    at = correr(at, seccion="perfil")
     at.button(key="mis_visitas_en_lista").click().run()
     assert at.toggle(key="ml_idos").value
     at.session_state["seccion"] = "inicio"
@@ -904,3 +893,111 @@ def test_foto_desde_data_url():
     import base64
     jpeg = datos.preparar_foto_perfil(_imagen(100, 100))
     assert datos.foto_desde_data_url("data:image/jpeg;base64," + base64.b64encode(jpeg).decode()) == jpeg
+
+
+
+def test_guardar_eatlist_renumera_y_quita_las_que_sobran(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
+    bd_.guardar_eatlist("ana@x.com", [7, np.int64(3), 7, 9])
+    (m1, t1, p1, j1), (m2, t2, p2, _) = llamadas[-2:]
+    assert (m1, t1, p1) == ("POST", "eatlist", {"on_conflict": "usuario,restaurante_id"})
+    assert j1 == [{"usuario": "ana@x.com", "restaurante_id": 7, "posicion": 1},
+                  {"usuario": "ana@x.com", "restaurante_id": 3, "posicion": 2},
+                  {"usuario": "ana@x.com", "restaurante_id": 9, "posicion": 3}]   # sin repetidos
+    assert (m2, t2, p2) == ("DELETE", "eatlist", {"usuario": "eq.ana@x.com", "restaurante_id": "not.in.(7,3,9)"})
+    bd_.guardar_eatlist("ana@x.com", [])                              # vaciarla: solo borra
+    assert llamadas[-1][:3] == ("DELETE", "eatlist", {"usuario": "eq.ana@x.com"})
+
+
+def test_eatlist_a_dataframe():
+    df = datos.eatlist_a_dataframe([{"posicion": 1, "restaurantes": {"id": 7, "datos": {"Nombre": "Casa Pepe"},
+                                                                       "imagen": None}},
+                                    {"posicion": 2, "restaurantes": None}])
+    assert df.to_dict("records") == [{"Nombre": "Casa Pepe", "ID": 7, "Imagen archivo": None, "Posición": 1}]
+
+
+
+# ---------------------------------------------------------------- Perfil rediseñado: cabecera, Diario y Eatlist
+
+def cabecera(at):
+    return " ".join(h.proto.body for h in at.get("html") if "perfil-nombre" in h.proto.body)
+
+
+def test_cabecera_estilo_instagram(multiusuario):
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
+    multiusuario["relaciones"] = [LUIS]
+    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com"}]
+    at = correr(seccion="perfil")
+    assert not at.exception, [e.value for e in at.exception]
+    assert "Ana" in cabecera(at) and "@ana_g" in cabecera(at) and "ana@ejemplo.com" not in cabecera(at)
+    total = len(pd.read_excel(EXCEL, sheet_name="Restaurantes"))
+    assert [at.button(key=k).label for k in ("contador_idos", "contador_lista", "contador_amigos")] == [
+        "**1** idos", f"**{total}** en tu lista", "**1** amigos"]
+    assert [o for o in at.button_group if "Eatlist" in str(o.proto)], "faltan las pestañas Perfil / Diario / Eatlist"
+    assert any(h.value == "Tus datos" for h in at.subheader)
+    at.button(key="contador_idos").click().run()                       # "idos" lleva al Diario
+    assert at.session_state["perfil_pestana"] == "Diario"
+    at.button(key="contador_lista").click().run()                      # "en tu lista" lleva a Mi lista
+    assert at.session_state["seccion"] == "mi_lista"
+
+
+def test_diario_por_meses(multiusuario):
+    multiusuario["visitas"] = [
+        {**VISITA_LUIS, "usuario": "ana@ejemplo.com", "creado_en": "2026-10-07T20:00:00+00:00"},
+        {**VISITA_LUIS, "usuario": "ana@ejemplo.com", "creado_en": "2026-08-23T20:00:00+00:00",
+         "restaurantes": {**VISITA_LUIS["restaurantes"], "id": 8}}]
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["perfil_pestana"] = "Diario"
+    at = correr(at, seccion="perfil")
+    assert not at.exception, [e.value for e in at.exception]
+    diario = [c for c in at.get("bidi_component") if "grupos" in str(c.proto) and "octubre 2026" in str(c.proto)]
+    assert diario and "agosto 2026" in str(diario[0].proto)            # una cabecera por mes
+    assert any(c.value == "2 restaurantes" for c in at.caption)
+
+
+EATLIST = [{"posicion": n, "restaurantes": {"id": 900 + n, "datos": {"Nombre": nombre, "Rango de precios": "20-30 €"},
+                                             "imagen": None}} for n, nombre in ((1, "Sitio A"), (2, "Sitio B"),
+                                                                                (3, "Sitio C"))]
+
+
+def test_eatlist_vista_previa_y_anadir(multiusuario):
+    multiusuario["eatlist"] = EATLIST
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.run()
+    nuevo = at.number_input(key=f"eat_puesto_{id_restaurante}")
+    assert nuevo.value == 4 and nuevo.max == 4                          # por defecto, al final
+    at.session_state["ficha_abrir"] = id_restaurante
+    nuevo.set_value(2).run()                                            # el ejemplo: D en el puesto 2
+    previa = " ".join(h.proto.body for h in at.get("html") if "eat-previa" in h.proto.body)
+    assert re.search(r">1<.*Sitio A.*eat-este.*>2<.*>3<.*Sitio B", previa), previa   # 1 A · 2 este · 3 B
+    assert multiusuario["eatlists_guardadas"] == []                     # aún no se ha guardado nada
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"eat_guardar_{id_restaurante}").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert multiusuario["eatlists_guardadas"] == [[901, id_restaurante, 902, 903]]
+
+
+def test_he_ido_lo_quita_de_la_eatlist(multiusuario):
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    multiusuario["eatlist"] = EATLIST + [{"posicion": 4, "restaurantes": {"id": id_restaurante, "datos": {
+        "Nombre": "Este"}, "imagen": None}}]
+    st.cache_data.clear()
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.run()
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"he_ido_{id_restaurante}").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert multiusuario["eatlists_guardadas"] == [[901, 902, 903]]      # ya has ido: fuera de la eatlist
+
+
+def test_pestana_eatlist_en_orden(multiusuario):
+    multiusuario["eatlist"] = EATLIST
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["perfil_pestana"] = "Eatlist"
+    at = correr(at, seccion="perfil")
+    assert not at.exception, [e.value for e in at.exception]
+    lista = [c for c in at.get("bidi_component") if "Sitio A" in str(c.proto) and "puestos" in str(c.proto)]
+    assert lista and str(lista[0].proto).index("Sitio A") < str(lista[0].proto).index("Sitio C")

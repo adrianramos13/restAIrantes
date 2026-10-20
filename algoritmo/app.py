@@ -42,7 +42,6 @@ import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 from geopy.exc import GeocoderServiceError
@@ -60,8 +59,9 @@ if "PYTEST_CURRENT_TEST" not in os.environ:
             importlib.reload(_modulo)
 
 from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
-                    ORDEN_RESENAS, VOTOS_MIN_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
-                    ordenar_resultados, sugerencia_plato, tiene_categorias_jev)
+                    ORDEN_RESENAS, VOTOS_MIN_SECUNDARIA, filtrar_lista, filtrar_y_puntuar,
+                    ordenar_resultados, sugerencia_plato, tiene_categorias_jev, insights_perfil,
+                    insertar_en_orden, vista_previa_posicion)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
 import acceso
 import amigos
@@ -299,6 +299,7 @@ def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
     búsqueda (trae el tiempo de viaje); `plato`, de una búsqueda con plato o de la idea de Inicio."""
     if BD is not None and usuario:
         bloque_valoracion(fila)
+        bloque_eatlist(fila)
     imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
     foto = str(imagen_local) if BD is None and imagen_local.is_file() else foto_restaurante(fila, ancho=800)
     if foto:
@@ -359,6 +360,72 @@ def estrellas(key, guardada=None):
     return actual
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_eatlist(usuario):
+    return bd.eatlist_a_dataframe(BD.eatlist_de(usuario))
+
+
+def mi_eatlist():
+    """Tu eatlist en orden (DataFrame como el maestro, con "Posición"); vacía en modo local o si no se puede leer."""
+    if BD is None or not usuario:
+        return pd.DataFrame()
+    try:
+        return cargar_eatlist(usuario)
+    except bd.ErrorSupabase:
+        return pd.DataFrame()
+
+
+def quitar_de_la_eatlist(id_restaurante):
+    orden = [int(i) for i in mi_eatlist().get("ID", [])]
+    if id_restaurante in orden:
+        try:
+            BD.guardar_eatlist(usuario, [i for i in orden if i != id_restaurante])
+        except bd.ErrorSupabase:
+            return
+        cargar_eatlist.clear()
+
+
+def bloque_eatlist(fila):
+    """En la ficha: añadir el sitio a tu eatlist en el puesto que elijas (o moverlo / quitarlo). Al cambiar el
+    número se ve, sin guardar nada todavía, quién queda justo antes y justo después."""
+    id_restaurante = int(fila["ID"])
+    eatlist = mi_eatlist()
+    orden = [int(i) for i in eatlist.get("ID", [])]
+    nombres = dict(zip(orden, eatlist.get("Nombre", [])))
+    nombres[id_restaurante] = str(fila["Nombre"])
+    esta = id_restaurante in orden
+    actual = orden.index(id_restaurante) + 1 if esta else None
+    with st.container(border=True, key=f"eatlist_{id_restaurante}"):
+        st.markdown(f"**📌 Nº {actual} en tu eatlist**" if esta else "**¿Quieres ir?** Añádelo a tu eatlist")
+        ultimo = len(orden) if esta else len(orden) + 1
+        puesto = st.number_input("En qué puesto", min_value=1, max_value=ultimo, value=actual or ultimo, step=1,
+                                 key=f"eat_puesto_{id_restaurante}", help="1 = el que más te apetece.")
+        if len(orden) > (1 if esta else 0):   # con otros sitios en la lista: así quedaría alrededor
+            filas = "".join(
+                f'<div class="eat-fila{" eat-este" if es_este else ""}"><span class="eat-n">{n}</span>'
+                f'<span>{html.escape(nombres.get(i, ""))}</span></div>'
+                for n, i, es_este in vista_previa_posicion(orden, id_restaurante, puesto))
+            st.html(f'<div class="eat-previa" aria-live="polite">{filas}</div>')
+        with st.container(horizontal=True):
+            guardar = st.button("Mover a este puesto" if esta else "Añadir a la eatlist",
+                                icon=":material/bookmark_add:", width="stretch", key=f"eat_guardar_{id_restaurante}",
+                                disabled=esta and puesto == actual)
+            quitar = esta and st.button("Quitar", type="tertiary", key=f"eat_quitar_{id_restaurante}")
+    if not (guardar or quitar):
+        return
+    nuevo = [i for i in orden if i != id_restaurante] if quitar else insertar_en_orden(orden, id_restaurante, puesto)
+    try:
+        BD.guardar_eatlist(usuario, nuevo)
+    except bd.ErrorSupabase:
+        st.error("No se ha podido guardar ahora mismo (¿falta ejecutar supabase/008_eatlist.sql?).")
+        return
+    cargar_eatlist.clear()
+    try:
+        st.rerun(scope="fragment")
+    except StreamlitAPIException:   # en AppTest, que recarga todo
+        st.rerun()
+
+
 def mis_visitas():
     """{id del restaurante: tu valoración} ({} en modo local o si no se puede leer)."""
     if BD is None or not usuario:
@@ -402,6 +469,7 @@ def bloque_valoracion(fila):
             BD.quitar_visita(usuario, id_restaurante)
         else:
             BD.registrar_visita(usuario, id_restaurante, nota, comentario)
+            quitar_de_la_eatlist(id_restaurante)
     except ValueError as e:
         st.error(str(e))
         return
@@ -995,7 +1063,7 @@ def bloque_datos_personales(usuario, nombre):
     st.subheader("Datos personales")
     nuevo = st.text_input("Nombre", value=nombre, max_chars=bd.LARGO_MAX_NOMBRE, key="perfil_nombre",
                           help="Es el nombre con el que te saluda la app.")
-    st.caption("El correo identifica tu cuenta y tu lista: no se cambia aquí.")
+    st.caption(f"Tu correo es {usuario}: identifica tu cuenta y tu lista y no se cambia aquí.")
     if st.button("Guardar nombre", width="stretch", key="guardar_perfil"):
         try:
             BD.guardar_perfil(usuario, bd.validar_nombre(nuevo))
@@ -1086,35 +1154,31 @@ def bloque_tus_listas(usuario, lista):
                "que hayas borrado.")
 
 
-def bloque_estadisticas(maestro):
-    st.subheader("Tus estadísticas")
-    e = estadisticas_lista(maestro)
-    if e is None:
+def bloque_insights(maestro, visitas=None):
+    """Datos directos sobre ti en tarjetas. `visitas`: tus "He ido" (None en modo local: no hay)."""
+    st.subheader("Tus datos")
+    i = insights_perfil(maestro, visitas if visitas is not None else pd.DataFrame(), datetime.now(timezone.utc))
+    coma = lambda x: f"{x:.1f}".replace(".", ",")
+    tarjetas = []
+    if i["cocina_favorita"]:
+        tarjetas.append(("🍽️", i["cocina_favorita"], f"tu cocina favorita · {i['sitios_cocina_favorita']} sitios"))
+    if visitas is not None:
+        if i["probado"] is not None:
+            tarjetas.append(("✅", f"{round(100 * i['probado'])} %", "de tu lista ya probado"))
+        tarjetas.append(("📅", str(i["este_mes"]), "sitios este mes"))
+        if i["nota_media"] is not None:
+            tarjetas.append(("⭐", coma(i["nota_media"]), "tu nota media"))
+        if i["favorito"]:
+            tarjetas.append(("🏆", i["favorito"][0], f"tu favorito · {coma(i['favorito'][1])} ★"))
+    if i["precio_medio"] is not None:
+        tarjetas.append(("💶", f"{i['precio_medio']:.0f} €", "precio medio de tu lista"))
+    if not tarjetas:
         st.caption("Aparecerán cuando tengas restaurantes en tu lista.")
         return
-    with st.container(horizontal=True, vertical_alignment="center"):
-        # el nº de restaurantes lleva a "Mi lista" (estilo de cifra grande en global.css, .st-key-ver_mi_lista)
-        st.button(f"**{e['total']}** Restaurantes", type="tertiary", key="ver_mi_lista", on_click=ver_en_mi_lista,
-                  help="Verlos en Mi lista")
-        st.metric("Nota media", "–" if e["nota_media"] is None else f"{e['nota_media']:.1f} ⭐".replace(".", ","))
-        st.metric("Precio medio", "–" if e["precio_medio"] is None else f"{e['precio_medio']:.0f} €")
-    if not e["cocinas"].empty:
-        st.markdown("**Las cocinas que más se repiten**")
-        st.caption("Toca una para ver esos restaurantes en Mi lista.")
-        datos_grafica = e["cocinas"].rename_axis("Cocina").reset_index(name="Restaurantes")
-        tocada = alt.selection_point(name="cocina", fields=["Cocina"], on="click")
-        # Los nombres de las cocinas no son las etiquetas del eje (esas no se pueden tocar): son texto de la propia
-        # gráfica, a la izquierda de cada barra, con la misma selección que las barras.
-        base = alt.Chart(datos_grafica).encode(
-            y=alt.Y("Cocina:N", sort=datos_grafica["Cocina"].tolist(), title=None, axis=None),
-            tooltip=["Cocina", "Restaurantes"])
-        # naranja intermedio entre el acento claro (#C2410C) y el oscuro (#FB923C): se ve bien en los dos
-        barras = base.mark_bar(color="#EA580C", cornerRadiusEnd=4, cursor="pointer").encode(
-            x=alt.X("Restaurantes:Q", title=None, axis=alt.Axis(tickMinStep=1)))
-        nombres = base.mark_text(align="right", dx=-8, fontSize=13, cursor="pointer", color="#8A8079").encode(
-            x=alt.value(0), text="Cocina:N")
-        grafica = alt.layer(barras, nombres).add_params(tocada).properties(height=220)
-        st.altair_chart(grafica, on_select=_al_tocar_cocina, key="grafica_cocinas", width="stretch")
+    st.html('<div class="insights">' + "".join(
+        f'<div class="insight"><span class="insight-icono" aria-hidden="true">{icono}</span>'
+        f'<span class="insight-valor">{html.escape(str(valor))}</span>'
+        f'<span class="insight-texto">{html.escape(texto)}</span></div>' for icono, valor, texto in tarjetas) + "</div>")
 
 
 def ver_en_mi_lista(cocina=None, solo_idos=False):
@@ -1123,12 +1187,6 @@ def ver_en_mi_lista(cocina=None, solo_idos=False):
     st.session_state["ml_cocinas"] = [cocina] if cocina else []
     st.session_state["ml_idos"] = solo_idos
     ir_a("mi_lista")
-
-
-def _al_tocar_cocina():
-    puntos = st.session_state["grafica_cocinas"].selection.get("cocina") or []
-    if puntos and puntos[0].get("Cocina"):
-        ver_en_mi_lista(puntos[0]["Cocina"])
 
 
 def bloque_preferencias(usuario, nombre, preferencias):
@@ -1154,51 +1212,127 @@ def bloque_preferencias(usuario, nombre, preferencias):
         st.toast("Preferencias guardadas", icon=":material/check:")
 
 
-def bloque_mis_visitas():
-    """Perfil: los sitios que has marcado con "He ido", del más reciente al más antiguo."""
-    st.subheader("Los restaurantes a los que has ido")
+MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
+         "noviembre", "diciembre")
+_DIARIO = st.components.v2.component(
+    "diario", html=recurso("diario.html"), css=recurso("diario.css"), js=recurso("diario.js"),
+)
+
+
+def _hora_local(fecha_iso):
+    """Fecha de una visita en hora de Madrid (en UTC si este sistema no tiene la base de zonas horarias)."""
     try:
-        df = amigos.cargar_mis_visitas(BD, usuario)
-    except bd.ErrorSupabase:
-        st.caption("No se pueden ver ahora mismo.")
-        return
+        from zoneinfo import ZoneInfo
+        zona = ZoneInfo("Europe/Madrid")
+    except Exception:
+        zona = timezone.utc
+    return datetime.fromisoformat(fecha_iso).astimezone(zona)
+
+
+def _fila_diario(fila, caja):
+    return {"id": int(fila["ID"]), "caja": str(caja), "nombre": str(fila["Nombre"]), "foto": foto_restaurante(fila),
+            "detalle": str(etiqueta_cocina(fila)), "nota": _o_none(fila.get("Nota visita")),
+            "comentario": bool(_o_none(fila.get("Comentario visita")))}
+
+
+def _ficha_desde(df):
+    """Abre la ficha del restaurante tocado en el diario o la eatlist (si es de esa lista)."""
     abrir = st.session_state.pop("ficha_abrir", None)
-    if df.empty:
-        st.caption("Cuando marques «He ido» en la ficha de un restaurante, aparecerá aquí.")
-        return
-    ahora = datetime.now(timezone.utc)
-    with st.container(horizontal=True, vertical_alignment="center"):
-        st.caption(f"{len(df)} restaurante{'s' if len(df) != 1 else ''}")
-        st.button("Ver en formato lista", type="tertiary", icon=":material/format_list_bulleted:",
-                  key="mis_visitas_en_lista", on_click=ver_en_mi_lista, kwargs={"solo_idos": True})
-    # Todas en carrusel (como "Tus amigos han ido a"), de la más reciente a la más antigua.
-    mostrar_lista(df, key="lista_mis_visitas", carrusel=True, extra=lambda f: {
-        "cuando": "Fuiste " + hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
-        "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
-    coincide = df[df["ID"] == abrir]
-    if abrir is not None and not coincide.empty:
+    coincide = df[df["ID"] == abrir] if abrir is not None and not df.empty else df.iloc[0:0]
+    if not coincide.empty:
         mostrar_ficha(coincide.iloc[0], pd.DataFrame(columns=bd.COLUMNAS_PLATOS))
 
 
-def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, preferencias=None, perfil=None):
-    if not CONFIG_MULTIUSUARIO:   # modo local: no hay cuenta, solo las estadísticas de la lista
-        st.header("Perfil")
-        bloque_estadisticas(maestro)
+def pestana_diario(visitas):
+    """Los restaurantes a los que has ido, como un diario: por meses, con el día, la foto y tu nota."""
+    if visitas.empty:
+        st.caption("Cuando marques «He ido» en la ficha de un restaurante, aparecerá aquí, en tu diario.")
         return
-    alias = (perfil or {}).get("alias")
     with st.container(horizontal=True, vertical_alignment="center"):
-        propia = foto_de_perfil_editable(usuario, nombre, perfil, google.get("foto"))
-        with st.container(gap="small"):
-            st.markdown(f"### {nombre}\n" + (f"**@{alias}**  \n" if alias else "") + usuario)
-            if propia:
-                st.button("Quitar foto", type="tertiary", icon=":material/delete:", key="quitar_foto",
-                          on_click=cambiar_foto_de_perfil, args=(usuario, nombre, propia, True))
+        st.caption(f"{len(visitas)} restaurante{'s' if len(visitas) != 1 else ''}")
+        st.button("Ver en formato lista", type="tertiary", icon=":material/format_list_bulleted:",
+                  key="mis_visitas_en_lista", on_click=ver_en_mi_lista, kwargs={"solo_idos": True})
+    grupos = []
+    for _, fila in visitas.iterrows():   # ya vienen de la más reciente a la más antigua
+        fecha = _hora_local(fila["Fecha visita"])
+        titulo = f"{MESES[fecha.month - 1]} {fecha.year}"
+        if not grupos or grupos[-1]["titulo"] != titulo:
+            grupos.append({"titulo": titulo, "items": []})
+        grupos[-1]["items"].append(_fila_diario(fila, fecha.day))
+    _DIARIO(key="diario", data={"grupos": grupos}, on_abrir_change=lambda: _al_abrir_desde_lista("diario"))
+    _ficha_desde(visitas)
+
+
+def pestana_eatlist(eatlist):
+    """Los restaurantes a los que quieres ir, en tu orden (1 = el que más te apetece)."""
+    if eatlist.empty:
+        st.caption("Aquí irán los sitios a los que quieres ir, en tu orden. Añádelos desde la ficha de cada "
+                   "restaurante («¿Quieres ir?»), eligiendo en qué puesto.")
+        return
+    st.caption(f"{len(eatlist)} restaurante{'s' if len(eatlist) != 1 else ''} que quieres probar · tócalos para "
+               "cambiarlos de puesto")
+    _DIARIO(key="eatlist", data={"puestos": True, "grupos": [
+        {"titulo": None, "items": [_fila_diario(f, f["Posición"]) for _, f in eatlist.iterrows()]}]},
+            on_abrir_change=lambda: _al_abrir_desde_lista("eatlist"))
+    _ficha_desde(eatlist)
+
+
+PESTANAS_PERFIL = ("Perfil", "Diario", "Eatlist")
+
+
+def ir_a_pestana(pestana):
+    st.session_state["perfil_pestana"] = pestana
+
+
+def cabecera_perfil(usuario, nombre, perfil, foto, maestro, visitas):
+    """Arriba, estilo Instagram: tu foto (se toca para cambiarla), nombre, @usuario y tres cifras que llevan a su
+    sitio: restaurantes a los que has ido (Diario), en tu lista (Mi lista) y amigos."""
+    alias = (perfil or {}).get("alias")
+    try:
+        n_amigos = sum(1 for r in amigos.cargar_relaciones(BD, usuario) if r["estado"] == "aceptada")
+    except bd.ErrorSupabase:
+        n_amigos = 0
+    with st.container(horizontal=True, vertical_alignment="center", key="cabecera_perfil"):
+        propia = foto_de_perfil_editable(usuario, nombre, perfil, foto)
+        with st.container(gap=None):
+            st.html(f'<div class="perfil-nombre">{html.escape(nombre)}</div>'
+                    + (f'<div class="perfil-alias">@{html.escape(alias)}</div>' if alias else ""))
+            with st.container(horizontal=True, gap="medium"):
+                st.button(f"**{len(visitas)}** idos", type="tertiary", key="contador_idos",
+                          on_click=ir_a_pestana, args=("Diario",), help="Tu diario: donde has ido")
+                st.button(f"**{len(maestro)}** en tu lista", type="tertiary", key="contador_lista",
+                          on_click=ver_en_mi_lista, help="Verlos en Mi lista")
+                st.button(f"**{n_amigos}** amigos", type="tertiary", key="contador_amigos",
+                          on_click=ir_a_pestana, args=("Perfil",), help="Tus amigos, en la pestaña Perfil")
+    if propia:
+        st.button("Quitar foto", type="tertiary", icon=":material/delete:", key="quitar_foto",
+                  on_click=cambiar_foto_de_perfil, args=(usuario, nombre, propia, True))
     if st.session_state.get("error_foto"):
         st.error(st.session_state.pop("error_foto"))
+
+
+def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, preferencias=None, perfil=None):
+    if not CONFIG_MULTIUSUARIO:   # modo local: no hay cuenta, solo los datos de la lista
+        st.header("Perfil")
+        bloque_insights(maestro)
+        return
+    try:
+        visitas = amigos.cargar_mis_visitas(BD, usuario)
+    except bd.ErrorSupabase:
+        visitas = pd.DataFrame()
+    cabecera_perfil(usuario, nombre, perfil, google.get("foto"), maestro, visitas)
+
+    st.session_state.setdefault("perfil_pestana", "Perfil")
+    pestana = st.segmented_control("Pestañas del perfil", PESTANAS_PERFIL, key="perfil_pestana",
+                                   label_visibility="collapsed", width="stretch") or "Perfil"
+    if pestana == "Diario":
+        pestana_diario(visitas)
+        return
+    if pestana == "Eatlist":
+        pestana_eatlist(mi_eatlist())
+        return
     with st.container(border=True):
-        bloque_estadisticas(maestro)
-    with st.container(border=True):
-        bloque_mis_visitas()
+        bloque_insights(maestro, visitas)
     with st.container(border=True):
         amigos.bloque_amigos(BD, usuario, nombre, perfil, al_guardar_alias=cargar_perfil.clear,
                              mi_lista=maestro, mostrar_lista=mostrar_lista)
