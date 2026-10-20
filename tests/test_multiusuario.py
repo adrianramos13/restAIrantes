@@ -1007,16 +1007,25 @@ def test_eatlist_vista_previa_y_anadir(multiusuario):
     assert not at.exception, [e.value for e in at.exception]
     nuevo = at.number_input(key=f"eat_puesto_{id_restaurante}")
     assert nuevo.value == 4 and nuevo.max == 4                          # por defecto, al final
+    assert any(b.label == "Cómo llegar" for b in at.get("link_button"))   # debajo, la info del restaurante
+    assert f"eat_abrir_{id_restaurante}" not in [b.key for b in at.button]   # (sin el propio botón de la eatlist)
     # (AppTest recarga todo en cada paso: se vuelve a pedir abrir la ventana)
-    at.session_state["eatlist_abrir"] = (id_restaurante, "Este")
+    at.session_state["eatlist_abrir"] = fila_de(id_restaurante)
     nuevo.set_value(2).run()                                            # el ejemplo: D en el puesto 2
     previa = " ".join(h.proto.body for h in at.get("html") if "eat-previa" in h.proto.body)
     assert re.search(r">1<.*Sitio A.*eat-este.*>2<.*>3<.*Sitio B", previa), previa   # 1 A · 2 este · 3 B
     assert multiusuario["eatlists_guardadas"] == []                     # aún no se ha guardado nada
-    at.session_state["eatlist_abrir"] = (id_restaurante, "Este")
+    at.session_state["eatlist_abrir"] = fila_de(id_restaurante)
     at.button(key=f"eat_guardar_{id_restaurante}").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert multiusuario["eatlists_guardadas"] == [[901, id_restaurante, 902, 903]]
+    assert f"he_ido_{id_restaurante}" in [b.key for b in at.button]      # vuelve a abrirse su ficha
+
+
+def fila_de(id_restaurante):
+    """La fila del restaurante (como la guarda el botón de la eatlist de la ficha)."""
+    maestro = pd.read_excel(EXCEL, sheet_name="Restaurantes")
+    return maestro[maestro["ID"] == id_restaurante].iloc[0]
 
 
 def test_he_ido_lo_quita_de_la_eatlist(multiusuario):
