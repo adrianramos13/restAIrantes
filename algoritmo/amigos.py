@@ -204,11 +204,10 @@ def _solicitudes(cliente, usuario, recibidas):
 
 
 def _cifras(cliente, amigos, mi_lista, listas):
-    """N amigos · visitas de tus amigos en los últimos 30 días · sitios de tu lista que también tiene algún amigo."""
+    """Visitas de tus amigos en los últimos 30 días · sitios de tu lista que también tiene algún amigo."""
     comunes = set().union(*(en_comun(mi_lista, lista) for lista in listas.values()))
     visitas = cargar_actividad(cliente, tuple(sorted(a["usuario"] for a in amigos))) if amigos else 0
-    with st.container(horizontal=True):
-        st.metric("Amigos", len(amigos))
+    with st.container(horizontal=True):   # el nº de amigos ya está arriba, en la cabecera del Perfil
         st.metric(f"Visitas ({DIAS_ACTIVIDAD} días)", visitas, help="Sitios que tus amigos han marcado con «He ido».")
         st.metric("Sitios en común", len(comunes), help="Restaurantes de tu lista que también tiene algún amigo.")
 
