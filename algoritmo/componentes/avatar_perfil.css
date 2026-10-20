@@ -15,6 +15,10 @@
   background: var(--st-primary-color); box-shadow: 0 0 0 3px var(--st-background-color);
 }
 .camara svg { width: 16px; height: 16px; fill: var(--st-background-color); }
+/* modo "ajustes" (la de la cabecera): engranaje en vez de cámara, y no elige foto sino que abre los ajustes */
+.icono-ajustes { display: none; }
+.ajustes .icono-camara { display: none; }
+.ajustes .icono-ajustes { display: block; }
 .cargando {
   position: absolute; inset: 0; border-radius: 50%; display: none;
   background: rgba(0, 0, 0, 0.45);

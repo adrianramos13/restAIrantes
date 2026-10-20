@@ -1075,7 +1075,7 @@ def nombre_visible(usuario, perfil, google):
 
 
 def bloque_datos_personales(usuario, nombre):
-    st.subheader("Datos personales")
+    st.markdown("**Datos personales**")
     nuevo = st.text_input("Nombre", value=nombre, max_chars=bd.LARGO_MAX_NOMBRE, key="perfil_nombre",
                           help="Es el nombre con el que te saluda la app.")
     st.caption(f"Tu correo es {usuario}: identifica tu cuenta y tu lista y no se cambia aquí.")
@@ -1099,8 +1099,8 @@ _AVATAR_PERFIL = st.components.v2.component(
 
 
 def foto_de_perfil_editable(usuario, nombre, perfil, foto):
-    """Arriba en el Perfil: tu foto (o tu inicial). Al tocarla se elige otra en el móvil y se sube sola; manda
-    sobre la de Google. Devuelve la foto propia (o None) para el "Quitar foto" de al lado."""
+    """Dentro de "Ajustes de usuario": tu foto (o tu inicial). Al tocarla se elige otra en el móvil y se sube
+    sola; manda sobre la de Google. Devuelve la foto propia (o None) para el "Quitar foto"."""
     propia = (perfil or {}).get("foto") if bd.es_foto_propia((perfil or {}).get("foto")) else None
     _AVATAR_PERFIL(key="avatar_perfil", width="content", data=amigos.datos_avatar({"nombre": nombre, "usuario": usuario,
                                                                   "alias": (perfil or {}).get("alias"), "foto": foto}),
@@ -1108,6 +1108,34 @@ def foto_de_perfil_editable(usuario, nombre, perfil, foto):
                    on_error_change=lambda: st.session_state.update(
                        error_foto="No se ha podido leer esa foto: prueba con otra (JPG, PNG o WEBP)."))
     return propia
+
+
+def ajustes_de_usuario(usuario):
+    """Ventana "Ajustes de usuario" (al tocar tu foto en la cabecera del Perfil): tu foto (tócala para cambiarla),
+    quitarla y tus datos personales. Se vuelven a leer aquí para que se vea al momento lo que se acaba de cambiar."""
+
+    @st.dialog("Ajustes de usuario", width="small")
+    def _ventana():
+        try:
+            perfil_actual = cargar_perfil(usuario)
+        except bd.ErrorSupabase:
+            perfil_actual = None
+        de_google = datos_google() if cuenta is None else {"nombre": cuenta.get("nombre"), "foto": None}
+        nombre = nombre_visible(usuario, perfil_actual, de_google)
+        foto = bd.foto_valida((perfil_actual or {}).get("foto")) or bd.foto_valida(de_google.get("foto"))
+        with st.container(horizontal=True, vertical_alignment="center"):
+            propia = foto_de_perfil_editable(usuario, nombre, perfil_actual, foto)
+            with st.container(gap=None):
+                st.caption("Toca tu foto para cambiarla.")
+                if propia:
+                    st.button("Quitar foto", type="tertiary", icon=":material/delete:", key="quitar_foto",
+                              on_click=cambiar_foto_de_perfil, args=(usuario, nombre, propia, True))
+        if st.session_state.get("error_foto"):
+            st.error(st.session_state.pop("error_foto"))
+        st.divider()
+        bloque_datos_personales(usuario, nombre)
+
+    _ventana()
 
 
 def cambiar_foto_de_perfil(usuario, nombre, propia, quitar=False):
@@ -1308,30 +1336,32 @@ def ir_a_pestana(pestana):
 
 
 def cabecera_perfil(usuario, nombre, perfil, foto, maestro, visitas):
-    """Arriba, estilo Instagram: tu foto (se toca para cambiarla), nombre, @usuario y tres cifras que llevan a su
-    sitio: restaurantes a los que has ido (Diario), en tu lista (Mi lista) y amigos."""
+    """Arriba, estilo Instagram: tu foto (se toca para abrir tus ajustes), nombre, @usuario y tres cifras que llevan a su
+    sitio: restaurantes a los que has ido y en tu lista (en Buscar -> Restaurantes) y amigos (su listado)."""
     alias = (perfil or {}).get("alias")
     try:
         n_amigos = sum(1 for r in amigos.cargar_relaciones(BD, usuario) if r["estado"] == "aceptada")
     except bd.ErrorSupabase:
         n_amigos = 0
     with st.container(horizontal=True, vertical_alignment="center", key="cabecera_perfil"):
-        propia = foto_de_perfil_editable(usuario, nombre, perfil, foto)
+        # tu foto: al tocarla se abren tus ajustes (cambiar la foto, datos personales)
+        _AVATAR_PERFIL(key="avatar_cabecera", width="content",
+                       data={"modo": "ajustes", **amigos.datos_avatar({"nombre": nombre, "usuario": usuario,
+                                                                       "alias": alias, "foto": foto})},
+                       on_ajustes_change=lambda: st.session_state.update(abrir_ajustes=True))
         with st.container(gap=None):
             st.html(f'<div class="perfil-nombre">{html.escape(nombre)}</div>'
                     + (f'<div class="perfil-alias">@{html.escape(alias)}</div>' if alias else ""))
             with st.container(horizontal=True, gap="medium"):
                 st.button(f"**{len(visitas)}** idos", type="tertiary", key="contador_idos",
-                          on_click=ir_a_pestana, args=("Diario",), help="Tu diario: donde has ido")
+                          on_click=ver_en_mi_lista, kwargs={"solo_idos": True},
+                          help="Verlos en Buscar (solo los restaurantes a los que has ido)")
                 st.button(f"**{len(maestro)}** en tu lista", type="tertiary", key="contador_lista",
                           on_click=ver_en_mi_lista, help="Verlos en Buscar")
                 st.button(f"**{n_amigos}** amigos", type="tertiary", key="contador_amigos",
                           on_click=lambda: st.session_state.update(perfil_vista="amigos"), help="Ver tus amigos")
-    if propia:
-        st.button("Quitar foto", type="tertiary", icon=":material/delete:", key="quitar_foto",
-                  on_click=cambiar_foto_de_perfil, args=(usuario, nombre, propia, True))
-    if st.session_state.get("error_foto"):
-        st.error(st.session_state.pop("error_foto"))
+    if st.session_state.pop("abrir_ajustes", False):
+        ajustes_de_usuario(usuario)
 
 
 def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, preferencias=None, perfil=None):
@@ -1367,8 +1397,6 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
         bloque_tus_listas(usuario, lista)
     with st.container(border=True):
         bloque_preferencias(usuario, nombre, preferencias)
-    with st.container(border=True):
-        bloque_datos_personales(usuario, nombre)
     st.button("Cerrar sesión", on_click=acceso.cerrar_sesion, args=(CUENTAS,), icon=":material/logout:",
               width="stretch", key="cerrar_sesion")
 

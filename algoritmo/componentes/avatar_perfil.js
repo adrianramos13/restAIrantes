@@ -37,7 +37,11 @@ export default function (component) {
     img.hidden = true;
   }
 
-  boton.onclick = () => input.click();
+  // En la cabecera (modo "ajustes") tocarla abre la ventana de ajustes; dentro de esa ventana, elige otra foto.
+  const abreAjustes = data.modo === 'ajustes';
+  caja.classList.toggle('ajustes', abreAjustes);
+  boton.setAttribute('aria-label', abreAjustes ? 'Abrir tus ajustes de usuario' : 'Cambiar tu foto de perfil');
+  boton.onclick = () => (abreAjustes ? setTriggerValue('ajustes', true) : input.click());
   input.onchange = async () => {
     const archivo = input.files && input.files[0];
     input.value = '';
