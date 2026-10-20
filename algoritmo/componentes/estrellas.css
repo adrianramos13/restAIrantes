@@ -1,7 +1,7 @@
 /* Nota de "He ido": 5 estrellas grandes que admiten medias (tocar la mitad izquierda de una estrella). */
 .estrellas { display: flex; align-items: center; gap: 10px; font-family: var(--st-font, sans-serif); }
 .valorar {
-  position: relative; display: inline-block; font-size: 40px; line-height: 1;
+  position: relative; display: inline-block; font-size: 32px; line-height: 1;
   cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: manipulation; border-radius: 8px;
 }
 .valorar:focus-visible { outline: 2px solid var(--st-primary-color); outline-offset: 4px; }
@@ -10,4 +10,3 @@
   position: absolute; left: 0; top: 0; width: 0; overflow: hidden; white-space: nowrap; color: #F5A524;
   pointer-events: none;
 }
-.texto { font-size: 14px; color: var(--st-text-color); opacity: 0.8; }

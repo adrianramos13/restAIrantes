@@ -4,14 +4,12 @@ export default function (component) {
   const { parentElement, data, setStateValue } = component;
   const caja = parentElement.querySelector('.valorar');
   const relleno = parentElement.querySelector('.relleno');
-  const texto = parentElement.querySelector('.texto');
   let valor = data.valor ?? null;
 
   const pintar = (v) => {
     relleno.style.width = `${((v || 0) / 5) * 100}%`;
     caja.setAttribute('aria-valuenow', String(v || 0));
     caja.setAttribute('aria-valuetext', v ? `${String(v).replace('.', ',')} de 5 estrellas` : 'Sin nota');
-    texto.textContent = v ? `${String(v).replace('.', ',')} / 5` : 'Toca para puntuar';
   };
   const desdeX = (x) => {
     const r = caja.getBoundingClientRect();

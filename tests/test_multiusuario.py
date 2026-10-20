@@ -573,7 +573,7 @@ def test_inicio_sin_amigos_invita_a_buscarlos(multiusuario):
     at = correr(seccion="inicio")
     assert any(h.value == "Tus amigos han ido a" for h in at.subheader)
     at.button(key="ir_a_amigos").click().run()
-    assert at.session_state["seccion"] == "perfil"
+    assert at.session_state["seccion"] == "mi_lista" and at.session_state["buscar_modo"] == "Personas"
 
 
 def test_inicio_ensena_las_visitas_de_los_amigos(multiusuario):
@@ -585,10 +585,12 @@ def test_inicio_ensena_las_visitas_de_los_amigos(multiusuario):
     assert not any("todavía no han marcado" in c.value or "Añade amigos" in c.value for c in at.caption)
 
 
-def test_perfil_pide_elegir_nombre_de_usuario(multiusuario, monkeypatch):
+def test_buscar_personas_pide_elegir_nombre_de_usuario(multiusuario, monkeypatch):
     guardados = []
     monkeypatch.setattr(datos.Supabase, "guardar_alias", lambda self, u, n, a: guardados.append((u, n, a)))
-    at = correr(seccion="perfil")
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["buscar_modo"] = "Personas"
+    at = correr(at, seccion="mi_lista")
     at.text_input(key="alias_nuevo").input("Ana G")                     # espacio: no vale
     at.button(key="guardar_alias").click().run()
     assert any("3 a 20 caracteres" in e.value for e in at.error) and guardados == []
@@ -608,11 +610,16 @@ def test_perfil_solicitudes_y_busqueda(multiusuario, monkeypatch):
         {"usuario": "eva@x.com", "nombre": "[Eva](javascript:alert(1))", "alias": "eva"},
         {"usuario": "pepe@x.com", "nombre": "Pepe", "alias": "pepe_99"}])
     monkeypatch.setattr(datos.Supabase, "solicitar_amistad", lambda self, de, a: solicitudes.append((de, a)))
-    at = correr(seccion="perfil")
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["perfil_vista"] = "amigos"                         # lo que hace tocar "amigos" arriba
+    at = correr(at, seccion="perfil")
     assert any("Luis" in m.value and "quiere ser tu amigo" in m.value for m in at.markdown)
     at.button(key="aceptar_luis").click().run()
     assert respuestas == [("ana@ejemplo.com", "luis@x.com", True)]
 
+    at.session_state["buscar_modo"] = "Personas"
+    at.session_state["seccion"] = "mi_lista"
+    at.run()
     # El buscador (componente propio) filtra en el navegador; aquí: qué le llega y qué hace "Añadir".
     buscador = [c for c in at.get("bidi_component") if "pepe_99" in str(c.proto)]
     assert buscador, "falta el buscador de amigos"
@@ -653,7 +660,7 @@ def test_ficha_en_verde_si_ya_has_ido(multiusuario):
     at.session_state["ficha_abrir"] = id_restaurante
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    assert any(m.value.startswith("**✓ Has ido**") for m in at.markdown)
+    assert not any("Has ido" in m.value or "Puntúalo" in m.value for m in at.markdown)   # sin texto arriba
     assert at.text_area(key=f"comentario_visita_{id_restaurante}").value == "Las bravas"
     assert at.button(key=f"he_ido_{id_restaurante}").label == "Guardar"
 
@@ -743,16 +750,20 @@ def test_amigos_cifras_solicitudes_y_fila(multiusuario):
     multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
     multiusuario["relaciones"] = [LUIS, EVA]
     at = correr(seccion="perfil")
+    assert not any(h.value == "Amigos" for h in at.subheader)           # en la pestaña Perfil ya no están
+    at.button(key="contador_amigos").click().run()                     # tocar "amigos" arriba abre su listado
     assert not at.exception, [e.value for e in at.exception]
+    assert any(h.value == "Amigos" for h in at.subheader)
     metricas = {m.label: m.value for m in at.metric}
     assert "Amigos" not in metricas and at.button(key="contador_amigos").label == "**1** amigos"   # solo arriba
     assert metricas["Sitios en común"] == str(len(pd.read_excel(EXCEL, sheet_name="Restaurantes")))   # misma lista
     assert any("Eva" in m.value and "quiere ser tu amigo" in m.value for m in at.markdown)
     assert at.button(key="aceptar_eva").label == "Aceptar"
-    fila = [c for c in at.get("bidi_component") if "luis" in str(c.proto) and "inicial" in str(c.proto)]
-    assert fila, "falta la fila de amigos"
-    assert "% af" not in str(fila[0].proto)                             # la afinidad solo en su mini perfil
-    assert "luis@x.com" not in str(fila[0].proto)                       # el correo no llega al navegador
+    assert any("Luis" in m.value and "@luis" in m.value for m in at.markdown)   # en el listado, con su @
+    at.button(key="ver_amigo_luis").click().run()                      # su mini perfil
+    assert any("% de gustos en común" in m.value for m in at.markdown)
+    at.button(key="volver_del_listado").click().run()
+    assert "perfil_vista" not in at.session_state
 
 
 def test_mini_perfil_de_un_amigo(multiusuario):
@@ -760,7 +771,8 @@ def test_mini_perfil_de_un_amigo(multiusuario):
     multiusuario["relaciones"] = [LUIS]
     multiusuario["visitas"] = [VISITA_LUIS]
     at = AppTest.from_file(APP, default_timeout=180)
-    at.session_state["amigo_abierto"] = "luis"                          # lo que hace tocar su círculo
+    at.session_state["perfil_vista"] = "amigos"
+    at.session_state["amigo_abierto"] = "luis"                          # lo que hace tocar "Ver" en el listado
     at = correr(at, seccion="perfil")
     assert any("% de gustos en común" in m.value for m in at.markdown)
     metricas = {m.label: m.value for m in at.metric}
@@ -966,6 +978,10 @@ def test_eatlist_vista_previa_y_anadir(multiusuario):
     _, id_restaurante, _ = at.session_state["sugerencia"]
     at.session_state["ficha_abrir"] = id_restaurante
     at.run()
+    assert at.button(key=f"eat_abrir_{id_restaurante}").label == "Añadir a mi eatlist"
+    assert not [n for n in at.number_input if n.key == f"eat_puesto_{id_restaurante}"]   # plegado hasta tocarlo
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"eat_abrir_{id_restaurante}").click().run()
     nuevo = at.number_input(key=f"eat_puesto_{id_restaurante}")
     assert nuevo.value == 4 and nuevo.max == 4                          # por defecto, al final
     at.session_state["ficha_abrir"] = id_restaurante
