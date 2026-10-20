@@ -266,16 +266,21 @@ def test_usuario_sin_lista_va_al_perfil_y_pide_sincronizar(multiusuario):
     assert "Buscar restaurantes" not in [b.label for b in at.button]
     assert any("Todavía no tienes restaurantes" in i.value for i in at.info)
 
-    [b for b in at.button if b.label == "Añadir tu lista"][0].click().run()   # lleva al Perfil
+    [b for b in at.button if b.label == "Añadir tu lista"][0].click().run()   # al Perfil, con los ajustes abiertos
     assert not at.exception and at.session_state["seccion"] == "perfil"
     assert any("Todavía no has añadido tu lista" in m.value for m in at.markdown)
 
+    # (AppTest recarga todo el script en cada paso: se vuelve a pedir abrir la ventana de ajustes)
+    at.session_state["abrir_ajustes"] = True
     at.text_input(key="enlace_lista").input("https://evil.com/lista")
+    at.session_state["abrir_ajustes"] = True
     at.button(key="sincronizar_lista").click().run()
     assert any("no parece de una lista de Google Maps" in e.value for e in at.error)
     assert multiusuario["pedidas"] == []
 
+    at.session_state["abrir_ajustes"] = True
     at.text_input(key="enlace_lista").input("https://maps.app.goo.gl/5QLC8VhBqetTCbjGA")
+    at.session_state["abrir_ajustes"] = True
     at.button(key="sincronizar_lista").click().run()
     assert multiusuario["pedidas"] == [("ana@ejemplo.com", "https://maps.app.goo.gl/5QLC8VhBqetTCbjGA")]
 
@@ -407,8 +412,13 @@ def test_perfil_guarda_preferencias_y_el_buscador_las_usa(multiusuario, monkeypa
                               "preferencias": {"transporte": "A pie", "tiempo": 35, "presupuesto": [10, 40]}}
     at = correr(seccion="perfil")
     assert "Anita" in cabecera(at)
+    assert "pref_tiempo" not in [w.key for w in at.slider]               # ya no está en la pestaña Perfil
+    at.session_state["abrir_ajustes"] = True                            # está en los ajustes (tocando tu foto)
+    at.run()
     assert at.slider(key="pref_tiempo").value == 35
+    at.session_state["abrir_ajustes"] = True
     at.slider(key="pref_tiempo").set_value(50).run()
+    at.session_state["abrir_ajustes"] = True
     at.button(key="guardar_preferencias").click().run()
     assert not at.exception
     assert guardadas == [("ana@ejemplo.com", "Anita", {"transporte": "A pie", "tiempo": 50, "presupuesto": [10, 40]})]
@@ -991,17 +1001,19 @@ def test_eatlist_vista_previa_y_anadir(multiusuario):
     at.session_state["ficha_abrir"] = id_restaurante
     at.run()
     assert at.button(key=f"eat_abrir_{id_restaurante}").label == "Añadir a mi eatlist"
-    assert not [n for n in at.number_input if n.key == f"eat_puesto_{id_restaurante}"]   # plegado hasta tocarlo
+    assert not [n for n in at.number_input if n.key == f"eat_puesto_{id_restaurante}"]   # aún en la ficha
     at.session_state["ficha_abrir"] = id_restaurante
-    at.button(key=f"eat_abrir_{id_restaurante}").click().run()
+    at.button(key=f"eat_abrir_{id_restaurante}").click().run()        # cierra la ficha y abre "Tu eatlist"
+    assert not at.exception, [e.value for e in at.exception]
     nuevo = at.number_input(key=f"eat_puesto_{id_restaurante}")
     assert nuevo.value == 4 and nuevo.max == 4                          # por defecto, al final
-    at.session_state["ficha_abrir"] = id_restaurante
+    # (AppTest recarga todo en cada paso: se vuelve a pedir abrir la ventana)
+    at.session_state["eatlist_abrir"] = (id_restaurante, "Este")
     nuevo.set_value(2).run()                                            # el ejemplo: D en el puesto 2
     previa = " ".join(h.proto.body for h in at.get("html") if "eat-previa" in h.proto.body)
     assert re.search(r">1<.*Sitio A.*eat-este.*>2<.*>3<.*Sitio B", previa), previa   # 1 A · 2 este · 3 B
     assert multiusuario["eatlists_guardadas"] == []                     # aún no se ha guardado nada
-    at.session_state["ficha_abrir"] = id_restaurante
+    at.session_state["eatlist_abrir"] = (id_restaurante, "Este")
     at.button(key=f"eat_guardar_{id_restaurante}").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert multiusuario["eatlists_guardadas"] == [[901, id_restaurante, 902, 903]]
@@ -1046,3 +1058,26 @@ def test_tocar_tu_foto_abre_los_ajustes_con_datos_personales(multiusuario, monke
     at.session_state["abrir_ajustes"] = True
     at.button(key="guardar_perfil").click().run()
     assert guardados == [("ana@ejemplo.com", "Anita")]
+
+
+
+def test_quitar_de_mi_lista_sin_borrar_el_restaurante(multiusuario, monkeypatch):
+    quitados = []
+    monkeypatch.setattr(datos.Supabase, "quitar_de_lista", lambda self, lista_id, r: quitados.append((lista_id, r)))
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.run()
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"quitar_de_lista_{id_restaurante}").click().run()   # primero pide confirmar
+    assert quitados == []
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"quitar_de_lista_si_{id_restaurante}").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert quitados == [(LISTA_OK["id"], id_restaurante)]
+
+
+def test_quitar_de_lista_solo_borra_la_relacion(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
+    bd_.quitar_de_lista(1, np.int64(7))
+    assert llamadas == [("DELETE", "lista_restaurantes", {"lista_id": "eq.1", "restaurante_id": "eq.7"}, None)]
