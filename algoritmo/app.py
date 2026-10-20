@@ -331,6 +331,7 @@ def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
     st.link_button("Cómo llegar", url_ruta, type="primary", icon=":material/directions:", width="stretch")
     if BD is not None and usuario:
         bloque_eatlist(fila)
+        bloque_quitar_de_mi_lista(fila)
 
     # Instagram/TikTok no tienen una búsqueda por palabra clave fiable sin iniciar
     # sesión, así que se usa el operador site: de Google (funciona sin cuenta).
@@ -387,25 +388,35 @@ def quitar_de_la_eatlist(id_restaurante):
 
 
 def bloque_eatlist(fila):
-    """En la ficha: añadir el sitio a tu eatlist en el puesto que elijas (o moverlo / quitarlo). Al cambiar el
-    número se ve, sin guardar nada todavía, quién queda justo antes y justo después."""
+    """En la ficha: el botón de la eatlist. Abre su propia ventana (una ventana no puede abrirse dentro de otra, así
+    que se cierra la ficha): ver dialogo_eatlist."""
     id_restaurante = int(fila["ID"])
-    eatlist = mi_eatlist()
-    orden = [int(i) for i in eatlist.get("ID", [])]
-    nombres = dict(zip(orden, eatlist.get("Nombre", [])))
-    nombres[id_restaurante] = str(fila["Nombre"])
+    orden = [int(i) for i in mi_eatlist().get("ID", [])]
     esta = id_restaurante in orden
-    actual = orden.index(id_restaurante) + 1 if esta else None
-    abierto = f"eat_abierto_{id_restaurante}"
-    st.button(f"Nº {actual} en tu eatlist" if esta else "Añadir a mi eatlist", width="stretch",
-              icon=":material/bookmark_added:" if esta else ":material/bookmark_add:", key=f"eat_abrir_{id_restaurante}",
-              on_click=lambda: st.session_state.update({abierto: not st.session_state.get(abierto)}))
-    if not st.session_state.get(abierto):
-        return
-    with st.container(border=True, key=f"eatlist_{id_restaurante}"):
+    if st.button(f"Nº {orden.index(id_restaurante) + 1} en tu eatlist" if esta else "Añadir a mi eatlist",
+                 width="stretch", icon=":material/bookmark_added:" if esta else ":material/bookmark_add:",
+                 key=f"eat_abrir_{id_restaurante}"):
+        st.session_state["eatlist_abrir"] = (id_restaurante, str(fila["Nombre"]))
+        st.rerun()   # recarga entera: se cierra la ficha y se abre la ventana de la eatlist
+
+
+def dialogo_eatlist(id_restaurante, nombre):
+    """Ventana "Tu eatlist": elegir en qué puesto va el restaurante (o moverlo / quitarlo). Al cambiar el número se
+    ve, sin guardar nada todavía, quién queda justo antes y justo después."""
+
+    @st.dialog("Tu eatlist", width="small")
+    def _ventana():
+        eatlist = mi_eatlist()
+        orden = [int(i) for i in eatlist.get("ID", [])]
+        nombres = dict(zip(orden, eatlist.get("Nombre", [])))
+        nombres[id_restaurante] = nombre
+        esta = id_restaurante in orden
+        actual = orden.index(id_restaurante) + 1 if esta else None
+        st.markdown(f"**{amigos.texto_seguro(nombre)}**  \n" + (f"Ahora es el nº {actual} de tu eatlist."
+                    if esta else "¿En qué puesto lo quieres? (1 = el que más te apetece)"))
         ultimo = len(orden) if esta else len(orden) + 1
         puesto = st.number_input("En qué puesto", min_value=1, max_value=ultimo, value=actual or ultimo, step=1,
-                                 key=f"eat_puesto_{id_restaurante}", help="1 = el que más te apetece.")
+                                 key=f"eat_puesto_{id_restaurante}")
         if len(orden) > (1 if esta else 0):   # con otros sitios en la lista: así quedaría alrededor
             filas = "".join(
                 f'<div class="eat-fila{" eat-este" if es_este else ""}"><span class="eat-n">{n}</span>'
@@ -416,20 +427,60 @@ def bloque_eatlist(fila):
             guardar = st.button("Mover a este puesto" if esta else "Añadir a la eatlist", type="primary",
                                 width="stretch", key=f"eat_guardar_{id_restaurante}", disabled=esta and puesto == actual)
             quitar = esta and st.button("Quitar", type="tertiary", key=f"eat_quitar_{id_restaurante}")
-    if not (guardar or quitar):
-        return
-    nuevo = [i for i in orden if i != id_restaurante] if quitar else insertar_en_orden(orden, id_restaurante, puesto)
+        if not (guardar or quitar):
+            return
+        nuevo = [i for i in orden if i != id_restaurante] if quitar else insertar_en_orden(orden, id_restaurante, puesto)
+        try:
+            BD.guardar_eatlist(usuario, nuevo)
+        except bd.ErrorSupabase:
+            st.error("No se ha podido guardar ahora mismo (¿falta ejecutar supabase/008_eatlist.sql?).")
+            return
+        cargar_eatlist.clear()
+        st.toast("Quitado de tu eatlist" if quitar else f"Nº {nuevo.index(id_restaurante) + 1} en tu eatlist",
+                 icon=":material/bookmark:")
+        st.rerun()   # cierra la ventana
+
+    _ventana()
+
+
+def ids_de_mi_lista():
+    """IDs de los restaurantes de tu lista (aunque estés buscando en "Todos los restaurantes")."""
+    if BD is None or not usuario:
+        return set()
     try:
-        BD.guardar_eatlist(usuario, nuevo)
+        return set(int(i) for i in cargar_datos_usuario(usuario)[0].get("ID", []))
     except bd.ErrorSupabase:
-        st.error("No se ha podido guardar ahora mismo (¿falta ejecutar supabase/008_eatlist.sql?).")
+        return set()
+
+
+def bloque_quitar_de_mi_lista(fila):
+    """En la ficha de un restaurante de tu lista: quitarlo de ella (pide confirmar). Solo deja de estar en TU lista:
+    el restaurante no se borra de la base de datos (sigue en las de los demás, en "Todos" y en tus valoraciones)."""
+    id_restaurante = int(fila["ID"])
+    if not mi_lista or id_restaurante not in ids_de_mi_lista():
         return
-    cargar_eatlist.clear()
-    st.session_state[abierto] = False   # hecho: se vuelve a plegar
+    confirmar = f"confirmar_quitar_{id_restaurante}"
+    if not st.session_state.get(confirmar):
+        st.button("Quitar de mi lista", type="tertiary", icon=":material/playlist_remove:", width="stretch",
+                  key=f"quitar_de_lista_{id_restaurante}", on_click=lambda: st.session_state.update({confirmar: True}))
+        return
+    st.caption("Dejará de estar en tu lista (si vuelves a sincronizarla y sigue en tu lista de Google Maps, "
+               "volverá). No se borra de la app: sigue para los demás y en tus valoraciones.")
+    with st.container(horizontal=True):
+        si = st.button("Sí, quitar", type="primary", key=f"quitar_de_lista_si_{id_restaurante}")
+        st.button("Cancelar", key=f"quitar_de_lista_no_{id_restaurante}",
+                  on_click=lambda: st.session_state.pop(confirmar, None))
+    if not si:
+        return
     try:
-        st.rerun(scope="fragment")
-    except StreamlitAPIException:   # en AppTest, que recarga todo
-        st.rerun()
+        BD.quitar_de_lista(mi_lista["id"], id_restaurante)
+    except bd.ErrorSupabase:
+        st.error("No se ha podido quitar ahora mismo. Inténtalo en un momento.")
+        return
+    st.session_state.pop(confirmar, None)
+    cargar_datos_usuario.clear()
+    st.toast(f"«{fila['Nombre']}» ya no está en tu lista", icon=":material/check:")
+    st.rerun()   # cierra la ficha y la lista se ve ya sin él
 
 
 def mis_visitas():
@@ -821,6 +872,12 @@ def ir_a(seccion):
     st.session_state["seccion"] = seccion
 
 
+def abrir_tus_listas():
+    """"Añadir tu lista": al Perfil, con los ajustes abiertos (allí está "Tus listas")."""
+    ir_a("perfil")
+    st.session_state["abrir_ajustes"] = True
+
+
 # Filtros de "Mi lista": entrar desde la barra (o volver a tocarla) los quita todos. Los atajos que llevan a
 # Mi lista con un filtro puesto ("Ver en formato lista", una cocina de la gráfica) no pasan por aquí.
 FILTROS_MI_LISTA = ("ml_idos", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados",
@@ -901,9 +958,9 @@ def idea_del_dia(maestro, df_platos, tras_intro, momento, nombre, abrir):
         st.session_state["sugerencia"] = sugerencia
     if sugerencia is None:
         if maestro.empty and CONFIG_MULTIUSUARIO:
-            st.info("Todavía no tienes restaurantes en tu lista. Añádela en tu **Perfil** y aquí te propondré "
+            st.info("Todavía no tienes restaurantes en tu lista. Añádela en tus **ajustes** (toca tu foto en el Perfil) y aquí te propondré "
                     "qué comer y dónde.")
-            st.button("Añadir tu lista", on_click=ir_a, args=("perfil",), icon=":material/add_location_alt:")
+            st.button("Añadir tu lista", on_click=abrir_tus_listas, icon=":material/add_location_alt:")
         else:
             st.info("Cuando las reseñas de tu lista estén analizadas, aquí te propondré qué comer y dónde.")
         return
@@ -997,8 +1054,8 @@ def seccion_mi_lista(maestro, df_platos):
             st.info("Todavía no has marcado ningún restaurante con «He ido» (está arriba en la ficha de cada uno).")
             return
     if maestro.empty:
-        st.info("Todavía no tienes restaurantes en tu lista. Añádela en tu **Perfil**.")
-        st.button("Añadir tu lista", on_click=ir_a, args=("perfil",), icon=":material/add_location_alt:")
+        st.info("Todavía no tienes restaurantes en tu lista. Añádela en tus **ajustes** (toca tu foto en el Perfil).")
+        st.button("Añadir tu lista", on_click=abrir_tus_listas, icon=":material/add_location_alt:")
         return
 
     texto = st.text_input("Buscar por nombre", placeholder="Buscar por nombre", key="ml_texto",
@@ -1112,7 +1169,7 @@ def foto_de_perfil_editable(usuario, nombre, perfil, foto):
 
 def ajustes_de_usuario(usuario):
     """Ventana "Ajustes de usuario" (al tocar tu foto en la cabecera del Perfil): tu foto (tócala para cambiarla),
-    quitarla y tus datos personales. Se vuelven a leer aquí para que se vea al momento lo que se acaba de cambiar."""
+    quitarla, tus datos personales, tus listas y tus preferencias. Se vuelven a leer aquí para que se vea al momento lo que se acaba de cambiar."""
 
     @st.dialog("Ajustes de usuario", width="small")
     def _ventana():
@@ -1134,6 +1191,10 @@ def ajustes_de_usuario(usuario):
             st.error(st.session_state.pop("error_foto"))
         st.divider()
         bloque_datos_personales(usuario, nombre)
+        st.divider()
+        bloque_tus_listas(usuario, mi_lista)
+        st.divider()
+        bloque_preferencias(usuario, nombre, bd.preferencias_validas((perfil_actual or {}).get("preferencias")))
 
     _ventana()
 
@@ -1176,7 +1237,7 @@ def pedir_sincronizar_lista(usuario, enlace):
 
 def bloque_tus_listas(usuario, lista):
     """Estado de la sincronización y enlace de la lista de Google Maps."""
-    st.subheader("Tus listas")
+    st.markdown("**Tus listas**")
     estado = lista["estado"] if lista else "sin_lista"
     st.markdown(ESTADOS_LISTA.get(estado, estado))
     if lista and lista.get("actualizado_en"):
@@ -1240,7 +1301,7 @@ def buscar_personas():
 
 
 def bloque_preferencias(usuario, nombre, preferencias):
-    st.subheader("Preferencias")
+    st.markdown("**Preferencias**")
     st.caption("Lo que viene ya puesto al buscar en **Comer hoy**.")
     transporte = st.segmented_control(
         "¿Cómo soléis ir?", list(ETIQUETAS_TRANSPORTE), format_func=ETIQUETAS_TRANSPORTE.get,
@@ -1393,10 +1454,6 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
         return
     with st.container(border=True):
         bloque_insights(maestro, visitas)
-    with st.container(border=True):
-        bloque_tus_listas(usuario, lista)
-    with st.container(border=True):
-        bloque_preferencias(usuario, nombre, preferencias)
     st.button("Cerrar sesión", on_click=acceso.cerrar_sesion, args=(CUENTAS,), icon=":material/logout:",
               width="stretch", key="cerrar_sesion")
 
@@ -1483,6 +1540,8 @@ if CONFIG_MULTIUSUARIO:
     momento_portada = f"🍽️ Los restaurantes de {html.escape(dueno)}<br>{len(maestro)} sitios"
 preferencias = bd.preferencias_validas((perfil or {}).get("preferencias"))
 barra_secciones(seccion, google.get("foto"), amigos.solicitudes_pendientes(BD, usuario) if BD is not None else 0)
+if BD is not None and (pedida := st.session_state.pop("eatlist_abrir", None)):
+    dialogo_eatlist(*pedida)
 
 # Inicio, Mi lista y Perfil trabajan siempre con la lista del usuario; "Comer hoy" es lo de debajo.
 if seccion == "inicio":
@@ -1516,9 +1575,9 @@ with st.container(key="buscador"):
         st.segmented_control("Buscar en", [FUENTE_MI_LISTA, FUENTE_TODOS], default=FUENTE_MI_LISTA,
                              key="fuente", width="stretch")
         if maestro.empty:
-            st.info("Todavía no tienes restaurantes en tu lista. Añádela en tu **Perfil** (abajo a la derecha) "
+            st.info("Todavía no tienes restaurantes en tu lista. Añádela en tus **ajustes** (toca tu foto en el Perfil) "
                     "o busca en **Todos los restaurantes**.")
-            st.button("Añadir tu lista", on_click=ir_a, args=("perfil",), icon=":material/add_location_alt:")
+            st.button("Añadir tu lista", on_click=abrir_tus_listas, icon=":material/add_location_alt:")
             st.stop()
 
     # Caja de dirección y, justo debajo, el botón "Usar mi ubicación". Reservamos primero

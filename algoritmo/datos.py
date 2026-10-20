@@ -374,6 +374,12 @@ class Supabase:
         for lote in _lotes(filas):
             self._rest("POST", "lista_restaurantes", json=lote)
 
+    def quitar_de_lista(self, lista_id, restaurante_id):
+        """Quita un restaurante de UNA lista (solo esa relación lista-restaurante). El restaurante sigue en el
+        catálogo, con sus datos y reseñas, en las listas de los demás y en las valoraciones de quien haya ido."""
+        self._rest("DELETE", "lista_restaurantes", params={"lista_id": f"eq.{int(lista_id)}",
+                                                           "restaurante_id": f"eq.{int(restaurante_id)}"})
+
     # ---------------- perfil (datos personales) ----------------
 
     def perfil_de(self, usuario):
