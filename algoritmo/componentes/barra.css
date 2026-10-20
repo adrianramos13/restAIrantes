@@ -23,7 +23,7 @@
 .avatar [hidden] { display: none; }   /* si no, el display:block de arriba anula el atributo hidden */
 
 /* Globito de solicitudes de amistad pendientes */
-[data-seccion="perfil"] { position: relative; }
+.barra [data-seccion="perfil"] { position: relative; }   /* más específico que el "all: unset" de .barra button */
 .aviso {
   position: absolute; top: 2px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px;
   box-sizing: border-box; border-radius: 9px; background: #DC2626; color: #FFFFFF;

@@ -754,13 +754,17 @@ def test_amigos_cifras_solicitudes_y_fila(multiusuario):
     at.button(key="contador_amigos").click().run()                     # tocar "amigos" arriba abre su listado
     assert not at.exception, [e.value for e in at.exception]
     assert any(h.value == "Amigos" for h in at.subheader)
-    metricas = {m.label: m.value for m in at.metric}
-    assert "Amigos" not in metricas and at.button(key="contador_amigos").label == "**1** amigos"   # solo arriba
-    assert metricas["Sitios en común"] == str(len(pd.read_excel(EXCEL, sheet_name="Restaurantes")))   # misma lista
+    assert at.button(key="contador_amigos").label == "**1** amigos"
+    total = len(pd.read_excel(EXCEL, sheet_name="Restaurantes"))   # el amigo falso tiene la misma lista
+    assert any(f"· {total} sitios de tu lista" in c.value for c in at.caption)
     assert any("Eva" in m.value and "quiere ser tu amigo" in m.value for m in at.markdown)
     assert at.button(key="aceptar_eva").label == "Aceptar"
-    assert any("Luis" in m.value and "@luis" in m.value for m in at.markdown)   # en el listado, con su @
-    at.button(key="ver_amigo_luis").click().run()                      # su mini perfil
+    lista = [c for c in at.get("bidi_component") if "lista_amigos" in str(c.proto)]
+    assert lista and "luis" in str(lista[0].proto) and "Luis" in str(lista[0].proto)   # su @ y su nombre
+    assert "luis@x.com" not in str(lista[0].proto)                     # sin correos
+    assert "ver_amigo_luis" not in [b.key for b in at.button]           # sin botón "Ver": se toca la fila
+    at.session_state["amigo_abierto"] = "luis"                          # lo que hace tocar su fila
+    at.run()
     assert any("% de gustos en común" in m.value for m in at.markdown)
     at.button(key="volver_del_listado").click().run()
     assert "perfil_vista" not in at.session_state
@@ -873,8 +877,9 @@ def test_foto_propia_manda_sobre_la_de_google(multiusuario):
     assert multiusuario["fotos_guardadas"] == []                        # la de Google no la pisa
     barra = [c for c in at.get("bidi_component") if "barra_secciones" in str(c.proto)][0]
     assert FOTO_PROPIA in str(barra.proto)                              # la barra enseña la propia
-    avatar = [c for c in at.get("bidi_component") if "avatar_perfil" in str(c.proto)]
-    assert avatar and FOTO_PROPIA in str(avatar[0].proto)                # arriba, la foto que se toca para cambiarla
+    avatar = [c for c in at.get("bidi_component") if "ajustes" in str(c.proto) and FOTO_PROPIA in str(c.proto)]
+    assert avatar                                                       # arriba, tu foto (abre tus ajustes)
+    assert "quitar_foto" not in [b.key for b in at.button]              # "Quitar foto" ya no está en la cabecera
     assert "foto_perfil_0" not in str(at.main)                          # ya no hay barra para subir archivos
 
 
@@ -883,7 +888,11 @@ def test_quitar_mi_foto(multiusuario, monkeypatch):
     monkeypatch.setattr(datos.Supabase, "quitar_foto_perfil",
                         lambda self, u, n, anterior=None: quitadas.append((u, anterior)))
     multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g", "foto": FOTO_PROPIA}
-    at = correr(seccion="perfil")
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["abrir_ajustes"] = True                            # lo que hace tocar tu foto arriba
+    at = correr(at, seccion="perfil")
+    assert "quitar_foto" in [b.key for b in at.button]
+    at.session_state["abrir_ajustes"] = True                            # (AppTest recarga todo: se reabre la ventana)
     at.button(key="quitar_foto").click().run()
     assert not at.exception and quitadas == [("ana@ejemplo.com", FOTO_PROPIA)]
 
@@ -947,10 +956,13 @@ def test_cabecera_estilo_instagram(multiusuario):
         "**1** idos", f"**{total}** en tu lista", "**1** amigos"]
     assert [o for o in at.button_group if "Eatlist" in str(o.proto)], "faltan las pestañas Perfil / Diario / Eatlist"
     assert any(h.value == "Tus datos" for h in at.subheader)
-    at.button(key="contador_idos").click().run()                       # "idos" lleva al Diario
-    assert at.session_state["perfil_pestana"] == "Diario"
-    at.button(key="contador_lista").click().run()                      # "en tu lista" lleva a Mi lista
-    assert at.session_state["seccion"] == "mi_lista"
+    at.button(key="contador_idos").click().run()                       # "idos": Buscar con "solo los que he ido"
+    assert at.session_state["seccion"] == "mi_lista" and at.toggle(key="ml_idos").value
+    assert at.session_state["buscar_modo"] == "Restaurantes"
+    at.session_state["seccion"] = "perfil"
+    at.run()
+    at.button(key="contador_lista").click().run()                      # "en tu lista": Buscar, sin ese filtro
+    assert at.session_state["seccion"] == "mi_lista" and at.toggle(key="ml_idos").value is False
 
 
 def test_diario_por_meses(multiusuario):
@@ -1017,3 +1029,20 @@ def test_pestana_eatlist_en_orden(multiusuario):
     assert not at.exception, [e.value for e in at.exception]
     lista = [c for c in at.get("bidi_component") if "Sitio A" in str(c.proto) and "puestos" in str(c.proto)]
     assert lista and str(lista[0].proto).index("Sitio A") < str(lista[0].proto).index("Sitio C")
+
+
+
+def test_tocar_tu_foto_abre_los_ajustes_con_datos_personales(multiusuario, monkeypatch):
+    guardados = []
+    monkeypatch.setattr(datos.Supabase, "guardar_perfil", lambda self, u, n, preferencias=None: guardados.append((u, n)))
+    at = correr(seccion="perfil")
+    assert "perfil_nombre" not in [t.key for t in at.text_input]          # Datos personales ya no está en la pestaña
+    at.session_state["abrir_ajustes"] = True                            # lo que hace tocar tu foto
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Toca tu foto para cambiarla." in c.value for c in at.caption)
+    at.session_state["abrir_ajustes"] = True
+    at.text_input(key="perfil_nombre").input("Anita")
+    at.session_state["abrir_ajustes"] = True
+    at.button(key="guardar_perfil").click().run()
+    assert guardados == [("ana@ejemplo.com", "Anita")]

@@ -18,6 +18,7 @@ from logica import cocina_favorita, compatibilidad, en_comun, hace_cuanto
 
 _COMPONENTES = Path(__file__).resolve().parent / "componentes"
 _BUSCADOR = {n: (_COMPONENTES / f"buscador_amigos.{n}").read_text(encoding="utf-8") for n in ("html", "css", "js")}
+_LISTA = {n: (_COMPONENTES / f"lista_amigos.{n}").read_text(encoding="utf-8") for n in ("html", "css", "js")}
 
 # Colores de los avatares sin foto (siempre el mismo para cada persona); todos con texto blanco legible.
 PALETA = ["#C2410C", "#0F766E", "#7C3AED", "#BE185D", "#1D4ED8", "#15803D", "#B45309", "#475569"]
@@ -168,8 +169,8 @@ def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, 
     try:
         listas = {a["usuario"]: cargar_lista_de(cliente, a["usuario"]) for a in amigos}
         mis_valoraciones = cargar_mis_visitas(cliente, usuario)
-        _cifras(cliente, amigos, mi_lista, listas)
         _lista_de_amigos(amigos)
+        _cifras(cliente, amigos, mi_lista, listas)
     except bd.ErrorSupabase:
         st.caption("No se pueden ver los datos de tus amigos ahora mismo.")
 
@@ -207,27 +208,27 @@ def _cifras(cliente, amigos, mi_lista, listas):
     """Visitas de tus amigos en los últimos 30 días · sitios de tu lista que también tiene algún amigo."""
     comunes = set().union(*(en_comun(mi_lista, lista) for lista in listas.values()))
     visitas = cargar_actividad(cliente, tuple(sorted(a["usuario"] for a in amigos))) if amigos else 0
-    with st.container(horizontal=True):   # el nº de amigos ya está arriba, en la cabecera del Perfil
-        st.metric(f"Visitas ({DIAS_ACTIVIDAD} días)", visitas, help="Sitios que tus amigos han marcado con «He ido».")
-        st.metric("Sitios en común", len(comunes), help="Restaurantes de tu lista que también tiene algún amigo.")
+    if amigos:   # el nº de amigos ya está arriba, en la cabecera del Perfil
+        st.caption(f"Tus amigos han ido a {visitas} sitio{'s' if visitas != 1 else ''} en los últimos {DIAS_ACTIVIDAD} "
+                   f"días · {len(comunes)} sitio{'s' if len(comunes) != 1 else ''} de tu lista los tiene también algún amigo")
 
 
-def _abrir_amigo(clave):
-    st.session_state["amigo_abierto"] = clave
+def _al_tocar_amigo():
+    clave = st.session_state["lista_amigos"].abrir
+    if clave:
+        st.session_state["amigo_abierto"] = clave
 
 
 def _lista_de_amigos(amigos):
-    """Tus amigos uno debajo de otro (foto, nombre y @usuario); al tocar "Ver" se abre su mini perfil."""
+    """Tus amigos como la lista de seguidores de Instagram: buscador arriba y una fila por amigo (foto, @usuario
+    y nombre); toda la fila se toca para abrir su mini perfil. Al navegador no le llegan correos."""
     if not amigos:
         st.caption("Todavía no tienes amigos: búscalos en **Buscar → Personas** por su nombre o @usuario.")
         return
-    for a in sorted(amigos, key=lambda a: _nombre(a).lower()):
-        clave = a["alias"] or a["usuario"]
-        with st.container(horizontal=True, vertical_alignment="center", key=f"amigo_{re.sub(r'[^a-z0-9_]', '_', clave.lower())}"):
-            st.html(avatar_html(a, 44), width="content")
-            st.markdown(quien(a))
-            st.button("Ver", type="tertiary", icon=":material/chevron_right:", icon_position="right",
-                      key=f"ver_amigo_{clave}", on_click=_abrir_amigo, args=(clave,))
+    personas = [{"clave": a["alias"] or a["usuario"], "alias": a.get("alias"), "nombre": _nombre(a), **datos_avatar(a)}
+                for a in sorted(amigos, key=lambda a: (a.get("alias") or _nombre(a)).lower())]
+    st.components.v2.component("lista_amigos", **_LISTA)(
+        key="lista_amigos", data={"personas": personas}, on_abrir_change=_al_tocar_amigo)
 
 
 def _mini_perfil(cliente, usuario, amigo, mi_lista, su_lista, mis_valoraciones, mostrar_lista):
