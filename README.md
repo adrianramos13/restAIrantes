@@ -334,6 +334,15 @@ flowchart LR
 > **Y para poder subir una foto de perfil propia**, ejecuta después `supabase/007_foto_propia.sql` (permite guardar, además de las de Google, las fotos subidas a la app).
 >
 > **Y para la Eatlist** (los restaurantes a los que quieres ir, en tu orden), ejecuta `supabase/008_eatlist.sql`.
+>
+> **Y para Explorar** (cualquier restaurante, aunque no esté en ninguna lista), ejecuta `supabase/009_lugares.sql` y después importa una zona (gratis: datos abiertos de [Overture Maps](https://overturemaps.org), sin clave; necesita `pip install duckdb`):
+>
+> ```bash
+> python obtener_datos/importar_overture.py --zona madrid      # ~38.000 sitios, ~1 min; también: espana, canarias
+> python obtener_datos/importar_overture.py --caja -3.80 40.35 -3.60 40.50   # o una caja: oeste sur este norte
+> ```
+>
+> Al importar se enlazan solos con los restaurantes que ya estaban en el catálogo (mismo sitio, a menos de 150 m, y nombre parecido), que salen ya como *Analizado*. Volver a importar actualiza los datos sin perder lo pedido ni lo analizado.
 
 ### Cuentas con correo y contraseña
 
@@ -351,6 +360,7 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
 ### Secciones (barra de abajo)
 
 - **Inicio**: una idea para hoy: «¿Te apetece cachopo? Te gustará Casa Pepe», con la ficha del sitio. Elige al azar un plato que las reseñas de tu lista elogian (al menos 2 menciones buenas en un mismo sitio abierto) y el sitio donde más lo elogian. *Otra idea* cambia de plato; *Más sitios con…* lo busca en Comer hoy. Debajo, **Tus amigos han ido a**: tarjetas pequeñas que se deslizan hacia la derecha con los sitios que tus amigos han marcado con *He ido* en las **dos últimas semanas** (quién, cuándo, el restaurante, su nota y su comentario).
+- **Explorar** (solo con cuentas): cualquier restaurante, bar o cafetería de las zonas importadas, por nombre y/o cerca de tu ubicación (del más cercano al más lejano). Los **analizados** abren su ficha completa (nota, lo que destacan, eatlist, *He ido*…); los demás enseñan lo básico (categoría, dirección, Google Maps, web y teléfono) y un botón **Analizar este restaurante**, que lo pone en la cola del procesador. Lo que has pedido sale en *Has pedido analizar*, con su estado.
 - **Comer hoy**: el buscador de siempre (desde dónde, tiempo, cocina, presupuesto y plato).
 - **Buscar** (antes «Mi lista»): arriba, **Restaurantes** o **Personas**. *Restaurantes*: todos los de tu lista, con buscador por nombre, filtros (cocina, presupuesto, nota mínima, plato, ocultar cerrados) y orden. *Personas*: buscar gente registrada por su nombre o @usuario y añadirla como amiga (aquí también se elige tu @usuario si aún no lo tienes).
 - **Perfil** (el icono es tu foto): arriba, estilo Instagram, tu foto (tócala para abrir **Ajustes de usuario**: cambiar o quitar tu foto, *Datos personales*, *Tus listas* y *Preferencias*), nombre, @usuario y tres cifras que llevan a su sitio: **idos** (Diario), **en tu lista** (Mi lista) y **amigos**. Debajo, tres pestañas:
@@ -381,6 +391,7 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
 
   Si alguien pega **una lista que otra persona ya tiene procesada**, se copia al momento, sin esperar al procesador.
 
+- **Explorar → Analizar**: el mismo procesador (también con `--vigilar`) analiza después de las listas los restaurantes pedidos, primero los que más gente ha pedido. Si ya estaba en el catálogo (mismo nombre y a menos de 300 m) solo se enlaza, sin pasar por Jev. Si no, lo busca en Google Maps **por sus coordenadas**, lee de su ficha lo que en una lista viene en la lista (nota, nº de reseñas, precio, cocina, foto, si está cerrado; precio y nº de reseñas solo salen con tu sesión de Google), saca sus reseñas y lo clasifica con Jev como siempre. Si Google no lo encuentra, queda como *No se pudo analizar* (se puede volver a pedir).
 - **Tus listas** (en el Perfil): estado de la sincronización, enlace de la lista y botón *Guardar y sincronizar*.
 - **Buscar en: Mi lista / Todos los restaurantes**: la segunda opción busca entre todos los restaurantes de la base de datos (los de todas las listas).
 

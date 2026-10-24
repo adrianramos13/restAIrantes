@@ -1,11 +1,14 @@
 """
-Procesa las listas que los usuarios piden desde la app ("Mi lista" en modo multiusuario).
+Procesa las listas que los usuarios piden desde la app ("Mi lista" en modo multiusuario) y los
+restaurantes sueltos que piden analizar desde "Explorar" (tabla lugares, supabase/009_lugares.sql).
 
 Para cada lista: la descarga de Google Maps (con TU sesión de Google, que es la que enseña los
 precios), reutiliza los restaurantes que ya están en el catálogo compartido (solo refresca nota,
 precio, cocina y si está cerrado: no se vuelven a analizar ni cuestan nada) y analiza los nuevos
 con los scripts de siempre: foto (extraer_html.py), reseñas (extraer_resenas.py) y clasificación
 con Jev (clasificar_restaurantes_jev.py). Al final guarda la lista del usuario en Supabase.
+Los de Explorar pasan por lo mismo, pero se buscan en Google Maps por sus coordenadas y lo que de una
+lista saldría en la lista (nota, precio, cocina, foto) se lee de su ficha.
 
 USO (desde la raíz del proyecto):
     python obtener_datos/procesar_solicitudes.py           # las listas pendientes
@@ -20,6 +23,7 @@ REQUISITOS:
 
 import argparse
 import asyncio
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -59,12 +63,13 @@ PESTANAS = 3   # restaurantes a la vez al sacar reseñas (--pestanas); si Google
 MAPS = "https://www.google.com/maps?hl=es"
 
 
-async def _resenas_de(nombres, pestanas=None):
+async def _resenas_de(nombres, pestanas=None, cercas=None):
     """Reseñas (hasta 30) de cada restaurante, con TU sesión de Google (sin sesión, Google Maps
     solo enseña ~5 por sitio) y en varias pestañas a la vez. Devuelve las filas en el orden de
-    `nombres`, igual que si se hicieran de uno en uno."""
+    `nombres`, igual que si se hicieran de uno en uno. `cercas`: (lat, lon) de cada uno, para
+    buscarlo alrededor de ese punto (Explorar) en vez de en Madrid."""
     from playwright.async_api import async_playwright
-    pendientes = list(enumerate(nombres, start=1))
+    pendientes = list(enumerate(zip(nombres, cercas or [None] * len(nombres)), start=1))
     por_indice = {}
     async with async_playwright() as p:
         contexto = await extraer_html._abrir_chrome_con_sesion(p)
@@ -75,17 +80,18 @@ async def _resenas_de(nombres, pestanas=None):
 
         async def trabajador(page):
             while pendientes:   # cada pestaña coge el siguiente restaurante libre
-                i, nombre = pendientes.pop(0)
-                por_indice[i] = await extraer_resenas.procesar_restaurante(page, nombre, i, len(nombres))
+                i, (nombre, cerca) = pendientes.pop(0)
+                por_indice[i] = await extraer_resenas.procesar_restaurante(page, nombre, i, len(nombres), cerca)
 
         await asyncio.gather(*(trabajador(pagina) for pagina in paginas))
         await contexto.close()
     return [fila for i in sorted(por_indice) for fila in por_indice[i]]
 
 
-def analizar_nuevos(filas):
+def analizar_nuevos(filas, resenas=None):
     """Restaurantes que no están en el catálogo -> filas del catálogo, con el proceso de siempre
-    (foto, reseñas y Jev) sobre excels temporales: no se toca excels/."""
+    (foto, reseñas y Jev) sobre excels temporales: no se toca excels/. `resenas`: si ya se han
+    sacado (Explorar, junto con su ficha), no se vuelven a sacar."""
     if not os.environ.get("TYPESAFE_API_KEY"):
         raise ErrorLista("falta la variable de entorno TYPESAFE_API_KEY para clasificar los restaurantes nuevos")
     import clasificar_restaurantes_jev as clasif
@@ -94,7 +100,8 @@ def analizar_nuevos(filas):
     t0 = time.time()
     extraer_html.descargar_imagenes(filas)   # rellena "Imagen archivo" y deja cada foto en imagenes/
     t_fotos = time.time()
-    resenas = asyncio.run(_resenas_de([f["Nombre"] for f in filas]))
+    if resenas is None:
+        resenas = asyncio.run(_resenas_de([f["Nombre"] for f in filas]))
     t_resenas = time.time()
     print(f"  Tiempos: fotos {t_fotos - t0:.0f} s | reseñas {t_resenas - t_fotos:.0f} s "
           f"({(t_resenas - t_fotos) / max(1, len(filas)):.0f} s por restaurante, {PESTANAS} pestañas)")
@@ -160,6 +167,115 @@ def procesar_lista(bd, lista):
     return resumen
 
 
+# ----------------------------- Explorar: restaurantes sueltos -----------------------------
+
+MISMO_SITIO_M = 300   # un restaurante del catálogo con el mismo nombre y a menos de esto es el mismo sitio
+
+
+def _metros(lat1, lon1, lat2, lon2):
+    dy = (lat1 - lat2) * 111_320
+    dx = (lon1 - lon2) * 111_320 * math.cos(math.radians(lat1))
+    return math.hypot(dx, dy)
+
+
+def es_el_mismo_sitio(restaurante, lugar):
+    d = restaurante.get("datos") or {}
+    if d.get("Latitud") is None or d.get("Longitud") is None:
+        return False
+    return _metros(float(d["Latitud"]), float(d["Longitud"]), lugar["lat"], lugar["lon"]) <= MISMO_SITIO_M
+
+
+def fila_desde_ficha(lugar, filas_resenas):
+    """La fila "de lista" (como las de extraer_html.extraer_restaurantes) de un lugar de Explorar, con lo
+    leído de su ficha de Google Maps; si Google no da la cocina, la categoría de Overture."""
+    f = filas_resenas[0] if filas_resenas else {}
+    return {"Nombre": lugar["nombre"], "Puntuación": f.get("Rating Google"),
+            "Nº Reseñas": f.get("Ficha nº reseñas") or f.get("Nº reseñas Google"),
+            "Rango de precios": f.get("Ficha precio") or "",
+            "Tipo de cocina": f.get("Ficha cocina") or lugar.get("categoria") or "",
+            "Estado": f.get("Ficha estado") or "", "Imagen URL": f.get("Ficha foto") or ""}
+
+
+def procesar_lugares(bd, lugares):
+    """Analiza los lugares pedidos desde Explorar y los enlaza con su restaurante del catálogo. Si ya estaba
+    (mismo nombre y sitio, p. ej. de la lista de alguien), solo se enlaza: ni se analiza ni se paga."""
+    claves = {l["id"]: datos.clave_restaurante(l["nombre"]) for l in lugares}
+    existentes = bd.restaurantes_por_clave(list(claves.values()))
+    a_analizar, nombres = [], set()
+    for l in lugares:
+        e = existentes.get(claves[l["id"]])
+        if e and es_el_mismo_sitio(e, l):
+            bd.marcar_lugar(l["id"], "analizado", e["id"])
+        elif claves[l["id"]] not in nombres:   # el clasificador cruza por nombre: un repetido, en la próxima vuelta
+            nombres.add(claves[l["id"]])
+            a_analizar.append(l)
+    for l in a_analizar:
+        bd.marcar_lugar(l["id"], "procesando")
+    print(f"  {len(lugares)} pedidos: {len(lugares) - len(a_analizar)} ya en el catálogo o repetidos, "
+          f"{len(a_analizar)} a analizar.")
+    if not a_analizar:
+        return
+    try:
+        _analizar_lugares(bd, a_analizar, claves, existentes)
+    except KeyboardInterrupt:
+        for l in a_analizar:
+            bd.marcar_lugar(l["id"], "pendiente", mensaje="interrumpido; se volverá a intentar")
+        raise
+    except (Exception, SystemExit) as e:   # que no se queden en "procesando" para siempre
+        print(f"  ERROR: {e}")
+        for l in a_analizar:
+            bd.marcar_lugar(l["id"], "error", mensaje=str(e)[:300])
+
+
+def _analizar_lugares(bd, lugares, claves, existentes):
+    resenas = asyncio.run(_resenas_de([l["nombre"] for l in lugares], cercas=[(l["lat"], l["lon"]) for l in lugares]))
+    por_nombre = {}
+    for r in resenas:
+        por_nombre.setdefault(r["Restaurante"], []).append(r)
+    encontrados, filas = [], []
+    for l in lugares:
+        suyas = por_nombre.get(l["nombre"], [])
+        if not suyas or suyas[0].get("Estado") == "NO ENCONTRADO":
+            bd.marcar_lugar(l["id"], "error", mensaje="No se ha encontrado en Google Maps")
+            continue
+        encontrados.append(l)
+        filas.append(fila_desde_ficha(l, suyas))
+    if not filas:
+        return
+    catalogo = analizar_nuevos(filas, resenas=[r for r in resenas if r["Restaurante"] in {f["Nombre"] for f in filas}])
+    # Mismo nombre que otro restaurante del catálogo pero en otro sitio (otra ciudad, otro local de una cadena):
+    # clave propia, para no pisar el que ya hay.
+    clave_final = {l["id"]: claves[l["id"]] + (f" @{l['id']}" if claves[l["id"]] in existentes else "")
+                   for l in encontrados}
+    renombrar = {claves[l["id"]]: clave_final[l["id"]] for l in encontrados}
+    for fila in catalogo:
+        fila["clave"] = renombrar.get(fila["clave"], fila["clave"])
+    subir_fotos(bd, catalogo)
+    ids = bd.guardar_restaurantes(catalogo)
+    for l in encontrados:
+        if clave_final[l["id"]] in ids:
+            bd.marcar_lugar(l["id"], "analizado", ids[clave_final[l["id"]]])
+        else:
+            bd.marcar_lugar(l["id"], "error", mensaje="No se ha podido analizar")
+    print(f"  Analizados {sum(clave_final[l['id']] in ids for l in encontrados)} de {len(lugares)}.")
+
+
+def lugares_pendientes(bd):
+    """Los de Explorar por analizar ([] si aún no se ha ejecutado supabase/009_lugares.sql)."""
+    try:
+        return bd.lugares_pendientes()
+    except datos.ErrorSupabase as e:
+        print(f"(Explorar: no se pueden leer los restaurantes pedidos: {str(e)[:120]})")
+        return []
+
+
+def procesar_explorar(bd):
+    lugares = lugares_pendientes(bd)
+    if lugares:
+        print(f"\n=== Explorar: {len(lugares)} restaurantes pedidos ===")
+        procesar_lugares(bd, lugares)
+
+
 def main(argv=None):
     global PESTANAS
     parser = argparse.ArgumentParser(description="Procesa las listas pedidas desde la app.")
@@ -179,12 +295,14 @@ def main(argv=None):
             pendientes = bd.listas_pendientes()
             if pendientes:
                 procesar_varias(bd, pendientes)
+            procesar_explorar(bd)
             time.sleep(args.vigilar * 60)
     listas = bd.listas_con_enlace() if args.todas else bd.listas_pendientes()
-    if not listas:
+    if listas:
+        procesar_varias(bd, listas)
+    else:
         print("No hay listas pendientes.")
-        return
-    procesar_varias(bd, listas)
+    procesar_explorar(bd)
 
 
 def procesar_varias(bd, listas):

@@ -51,7 +51,7 @@ from streamlit.errors import StreamlitAPIException
 # vieja de los módulos que ya tenía importados (p. ej. "AttributeError: datos.foto_valida"). Se recarga
 # cada módulo propio cuyo archivo haya cambiado desde que se cargó, antes de importar nada de él (en
 # orden: primero los que no dependen de otros). En los tests no: desharía lo que sustituyen (monkeypatch).
-_MODULOS_PROPIOS = ("logica", "servicios", "datos", "sesion", "cuentas", "acceso", "amigos")
+_MODULOS_PROPIOS = ("logica", "servicios", "datos", "sesion", "cuentas", "acceso", "amigos", "explorar")
 if "PYTEST_CURRENT_TEST" not in os.environ:
     for _nombre in _MODULOS_PROPIOS:
         _modulo = sys.modules.get(_nombre)
@@ -66,6 +66,7 @@ from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_min
 import acceso
 import amigos
 import datos as bd
+import explorar
 from cuentas import Cuentas
 from logica import hace_cuanto
 from sesion import config_multiusuario, datos_google, usuario_actual
@@ -856,17 +857,18 @@ def mostrar_portada(num_restaurantes, tras_intro=False, maestro=None,
 
 
 # ----------------------- BARRA DE SECCIONES ----------------------- #
-# Componente propio fijo abajo: Inicio, Comer hoy (el buscador), Mi lista y Perfil (con la foto de
-# Google del usuario como icono). Solo se dibuja la sección elegida; lo escrito en las demás se
+# Componente propio fijo abajo: Inicio, Explorar (cualquier restaurante; solo con cuentas), Comer hoy (el
+# buscador), Mi lista y Perfil (con la foto de Google del usuario como icono). Solo se dibuja la sección elegida; lo escrito en las demás se
 # conserva con conservar_formularios().
 
-SECCIONES = ("inicio", "comer", "mi_lista", "perfil")
+SECCIONES = ("inicio", "explorar", "comer", "mi_lista", "perfil")
 _BARRA = st.components.v2.component(
     "barra_secciones", html=recurso("barra.html"), css=recurso("barra.css"), js=recurso("barra.js"),
 )
 
 # Widgets de cada sección cuyo valor tiene que sobrevivir mientras se está en otra.
 CLAVES_FORMULARIOS = {
+    "explorar": ("ex_texto",),
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
     # sin "ml_idos" (solo los que he ido): lo activa "Ver en formato lista" y se olvida al salir de Mi lista
     "mi_lista": ("ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
@@ -907,7 +909,7 @@ def limpiar_filtros_mi_lista():
 
 def barra_secciones(seccion, foto=None, avisos=0):
     """`avisos`: solicitudes de amistad pendientes (globito sobre el icono de Perfil)."""
-    _BARRA(key="barra_secciones", data={"activa": seccion, "foto": foto, "avisos": avisos},
+    _BARRA(key="barra_secciones", data={"activa": seccion, "foto": foto, "avisos": avisos, "explorar": BD is not None},
            on_seccion_change=_al_cambiar_seccion)
 
 
@@ -1549,6 +1551,9 @@ barra_secciones(seccion, google.get("foto"), amigos.solicitudes_pendientes(BD, u
 # Inicio, Mi lista y Perfil trabajan siempre con la lista del usuario; "Comer hoy" es lo de debajo.
 if seccion == "inicio":
     seccion_inicio(maestro, df_platos, hay_intro, momento_portada, nombre_usuario)
+    st.stop()
+if seccion == "explorar":
+    explorar.seccion(BD, usuario, ficha=contenido_ficha, boton_ubicacion=boton_ubicacion_actual)
     st.stop()
 if seccion == "mi_lista":
     seccion_mi_lista(maestro, df_platos)

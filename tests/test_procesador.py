@@ -42,6 +42,12 @@ class BDFalsa:
     def listas_pendientes(self):
         return self.listas
 
+    def lugares_pendientes(self):
+        return getattr(self, "lugares", [])
+
+    def marcar_lugar(self, lugar_id, estado, restaurante_id=None, mensaje=None):
+        self.estados.append((lugar_id, estado, restaurante_id))
+
     def _nuevo_id(self):
         self.siguiente_id += 1
         return self.siguiente_id
@@ -57,7 +63,7 @@ def analizados(monkeypatch):
     """Sustituye el análisis de restaurantes nuevos (fotos, reseñas, Jev) y apunta a cuáles se piden."""
     pedidos = []
 
-    def analizar(filas):
+    def analizar(filas, resenas=None):
         pedidos.extend(f["Nombre"] for f in filas)
         return [{"clave": ps.datos.clave_restaurante(f["Nombre"]), "datos": {"Nombre": f["Nombre"]},
                  "platos": [], "imagen": None} for f in filas]
@@ -116,7 +122,7 @@ def test_resenas_en_varias_pestanas_mantienen_el_orden(monkeypatch):
     async def asegurar(page, url):
         pass
 
-    async def procesar(page, nombre, i, total):
+    async def procesar(page, nombre, i, total, cerca=None):
         usadas.add(id(page))
         vistos.append(nombre)
         await asyncio.sleep(random.uniform(0, 0.02))   # terminan en distinto orden
@@ -163,3 +169,57 @@ def test_un_fallo_no_para_las_demas_listas(monkeypatch, analizados):
     ps.main([])
     assert (1, "error") in bd.estados
     assert (2, "lista") in bd.estados and bd.contenido[2]
+
+
+# ---------------------------------------------------------------- Explorar: restaurantes sueltos
+
+def lugar(id_, nombre, lat=40.42, lon=-3.70):
+    return {"id": id_, "nombre": nombre, "lat": lat, "lon": lon, "categoria": "Japonesa"}
+
+
+@pytest.fixture
+def fichas(monkeypatch):
+    """Sustituye la búsqueda en Google Maps: lo que "se lee" de cada ficha (o que no se encuentra)."""
+    leidos = []
+
+    async def resenas(nombres, pestanas=None, cercas=None):
+        leidos.extend(zip(nombres, cercas))
+        return [{"Restaurante": n, "Estado": "NO ENCONTRADO"} if n == "Fantasma" else
+                {"Restaurante": n, "Estado": "OK", "Rating Google": 4.4, "Ficha precio": "20-30 €",
+                 "Ficha cocina": "", "Ficha foto": "https://lh3.googleusercontent.com/x", "Texto": "rico"}
+                for n in nombres]
+    monkeypatch.setattr(ps, "_resenas_de", resenas)
+    return leidos
+
+
+def test_lugares_ya_en_el_catalogo_se_enlazan_sin_analizar(analizados, fichas):
+    mismo = {"id": 7, "clave": "kabuki", "datos": {"Nombre": "Kabuki", "Latitud": 40.4201, "Longitud": -3.7001}}
+    otro = {"id": 8, "clave": "casa pepe", "datos": {"Nombre": "Casa Pepe", "Latitud": 41.6, "Longitud": -0.9}}
+    bd = BDFalsa(catalogo={"kabuki": mismo, "casa pepe": otro})
+
+    ps.procesar_lugares(bd, [lugar("a", "Kabuki"), lugar("b", "Casa Pepe"), lugar("c", "Fantasma"),
+                             lugar("d", "Casa  Pepe")])   # "d" repite nombre con "b": a la próxima vuelta
+
+    assert ("a", "analizado", 7) in bd.estados and "Kabuki" not in analizados   # mismo sitio: sin pagar
+    assert analizados == ["Casa Pepe"]                                         # Fantasma no se encontró
+    assert fichas == [("Casa Pepe", (40.42, -3.70)), ("Fantasma", (40.42, -3.70))]   # buscados por coordenadas
+    assert ("c", "error", None) in bd.estados
+    nuevo = bd.catalogo["casa pepe @b"]                                        # mismo nombre, otra ciudad
+    assert ("b", "analizado", nuevo["id"]) in bd.estados and bd.catalogo["casa pepe"] is otro
+    assert not [e for e in bd.estados if e[0] == "d"]                          # sigue pendiente
+
+
+def test_fila_desde_ficha_usa_la_categoria_de_overture_si_google_no_la_da():
+    fila = ps.fila_desde_ficha(lugar("a", "Kabuki"), [{"Rating Google": 4.4, "Nº reseñas Google": 120,
+                                                        "Ficha cocina": "", "Ficha precio": "30-40 €"}])
+    assert fila == {"Nombre": "Kabuki", "Puntuación": 4.4, "Nº Reseñas": 120, "Rango de precios": "30-40 €",
+                    "Tipo de cocina": "Japonesa", "Estado": "", "Imagen URL": ""}
+
+
+def test_un_fallo_al_analizar_no_deja_lugares_en_procesando(monkeypatch, fichas):
+    def falla(filas, resenas=None):
+        raise RuntimeError("Jev caído")
+    monkeypatch.setattr(ps, "analizar_nuevos", falla)
+    bd = BDFalsa()
+    ps.procesar_lugares(bd, [lugar("a", "Nuevo")])
+    assert bd.estados[-1] == ("a", "error", None)

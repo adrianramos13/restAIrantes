@@ -106,9 +106,10 @@ async def aceptar_cookies(page):
             pass
 
 
-async def buscar_restaurante(page, nombre):
+async def buscar_restaurante(page, nombre, cerca=None):
     """
-    Busca el restaurante directamente en Google Maps.
+    Busca el restaurante directamente en Google Maps: en CIUDAD o, con `cerca` = (lat, lon),
+    alrededor de ese punto (sitios de Explorar, que pueden estar en cualquier ciudad).
     """
 
     query = f"{nombre}, {CIUDAD}"
@@ -117,6 +118,9 @@ async def buscar_restaurante(page, nombre):
         "https://www.google.com/maps/search/?api=1&query="
         + quote(query)
     )
+    if cerca:
+        query = nombre
+        url = f"https://www.google.com/maps/search/{quote(nombre)}/@{cerca[0]},{cerca[1]},17z?hl=es"
 
     await page.goto(
         url,
@@ -309,6 +313,34 @@ async def obtener_datos_ficha(page):
         pass
 
     return datos
+
+
+# Lo que en una lista de Google Maps sale en la propia lista (extraer_html.py) y para un sitio suelto hay que
+# leer de su ficha. Precio y nº de reseñas solo aparecen con la sesión de Google iniciada (como en la lista).
+_JS_FICHA_EXTRA = r"""() => {
+  const main = document.querySelector('[role="main"]') || document.body;
+  const texto = main.innerText || '';
+  const cocina = main.querySelector('button.DkEaL, button[jsaction*="category"]');
+  const foto = document.querySelector('button[jsaction*="heroHeaderImage"] img');
+  const precio = texto.match(/\d+\s*[-–]\s*\d+\s*€|(más|menos) de \d+\s*€|\d+\s*€\s*o más/i);
+  const cerrado = texto.match(/Cerrado (permanentemente|temporalmente)/);
+  const resenas = texto.match(/^\s*\d[,.]\d\s*\n?\s*\(([\d.\s]+)\)/m);
+  return {
+    cocina: cocina ? cocina.innerText.trim() : '',
+    precio: precio ? precio[0].replace('–', '-') : '',
+    estado: cerrado ? cerrado[0] : '',
+    foto: foto ? foto.src : '',
+    resenas: resenas ? parseInt(resenas[1].replace(/\D/g, ''), 10) : null,
+  };
+}"""
+
+
+async def obtener_datos_extra(page):
+    """Cocina, precio, si está cerrado, foto y nº de reseñas de la ficha abierta ('' / None si no salen)."""
+    try:
+        return await page.evaluate(_JS_FICHA_EXTRA)
+    except Exception:
+        return {"cocina": "", "precio": "", "estado": "", "foto": "", "resenas": None}
 
 
 async def _hay_tarjetas_resena(page):
@@ -945,7 +977,9 @@ def _filas_por_resena(resultado_base, reseñas):
     return resultados
 
 
-async def procesar_restaurante(page, nombre, indice, total):
+async def procesar_restaurante(page, nombre, indice, total, cerca=None):
+    """Reseñas de un restaurante (una fila por reseña). Con `cerca` = (lat, lon) se busca alrededor de ese
+    punto y se leen además de su ficha los datos que de una lista saldrían en la lista (columnas "Ficha ...")."""
     print("\n" + "=" * 70)
     print(f"[{indice}/{total}] {nombre}")
     print("=" * 70)
@@ -971,7 +1005,7 @@ async def procesar_restaurante(page, nombre, indice, total):
         # ---------------------------------------------------------
         # 1. BUSCAR RESTAURANTE
         # ---------------------------------------------------------
-        encontrado = await buscar_restaurante(page, nombre)
+        encontrado = await buscar_restaurante(page, nombre, cerca)
 
         if not encontrado:
             print("No se encontró el restaurante.")
@@ -997,6 +1031,12 @@ async def procesar_restaurante(page, nombre, indice, total):
             "Nº reseñas Google": datos_ficha.get("num_reviews_google"),
             "Dirección": datos_ficha.get("direccion_google", ""),
         })
+        if cerca:
+            extra = await obtener_datos_extra(page)
+            resultado_base.update({
+                "Ficha cocina": extra["cocina"], "Ficha precio": extra["precio"], "Ficha estado": extra["estado"],
+                "Ficha foto": extra["foto"], "Ficha nº reseñas": extra["resenas"],
+            })
 
         lat, lon = extraer_lat_lon(datos_ficha.get("url_google", ""))
         resultado_base["Latitud"] = lat

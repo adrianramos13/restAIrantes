@@ -1083,3 +1083,106 @@ def test_quitar_de_lista_solo_borra_la_relacion(monkeypatch):
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
     bd_.quitar_de_lista(1, np.int64(7))
     assert llamadas == [("DELETE", "lista_restaurantes", {"lista_id": "eq.1", "restaurante_id": "eq.7"}, None)]
+
+
+
+# ---------------------------------------------------------------- Explorar (lugares de Overture)
+
+def test_texto_busqueda():
+    assert datos.texto_busqueda("  Sobrino de Botín (Cuchilleros)*,") == "sobrino de botin cuchilleros"
+    assert datos.texto_busqueda("寿司 Ñandú") == "寿司 nandu"            # otras escrituras se conservan
+    assert datos.texto_busqueda(None) == ""
+
+
+def test_buscar_lugares_por_nombre_y_zona(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
+    assert bd_.buscar_lugares("  *, ") == [] and llamadas == []         # ni texto ni sitio: ni pregunta
+    bd_.buscar_lugares("Casa*Labra,", cerca=(40.0, -3.7), radio_km=1.1132)
+    metodo, tabla, params, _ = llamadas[0]
+    assert (metodo, tabla) == ("GET", "lugares")
+    assert params["nombre_busqueda"] == "ilike.*casa*labra*"            # sin comodines ni filtros colados
+    assert params["and"].startswith("(lat.gte.39.990000,lat.lte.40.010000,lon.gte.-3.71")
+
+
+def test_pedir_analisis_apunta_y_encola(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
+    bd_.pedir_analisis("ana@ejemplo.com", "x1")
+    assert llamadas[0][:2] == ("POST", "solicitudes_analisis")
+    assert llamadas[0][3] == {"lugar_id": "x1", "usuario": "ana@ejemplo.com"}
+    assert llamadas[1][:2] == ("PATCH", "lugares")                       # si ya estaba analizado, no se toca
+    assert llamadas[1][2] == {"id": "eq.x1", "estado_analisis": "in.(sin_analizar,error)"}
+
+
+def test_lugares_pendientes_primero_los_mas_pedidos(monkeypatch):
+    def respuestas(metodo, tabla, params):
+        if tabla == "lugares":
+            return [{"id": "a"}, {"id": "b"}, {"id": "c"}]               # del más antiguo al más nuevo
+        return [{"lugar_id": "b"}, {"lugar_id": "b"}, {"lugar_id": "c"}]
+    bd_, _ = _supabase_falso(monkeypatch, respuestas)
+    assert [l["id"] for l in bd_.lugares_pendientes()] == ["b", "c", "a"]
+
+
+def _lugar(id_, nombre, lat, lon, estado="sin_analizar", restaurante_id=None, web=None):
+    return {"id": id_, "nombre": nombre, "categoria": "Tapas", "lat": lat, "lon": lon, "direccion": "C. Falsa 1",
+            "ciudad": "Madrid", "pais": "ES", "web": web, "telefono": None, "estado_analisis": estado,
+            "restaurante_id": restaurante_id}
+
+
+@pytest.fixture
+def explorar(multiusuario, monkeypatch):
+    maestro = pd.read_excel(EXCEL, sheet_name="Restaurantes")
+    id_analizado = int(maestro["ID"].iloc[0])
+    estado = {"pedidos": [], "busquedas": [], "id_analizado": id_analizado, "lugares": [
+        _lugar("l1", "Taberna Nueva", CHUECA[0] + 0.0004, CHUECA[1], web="javascript:alert(1)"),
+        _lugar("l2", "Ya Analizado", CHUECA[0], CHUECA[1], "analizado", id_analizado)]}
+    monkeypatch.setattr(datos.Supabase, "buscar_lugares", lambda self, texto="", cerca=None, radio_km=2.0, limite=200:
+                        estado["busquedas"].append((texto, cerca)) or [dict(l) for l in estado["lugares"]])
+    monkeypatch.setattr(datos.Supabase, "pedir_analisis", lambda self, u, i: estado["pedidos"].append((u, i)))
+    monkeypatch.setattr(datos.Supabase, "solicitudes_de", lambda self, u, limite=20: [])
+    monkeypatch.setattr(datos.Supabase, "restaurantes_por_ids", lambda self, ids: (
+        maestro[maestro["ID"].isin(ids)].copy(), pd.DataFrame(columns=datos.COLUMNAS_PLATOS)))
+    return estado
+
+
+def test_explorar_busca_cerca_y_pide_analizar(explorar):
+    at = correr(seccion="explorar")
+    assert "lugar_ver_0" not in [b.key for b in at.button]              # sin texto ni ubicación: nada aún
+    at.session_state["ubicacion_actual"] = CHUECA
+    at.text_input(key="ex_texto").input("taberna").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert explorar["busquedas"][-1] == ("taberna", CHUECA)
+    tarjetas = [m.value for m in at.markdown if "badge[" in m.value]
+    assert "Ya Analizado" in tarjetas[0] and "Taberna Nueva" in tarjetas[1]   # el más cercano primero
+    assert "44 m" in tarjetas[1]
+    at.button(key="lugar_ver_1").click().run()                          # su ventana: datos básicos
+    assert not at.exception, [e.value for e in at.exception]
+    assert "analizar_lugar" in [b.key for b in at.button]
+    assert not [b for b in at.get("link_button") if b.label == "Web"]    # javascript: no se enlaza
+    at.button(key="analizar_lugar").click().run()
+    assert explorar["pedidos"] == [("ana@ejemplo.com", "l1")]
+    tarjetas = [m.value for m in at.markdown if "badge[" in m.value]
+    assert "Análisis en camino" in tarjetas[1]                          # se ve al momento
+
+
+def test_explorar_un_sitio_analizado_abre_su_ficha_completa(explorar):
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["lugar_abrir"] = explorar["lugares"][1]
+    at = correr(at, seccion="explorar")
+    assert any(b.label == "Cómo llegar" for b in at.get("link_button"))
+    assert f"he_ido_{explorar['id_analizado']}" in [b.key for b in at.button]   # con "He ido", eatlist...
+    assert "analizar_lugar" not in [b.key for b in at.button]
+
+
+def test_explorar_sin_la_tabla_avisa(multiusuario, monkeypatch):
+    def falla(self, *a, **k):
+        raise datos.ErrorSupabase("GET lugares: 404")
+    monkeypatch.setattr(datos.Supabase, "buscar_lugares", falla)
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["ubicacion_actual"] = CHUECA
+    at = correr(at, seccion="explorar")
+    assert any("009_lugares.sql" in w.value for w in at.warning)
+
+
+def test_explorar_en_modo_local_no_falla():
+    at = correr(seccion="explorar")
+    assert any("modo con cuentas" in i.value for i in at.info)

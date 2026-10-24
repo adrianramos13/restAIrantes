@@ -14,6 +14,7 @@ import re
 import unicodedata
 import urllib.parse
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 
 import numpy as np
@@ -168,6 +169,26 @@ def _par(a, b):
 
 def _comillas(valor):
     return '"' + str(valor).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def texto_busqueda(texto):
+    """Nombre para buscar: minúsculas, sin tildes y solo letras, números y espacios. Es lo que se guarda en
+    lugares.nombre_busqueda y lo que se hace con lo que escribe el usuario (que así no puede colar comodines
+    ni filtros de PostgREST)."""
+    if not isinstance(texto, str):
+        return ""
+    sin_tildes = "".join(c for c in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", re.sub(r"[^\w ]|_", " ", sin_tildes.lower())).strip()
+
+
+def caja_alrededor(lat, lon, radio_km):
+    """(lat_min, lat_max, lon_min, lon_max) de un cuadrado de `radio_km` alrededor del punto."""
+    dlat = radio_km / 111.32
+    dlon = radio_km / (111.32 * max(math.cos(math.radians(lat)), 0.01))
+    return lat - dlat, lat + dlat, lon - dlon, lon + dlon
+
+
+COLUMNAS_LUGAR = "id,nombre,categoria,lat,lon,direccion,ciudad,pais,web,telefono,estado_analisis,restaurante_id"
 
 
 # Fotos de perfil: la de la cuenta de Google o una propia subida a nuestro almacenamiento (perfiles/<hex>.jpg).
@@ -545,6 +566,66 @@ class Supabase:
                                    prefer="resolution=merge-duplicates,return=representation")
             ids.update({g["clave"]: g["id"] for g in guardadas})
         return ids
+
+    def restaurantes_por_ids(self, ids):
+        """(maestro, df_platos) de esos restaurantes del catálogo."""
+        filas = []
+        for lote in _lotes(sorted({int(i) for i in ids})):
+            filas += self._rest("GET", "restaurantes", params={"id": f"in.({','.join(map(str, lote))})",
+                                                               "select": "id,datos,platos,imagen"})
+        return filas_a_dataframes([{"posicion": i, "restaurantes": f} for i, f in enumerate(filas)])
+
+    # ---------------- explorar: lugares de Overture (supabase/009_lugares.sql) ----------------
+
+    def buscar_lugares(self, texto="", cerca=None, radio_km=2.0, limite=200):
+        """Lugares cuyo nombre lleva las palabras de `texto` (en ese orden) y/o dentro del cuadrado de
+        `radio_km` alrededor de `cerca` (lat, lon). Sin ordenar por distancia: eso lo hace quien llama."""
+        palabras = texto_busqueda(texto).split()
+        if not palabras and not cerca:
+            return []
+        params = {"select": COLUMNAS_LUGAR, "limit": limite, "order": "confianza.desc.nullslast"}
+        if palabras:
+            params["nombre_busqueda"] = "ilike.*" + "*".join(palabras) + "*"
+        if cerca:
+            a, b, c, d = caja_alrededor(cerca[0], cerca[1], radio_km)
+            params["and"] = f"(lat.gte.{a:.6f},lat.lte.{b:.6f},lon.gte.{c:.6f},lon.lte.{d:.6f})"
+        return self._rest("GET", "lugares", params=params)
+
+    def guardar_lugares(self, filas, tamano=1000):
+        """Crea o actualiza lugares por id. Todas las filas de una llamada con las mismas columnas."""
+        for lote in _lotes(filas, tamano):
+            self._rest("POST", "lugares", params={"on_conflict": "id"}, json=lote,
+                       prefer="resolution=merge-duplicates")
+
+    def pedir_analisis(self, usuario, lugar_id):
+        """Apunta que el usuario quiere ese sitio analizado y lo deja en la cola (si no estaba ya en ella o hecho)."""
+        self._rest("POST", "solicitudes_analisis", params={"on_conflict": "lugar_id,usuario"},
+                   prefer="resolution=ignore-duplicates", json={"lugar_id": lugar_id, "usuario": usuario})
+        self._rest("PATCH", "lugares", params={"id": f"eq.{lugar_id}", "estado_analisis": "in.(sin_analizar,error)"},
+                   json={"estado_analisis": "pendiente", "mensaje": None, "actualizado_en": _ahora()})
+
+    def solicitudes_de(self, usuario, limite=20):
+        """Los sitios que ha pedido analizar el usuario (los últimos primero), con su lugar embebido."""
+        return self._rest("GET", "solicitudes_analisis", params={
+            "usuario": f"eq.{usuario}", "order": "creado_en.desc", "limit": limite,
+            "select": f"creado_en,lugares({COLUMNAS_LUGAR})"})
+
+    def lugares_pendientes(self, limite=50):
+        """Los que hay que analizar: primero los que más gente ha pedido y, a igualdad, los más antiguos."""
+        lugares = self._rest("GET", "lugares", params={"estado_analisis": "eq.pendiente", "select": COLUMNAS_LUGAR,
+                                                       "order": "actualizado_en.asc", "limit": limite})
+        if not lugares:
+            return []
+        pedidas = self._rest("GET", "solicitudes_analisis", params={
+            "lugar_id": f"in.{_filtro_in([l['id'] for l in lugares])}", "select": "lugar_id"})
+        cuantos = Counter(p["lugar_id"] for p in pedidas)
+        return sorted(lugares, key=lambda l: -cuantos[l["id"]])
+
+    def marcar_lugar(self, lugar_id, estado, restaurante_id=None, mensaje=None):
+        cambios = {"estado_analisis": estado, "mensaje": mensaje, "actualizado_en": _ahora()}
+        if restaurante_id is not None:
+            cambios["restaurante_id"] = int(restaurante_id)
+        self._rest("PATCH", "lugares", params={"id": f"eq.{lugar_id}"}, json=cambios)
 
     # ---------------- fotos ----------------
 
