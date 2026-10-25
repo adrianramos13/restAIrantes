@@ -1037,6 +1037,10 @@ async def procesar_restaurante(page, nombre, indice, total, cerca=None):
                 "Ficha cocina": extra["cocina"], "Ficha precio": extra["precio"], "Ficha estado": extra["estado"],
                 "Ficha foto": extra["foto"], "Ficha nº reseñas": extra["resenas"],
             })
+            if "permanentemente" in extra["estado"].lower():   # cerrado: ni reseñas ni Jev
+                print("Cerrado permanentemente según Google Maps.")
+                resultado_base["Estado"] = "CERRADO"
+                return [resultado_base]
 
         lat, lon = extraer_lat_lon(datos_ficha.get("url_google", ""))
         resultado_base["Latitud"] = lat

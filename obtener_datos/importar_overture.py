@@ -5,7 +5,9 @@ almacenamiento público (solo baja lo de la zona pedida). Es lo que la app ense�
 
 Los que ya están en el catálogo (porque venían en la lista de alguien) se enlazan con él al importar:
 mismo sitio (a menos de DISTANCIA_ENLACE_M) y nombre parecido. Así salen ya como "analizados".
-Volver a importar una zona actualiza sus datos sin tocar lo que se ha pedido o analizado.
+Volver a importar una zona actualiza sus datos sin tocar lo que se ha pedido o analizado, y oculta (estado
+"cerrado") los que Overture ya da por cerrados o ha dejado de publicar. GitHub Actions lo hace solo cada mes
+(.github/workflows/importar_overture.yml), cuando sale una versión nueva de Overture.
 
 USO (desde la raíz del proyecto):
     python obtener_datos/importar_overture.py --zona madrid
@@ -35,6 +37,8 @@ ZONAS = {   # oeste, sur, este, norte
 # Sitios para comer o tomar algo (basic_category de Overture). Fuera tiendas, bodegas, cerveceras...
 CATEGORIAS_BASICAS = ("restaurant", "casual_eatery", "fast_food_restaurant", "bar", "cafe", "coffee_shop")
 CONFIANZA_MINIMA = 0.5        # por debajo, Overture no está seguro de que el sitio exista
+MINIMO_PARA_CERRAR = 0.5      # si llegan menos de la mitad de los que había, algo ha fallado: no se cierra nada
+ESTADOS_QUE_SE_CIERRAN = ("sin_analizar", "error")   # los pedidos o analizados se quedan (ya los mira Google)
 DISTANCIA_ENLACE_M = 150      # para enlazar con un restaurante del catálogo
 PARECIDO_MINIMO = 0.7         # de los nombres (0-1), para enlazar: con 0,6 se cuelan vecinos ("Bar X" / "Bar Y")
 
@@ -68,7 +72,8 @@ def ultima_version():
 
 
 def leer_overture(caja, version):
-    """DataFrame con los sitios de comer de la caja (oeste, sur, este, norte). Tarda ~1 min por zona grande."""
+    """DataFrame con los sitios de comer de la caja (oeste, sur, este, norte), con la columna `cerrado` (los que
+    Overture da por cerrados para siempre). Tarda ~1 min por zona grande."""
     import duckdb
     oeste, sur, este, norte = caja
     con = duckdb.connect()
@@ -77,11 +82,11 @@ def leer_overture(caja, version):
         SELECT id, names.primary AS nombre, taxonomy.primary AS primaria, basic_category AS basica,
                (bbox.ymin + bbox.ymax) / 2 AS lat, (bbox.xmin + bbox.xmax) / 2 AS lon,
                addresses[1].freeform AS direccion, addresses[1].locality AS ciudad, addresses[1].country AS pais,
-               websites[1] AS web, phones[1] AS telefono, confidence AS confianza
+               websites[1] AS web, phones[1] AS telefono, confidence AS confianza,
+               coalesce(operating_status = 'permanently_closed', false) AS cerrado
         FROM read_parquet('{RUTA_LUGARES.format(version=version)}')
         WHERE bbox.xmin BETWEEN ? AND ? AND bbox.ymin BETWEEN ? AND ?
           AND basic_category IN {CATEGORIAS_BASICAS}
-          AND coalesce(operating_status, 'open') <> 'permanently_closed'
           AND confidence >= ? AND names.primary IS NOT NULL
     """, [oeste, este, sur, norte, CONFIANZA_MINIMA]).df()
 
@@ -128,6 +133,16 @@ def enlazar(lugares, catalogo):
     return enlaces
 
 
+def ids_a_cerrar(existentes, abiertos):
+    """Los lugares ya guardados en la zona que Overture ya no da por abiertos (cerrados o desaparecidos), salvo los
+    pedidos o analizados. `existentes`: {id: estado}; `abiertos`: ids que llegan abiertos en esta versión."""
+    vivos = [i for i, estado in existentes.items() if estado != "cerrado"]
+    if vivos and len(abiertos) < MINIMO_PARA_CERRAR * len(vivos):
+        print(f"  AVISO: llegan {len(abiertos)} sitios y había {len(vivos)}: no se cierra ninguno por si acaso.")
+        return set()
+    return {i for i in vivos if i not in abiertos and existentes[i] in ESTADOS_QUE_SE_CIERRAN}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Importa sitios de comer de Overture Maps a Supabase (Explorar).")
     zona = parser.add_mutually_exclusive_group(required=True)
@@ -140,8 +155,9 @@ def main(argv=None):
     version = args.version or ultima_version()
     caja = ZONAS[args.zona] if args.zona else tuple(args.caja)
     print(f"Leyendo Overture {version} en {caja}...")
-    df = leer_overture(caja, version).drop_duplicates("id")
-    print(f"  {len(df)} sitios. Por tipo: {df['basica'].value_counts().to_dict()}")
+    todos = leer_overture(caja, version).drop_duplicates("id")
+    df = todos[~todos["cerrado"]]
+    print(f"  {len(df)} sitios abiertos ({len(todos) - len(df)} cerrados). Por tipo: {df['basica'].value_counts().to_dict()}")
     if args.sin_subir:
         return
 
@@ -152,8 +168,11 @@ def main(argv=None):
     sueltos = [f for f in filas if f["id"] not in enlaces]
     enlazados = [{**f, "restaurante_id": enlaces[f["id"]], "estado_analisis": "analizado"}
                  for f in filas if f["id"] in enlaces]
+    a_cerrar = ids_a_cerrar(bd.estados_de_lugares_en(caja), set(df["id"]))
     bd.guardar_lugares(sueltos)      # sin estado: si ya estaban (pedidos, analizados), no se toca
     bd.guardar_lugares(enlazados)
+    bd.cerrar_lugares(a_cerrar, f"Cerrado o ya no está en Overture {version}")
+    print(f"  Ocultados {len(a_cerrar)} que Overture ya no da por abiertos.")
     print(f"  Guardados {len(filas)} lugares; {len(enlazados)} enlazados con restaurantes del catálogo "
           f"(de {len(catalogo)}).")
 

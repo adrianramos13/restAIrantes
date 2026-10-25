@@ -185,6 +185,7 @@ def fichas(monkeypatch):
     async def resenas(nombres, pestanas=None, cercas=None):
         leidos.extend(zip(nombres, cercas))
         return [{"Restaurante": n, "Estado": "NO ENCONTRADO"} if n == "Fantasma" else
+                {"Restaurante": n, "Estado": "CERRADO"} if n == "Cerrado Ya" else
                 {"Restaurante": n, "Estado": "OK", "Rating Google": 4.4, "Ficha precio": "20-30 €",
                  "Ficha cocina": "", "Ficha foto": "https://lh3.googleusercontent.com/x", "Texto": "rico"}
                 for n in nombres]
@@ -223,3 +224,28 @@ def test_un_fallo_al_analizar_no_deja_lugares_en_procesando(monkeypatch, fichas)
     bd = BDFalsa()
     ps.procesar_lugares(bd, [lugar("a", "Nuevo")])
     assert bd.estados[-1] == ("a", "error", None)
+
+
+def test_un_sitio_cerrado_se_oculta_sin_pasar_por_jev(analizados, fichas):
+    bd = BDFalsa()
+    ps.procesar_lugares(bd, [lugar("x", "Cerrado Ya")])
+    assert analizados == [] and bd.estados[-1] == ("x", "cerrado", None)
+
+
+def test_en_la_nube_sin_sesion_no_toca_nada(monkeypatch, analizados):
+    bd = BDFalsa(listas=[{"id": 1, "usuario": "ana@ejemplo.com", "enlace": ENLACE}])
+    bd.lugares = [lugar("a", "Nuevo")]
+    monkeypatch.setattr(ps, "cliente", lambda: bd)
+    monkeypatch.setattr(ps.extraer_html, "EN_LA_NUBE", True)
+    monkeypatch.delenv("GOOGLE_SESION", raising=False)
+    with pytest.raises(SystemExit, match="GOOGLE_SESION"):
+        ps.main([])
+    assert bd.estados == [] and analizados == []                      # todo sigue pendiente
+
+
+def test_en_la_nube_no_se_imprimen_correos(monkeypatch, capsys, analizados):
+    monkeypatch.setattr(ps.extraer_html, "EN_LA_NUBE", True)
+    monkeypatch.setattr(ps, "descargar_filas", lambda enlace: [fila_lista("Sitio")])
+    ps.procesar_varias(BDFalsa(), [{"id": 3, "usuario": "ana@ejemplo.com", "enlace": ENLACE}])
+    salida = capsys.readouterr().out
+    assert "ana@ejemplo.com" not in salida and "lista 3" in salida

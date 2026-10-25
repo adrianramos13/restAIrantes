@@ -398,6 +398,41 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
   La primera vez se abre Chrome para que inicies sesión en Google (queda guardada en `origen/perfil_chrome/`, fuera de git). Solo se analizan con Jev los restaurantes que no estaban en el catálogo. Si una lista falla, el usuario lo ve en "Mi lista" con el motivo.
 - La app tarda hasta 5 minutos en mostrar una lista recién procesada (caché).
 
+### Procesador automático en la nube (sin tu ordenador)
+
+El procesador también corre solo en **GitHub Actions** (gratis: el repositorio es público), con `.github/workflows/procesador.yml`:
+
+- **Al pedir algo en la app** (*Analizar este restaurante* o guardar una lista) la app avisa a GitHub y se analiza en unos minutos (~2 min de arranque + ~1 min por restaurante).
+- **Cada 3 horas** pasa solo: procesa lo que haya pendiente (por si el aviso falló) y **comprueba durante 40 min si los sitios de Explorar siguen abiertos** (`obtener_datos/verificar_lugares.py`: abre su ficha de Google Maps y, si dice *Cerrado permanentemente* y es el mismo sitio, lo oculta). Va primero por los nunca comprobados y después repasa cada sitio cada 30 días.
+- **Cada mes** (`.github/workflows/importar_overture.yml`) vuelve a importar las zonas de Explorar con la versión nueva de Overture: entran los sitios nuevos y se ocultan los que Overture ya da por cerrados o ha dejado de publicar (salvo los pedidos o analizados). Las zonas, en la variable del repositorio `ZONAS_OVERTURE` (p. ej. `madrid canarias`); por defecto, `madrid`.
+- Además, en la ficha básica de Explorar cualquiera puede pulsar **¿Ha cerrado? Avísanos** y deja de salir al momento.
+
+Puesta en marcha (una vez):
+
+1. En Supabase, ejecuta `supabase/010_lugares_al_dia.sql`.
+2. **Sesión de Google para la nube.** Sin sesión, Google Maps no enseña las reseñas. Crea una **cuenta de Google solo para esto** (no uses la tuya: la sesión guardada da acceso a esa cuenta). En tu ordenador, cierra la sesión de tu cuenta en el Chrome del procesador (o borra `origen/perfil_chrome/`) y ejecuta:
+
+   ```bash
+   python obtener_datos/exportar_sesion_google.py   # inicia sesión con la cuenta nueva; guarda origen/sesion_google.json
+   ```
+
+3. En GitHub: **Settings → Secrets and variables → Actions → New repository secret**, crea:
+   - `SUPABASE_URL` y `SUPABASE_CLAVE_SERVICIO` (los mismos de `.streamlit/secrets.toml`),
+   - `TYPESAFE_API_KEY` (Jev),
+   - `GOOGLE_SESION`: el contenido de `origen/sesion_google.json` (o `gh secret set GOOGLE_SESION < origen/sesion_google.json`). Después **borra el archivo**.
+4. Un token para que la app pueda avisar a GitHub: **GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token**, solo para este repositorio, con el permiso **Contents: Read and write** (es el que pide GitHub para lanzar el procesador). Ponlo en los secrets de Streamlit Cloud:
+
+   ```toml
+   [github]
+   repo = "adrianramos13/restAIrantes"
+   token = "github_pat_..."
+   ```
+
+   Sin esto todo funciona igual, pero lo pedido tarda hasta 3 horas (lo recoge la pasada automática).
+5. Pruébalo: pestaña **Actions → Procesador → Run workflow**.
+
+Si la sesión de Google caduca (Google la cierra de vez en cuando), el procesador falla con un aviso claro, GitHub te manda un correo y todo sigue pendiente: repite los pasos 2 y 3. Los registros de Actions son públicos: los scripts no imprimen correos ni claves.
+
 ## Servicios externos
 
 | Servicio | Uso | Clave | Nota |
