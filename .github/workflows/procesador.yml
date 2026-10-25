@@ -1,0 +1,48 @@
+# Procesador en la nube: analiza lo que se pide desde la app (listas y "Analizar" de Explorar) sin que haga
+# falta tener encendido ningún ordenador, y va comprobando en Google Maps si los sitios de Explorar siguen
+# abiertos. Secretos que necesita (Settings -> Secrets and variables -> Actions): SUPABASE_URL,
+# SUPABASE_CLAVE_SERVICIO, TYPESAFE_API_KEY y GOOGLE_SESION (ver el README). Los registros son públicos:
+# los scripts no imprimen correos ni claves.
+name: Procesador
+
+on:
+  repository_dispatch:
+    types: [procesar]          # lo lanza la app al pedir algo (secrets [github] de Streamlit)
+  schedule:
+    - cron: "17 */3 * * *"     # cada 3 horas: por si el aviso falla, y para comprobar sitios cerrados
+  workflow_dispatch:           # a mano, desde la pestaña Actions
+
+concurrency:
+  group: procesador            # de uno en uno: si llegan varios avisos, se juntan en la siguiente ejecución
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  procesar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_CLAVE_SERVICIO: ${{ secrets.SUPABASE_CLAVE_SERVICIO }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: obtener_datos/requirements.txt
+      - name: Instalar
+        run: |
+          pip install -r obtener_datos/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Listas y restaurantes pedidos
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          GOOGLE_SESION: ${{ secrets.GOOGLE_SESION }}
+        run: python obtener_datos/procesar_solicitudes.py
+      - name: Comprobar si los sitios siguen abiertos
+        if: ${{ always() && github.event_name != 'repository_dispatch' }}
+        run: python obtener_datos/verificar_lugares.py --minutos 40

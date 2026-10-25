@@ -15,7 +15,7 @@ import unicodedata
 import urllib.parse
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
@@ -189,6 +189,7 @@ def caja_alrededor(lat, lon, radio_km):
 
 
 COLUMNAS_LUGAR = "id,nombre,categoria,lat,lon,direccion,ciudad,pais,web,telefono,estado_analisis,restaurante_id"
+DIAS_ENTRE_VERIFICACIONES = 30   # cada cuánto se vuelve a comprobar en Google Maps si un sitio sigue abierto
 
 
 # Fotos de perfil: la de la cuenta de Google o una propia subida a nuestro almacenamiento (perfiles/<hex>.jpg).
@@ -583,7 +584,8 @@ class Supabase:
         palabras = texto_busqueda(texto).split()
         if not palabras and not cerca:
             return []
-        params = {"select": COLUMNAS_LUGAR, "limit": limite, "order": "confianza.desc.nullslast"}
+        params = {"select": COLUMNAS_LUGAR, "limit": limite, "order": "confianza.desc.nullslast",
+                  "estado_analisis": "neq.cerrado"}
         if palabras:
             params["nombre_busqueda"] = "ilike.*" + "*".join(palabras) + "*"
         if cerca:
@@ -620,6 +622,45 @@ class Supabase:
             "lugar_id": f"in.{_filtro_in([l['id'] for l in lugares])}", "select": "lugar_id"})
         cuantos = Counter(p["lugar_id"] for p in pedidas)
         return sorted(lugares, key=lambda l: -cuantos[l["id"]])
+
+    # ---------------- Explorar al día (supabase/010_lugares_al_dia.sql) ----------------
+
+    def lugares_a_verificar(self, limite=60, dias=DIAS_ENTRE_VERIFICACIONES):
+        """Los que toca comprobar en Google Maps: nunca comprobados o hace más de `dias`; primero los más viejos."""
+        hace = (datetime.now(timezone.utc) - timedelta(days=dias)).isoformat()
+        return self._rest("GET", "lugares", params={
+            "select": "id,nombre,lat,lon", "estado_analisis": "neq.cerrado", "limit": limite,
+            "or": f"(verificado_en.is.null,verificado_en.lt.{hace})", "order": "verificado_en.asc.nullsfirst"})
+
+    def marcar_verificado(self, lugar_id, cerrado=False):
+        cambios = {"verificado_en": _ahora()}
+        if cerrado:
+            cambios.update(estado_analisis="cerrado", mensaje="Cerrado permanentemente según Google Maps")
+        self._rest("PATCH", "lugares", params={"id": f"eq.{lugar_id}"}, json=cambios)
+
+    def avisar_cerrado(self, lugar_id):
+        """Un usuario avisa de que ha cerrado: deja de salir en Explorar para todos."""
+        self._rest("PATCH", "lugares", params={"id": f"eq.{lugar_id}"},
+                   json={"estado_analisis": "cerrado", "mensaje": "Avisado por un usuario", "actualizado_en": _ahora()})
+
+    def cerrar_lugares(self, ids, mensaje):
+        """Marca como cerrados esos lugares (los que existan); para el importador."""
+        for lote in _lotes(sorted(ids)):
+            self._rest("PATCH", "lugares", params={"id": f"in.{_filtro_in(lote)}"},
+                       json={"estado_analisis": "cerrado", "mensaje": mensaje, "actualizado_en": _ahora()})
+
+    def estados_de_lugares_en(self, caja):
+        """{id: estado_analisis} de todos los lugares dentro de la caja (oeste, sur, este, norte)."""
+        oeste, sur, este, norte = caja
+        estados, desde = {}, 0
+        while True:   # PostgREST devuelve como mucho 1000 filas por petición
+            lote = self._rest("GET", "lugares", params={
+                "select": "id,estado_analisis", "order": "id.asc", "limit": 1000, "offset": desde,
+                "and": f"(lat.gte.{sur},lat.lte.{norte},lon.gte.{oeste},lon.lte.{este})"})
+            estados.update({f["id"]: f["estado_analisis"] for f in lote})
+            if len(lote) < 1000:
+                return estados
+            desde += 1000
 
     def marcar_lugar(self, lugar_id, estado, restaurante_id=None, mensaje=None):
         cambios = {"estado_analisis": estado, "mensaje": mensaje, "actualizado_en": _ahora()}

@@ -41,6 +41,8 @@ USO:
 """
 
 import asyncio
+import json
+import os
 import re
 import unicodedata
 import urllib.parse
@@ -70,6 +72,7 @@ PAUSA_POR_ENTRADA_MS = 150                # al recorrer la lista, para que Googl
 # Sesión de Google guardada (solo en este ordenador, fuera de git): con ella la lista trae el precio.
 PERFIL_CHROME_DIR = BASE_DIR.parent / "origen" / "perfil_chrome"
 ESPERA_INICIO_SESION_S = 300
+EN_LA_NUBE = bool(os.environ.get("CI"))   # GitHub Actions (.github/workflows/procesador.yml): sin ventanas ni nadie delante
 
 # --------------------------------------------------------------- #
 
@@ -278,7 +281,13 @@ def guardar_excel(filas, ruta_salida):
 async def _abrir_chrome_con_sesion(p):
     """Chrome con un perfil propio (PERFIL_CHROME_DIR) que recuerda la sesión de Google entre
     ejecuciones. Usa el Chrome instalado si lo hay (Google pone menos pegas al iniciar sesión
-    en él que en el Chromium de Playwright) y, si no, el de Playwright."""
+    en él que en el Chromium de Playwright) y, si no, el de Playwright.
+    En la nube (GitHub Actions), un Chromium sin ventana con la sesión de la variable GOOGLE_SESION
+    (la que guarda obtener_datos/exportar_sesion_google.py)."""
+    if os.environ.get("GOOGLE_SESION"):
+        navegador = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+        return await navegador.new_context(storage_state=json.loads(os.environ["GOOGLE_SESION"]), locale="es-ES",
+                                           viewport={"width": 1440, "height": 900})
     opciones = dict(user_data_dir=str(PERFIL_CHROME_DIR), headless=False, locale="es-ES",
                     viewport={"width": 1440, "height": 900},
                     args=["--disable-blink-features=AutomationControlled"],
@@ -299,6 +308,9 @@ async def _asegurar_sesion(page, url):
     Si no hay sesión guardada, abre el inicio de sesión de Google y espera a que entres."""
     if await _con_sesion(page):
         return
+    if EN_LA_NUBE:   # ahí no hay nadie para iniciar sesión
+        raise SystemExit("ERROR: la sesión de Google (secreto GOOGLE_SESION) falta o ha caducado. Vuelve a "
+                         "guardarla con obtener_datos/exportar_sesion_google.py y actualiza el secreto en GitHub.")
     print("\n  No hay sesión de Google guardada. Inicia sesión en la ventana de Chrome que se ha abierto")
     print(f"  (solo hace falta la primera vez). Esperando hasta {ESPERA_INICIO_SESION_S // 60} minutos...\n")
     # Google solo deja volver a sus propios dominios tras iniciar sesión (con el enlace corto

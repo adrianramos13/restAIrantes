@@ -45,3 +45,16 @@ def test_enlazar_mismo_sitio_y_nombre_parecido():
     ])
     assert io_.enlazar(df, catalogo) == {"cerca-parecido": 7}
     assert io_.enlazar(df.iloc[:0], catalogo) == {} and io_.enlazar(df, pd.DataFrame()) == {}
+
+
+def test_ids_a_cerrar_solo_los_que_ya_no_estan_y_nadie_ha_pedido():
+    existentes = {"sigue": "sin_analizar", "se_fue": "sin_analizar", "fallo": "error", "pedido": "pendiente",
+                  "analizado": "analizado", "ya_cerrado": "cerrado"}
+    abiertos = {"sigue"} | {f"nuevo{i}" for i in range(10)}
+    assert io_.ids_a_cerrar(existentes, abiertos) == {"se_fue", "fallo"}
+
+
+def test_ids_a_cerrar_no_cierra_nada_si_la_descarga_viene_corta():
+    existentes = {f"l{i}": "sin_analizar" for i in range(100)}
+    assert io_.ids_a_cerrar(existentes, {"l1", "l2"}) == set()          # ¿ha fallado la descarga? por si acaso
+    assert io_.ids_a_cerrar({}, set()) == set()

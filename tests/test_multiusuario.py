@@ -1186,3 +1186,63 @@ def test_explorar_sin_la_tabla_avisa(multiusuario, monkeypatch):
 def test_explorar_en_modo_local_no_falla():
     at = correr(seccion="explorar")
     assert any("modo con cuentas" in i.value for i in at.info)
+
+
+
+# ---------------------------------------------------------------- Explorar al día y análisis automático
+
+def test_buscar_lugares_no_ensena_los_cerrados(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
+    bd_.buscar_lugares("casa")
+    assert llamadas[0][2]["estado_analisis"] == "neq.cerrado"
+
+
+def test_lugares_a_verificar_y_marcar(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
+    bd_.lugares_a_verificar(10, dias=30)
+    params = llamadas[0][2]
+    assert params["order"] == "verificado_en.asc.nullsfirst" and params["estado_analisis"] == "neq.cerrado"
+    assert params["or"].startswith("(verificado_en.is.null,verificado_en.lt.")
+    bd_.marcar_verificado("a", cerrado=True)
+    bd_.marcar_verificado("b")
+    assert llamadas[1][3]["estado_analisis"] == "cerrado" and "verificado_en" in llamadas[1][3]
+    assert set(llamadas[2][3]) == {"verificado_en"}                    # abierto: solo la fecha
+
+
+def test_avisar_procesador(monkeypatch):
+    import servicios
+    llamadas = []
+    monkeypatch.setattr(servicios.requests, "post", lambda url, **kw: llamadas.append((url, kw)) or RespuestaFalsa(None, 204))
+    assert servicios.avisar_procesador(None) is False and llamadas == []   # sin [github]: no se avisa
+    assert servicios.avisar_procesador({"repo": "yo/repo", "token": "t"}) is True
+    url, kw = llamadas[0]
+    assert url == "https://api.github.com/repos/yo/repo/dispatches" and kw["json"] == {"event_type": "procesar"}
+    assert kw["headers"]["Authorization"] == "Bearer t"
+
+
+def test_analizar_avisa_al_procesador_en_la_nube(explorar, monkeypatch):
+    import servicios
+    avisos = []
+    monkeypatch.setattr(sesion, "config_github", lambda: {"repo": "yo/repo", "token": "t"})
+    monkeypatch.setattr(servicios, "avisar_procesador", lambda config: avisos.append(config) or True)
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["lugar_abrir"] = explorar["lugares"][0]
+    at = correr(at, seccion="explorar")
+    at.button(key="analizar_lugar").click().run()
+    assert explorar["pedidos"] == [("ana@ejemplo.com", "l1")] and avisos == [{"repo": "yo/repo", "token": "t"}]
+
+
+def test_avisar_de_que_ha_cerrado_lo_quita(explorar, monkeypatch):
+    cerrados = []
+    monkeypatch.setattr(datos.Supabase, "avisar_cerrado", lambda self, i: cerrados.append(i))
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["ubicacion_actual"] = CHUECA
+    at = correr(at, seccion="explorar")
+    assert len([m for m in at.markdown if "badge[" in m.value]) == 2
+    at.session_state["lugar_abrir"] = explorar["lugares"][0]
+    at.run()
+    at.button(key="avisar_cerrado").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert cerrados == ["l1"]
+    tarjetas = [m.value for m in at.markdown if "badge[" in m.value]
+    assert len(tarjetas) == 1 and "Taberna Nueva" not in tarjetas[0]   # ya no sale

@@ -10,6 +10,9 @@ con Jev (clasificar_restaurantes_jev.py). Al final guarda la lista del usuario e
 Los de Explorar pasan por lo mismo, pero se buscan en Google Maps por sus coordenadas y lo que de una
 lista saldría en la lista (nota, precio, cocina, foto) se lee de su ficha.
 
+En la nube lo ejecuta GitHub Actions (.github/workflows/procesador.yml): al pedir algo en la app y
+cada pocas horas, con la sesión de Google del secreto GOOGLE_SESION. Ver el README.
+
 USO (desde la raíz del proyecto):
     python obtener_datos/procesar_solicitudes.py           # las listas pendientes
     python obtener_datos/procesar_solicitudes.py --todas   # vuelve a procesar todas (para refrescarlas)
@@ -238,6 +241,9 @@ def _analizar_lugares(bd, lugares, claves, existentes):
         if not suyas or suyas[0].get("Estado") == "NO ENCONTRADO":
             bd.marcar_lugar(l["id"], "error", mensaje="No se ha encontrado en Google Maps")
             continue
+        if suyas[0].get("Estado") == "CERRADO":   # deja de salir en Explorar
+            bd.marcar_lugar(l["id"], "cerrado", mensaje="Cerrado permanentemente según Google Maps")
+            continue
         encontrados.append(l)
         filas.append(fila_desde_ficha(l, suyas))
     if not filas:
@@ -269,6 +275,20 @@ def lugares_pendientes(bd):
         return []
 
 
+async def comprobar_sesion():
+    """En la nube, antes de tocar nada: que la sesión de Google guardada sigue valiendo (sin ella no salen
+    las reseñas). Si no, para aquí con un aviso y todo sigue pendiente (no se marca nada con error)."""
+    if not os.environ.get("GOOGLE_SESION"):
+        raise SystemExit("ERROR: falta el secreto GOOGLE_SESION (la sesión de Google). Ver el README.")
+    from playwright.async_api import async_playwright
+    async with async_playwright() as p:
+        contexto = await extraer_html._abrir_chrome_con_sesion(p)
+        pagina = await contexto.new_page()
+        await pagina.goto(MAPS, wait_until="load")
+        await extraer_html._asegurar_sesion(pagina, MAPS)
+        await contexto.close()
+
+
 def procesar_explorar(bd):
     lugares = lugares_pendientes(bd)
     if lugares:
@@ -298,16 +318,22 @@ def main(argv=None):
             procesar_explorar(bd)
             time.sleep(args.vigilar * 60)
     listas = bd.listas_con_enlace() if args.todas else bd.listas_pendientes()
+    lugares = lugares_pendientes(bd)
+    if extraer_html.EN_LA_NUBE and (listas or lugares):
+        asyncio.run(comprobar_sesion())
     if listas:
         procesar_varias(bd, listas)
     else:
         print("No hay listas pendientes.")
-    procesar_explorar(bd)
+    if lugares:
+        print(f"\n=== Explorar: {len(lugares)} restaurantes pedidos ===")
+        procesar_lugares(bd, lugares)
 
 
 def procesar_varias(bd, listas):
     for lista in listas:
-        print(f"\n=== {lista['usuario']} ===")
+        # los registros de GitHub Actions son públicos: ahí, sin correos
+        print(f"\n=== {'lista ' + str(lista['id']) if extraer_html.EN_LA_NUBE else lista['usuario']} ===")
         try:
             print(f"  OK: {procesar_lista(bd, lista)}")
         except KeyboardInterrupt:

@@ -5,3 +5,4 @@ __pycache__/
 *.stackdump
 origen/restaurantes_descarga_fallida.html
 origen/perfil_chrome/
+origen/sesion_google.json
