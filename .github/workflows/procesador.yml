@@ -1,27 +1,19 @@
-# Procesador en la nube: analiza lo que se pide desde la app (listas y "Analizar" de Explorar) sin que haga
-# falta tener encendido ningún ordenador, y los lunes de madrugada comprueba en Google Maps si los sitios de
-# Explorar siguen abiertos. Secretos que necesita (Settings -> Secrets and variables -> Actions): SUPABASE_URL,
-# SUPABASE_CLAVE_SERVICIO, TYPESAFE_API_KEY y GOOGLE_SESION (ver el README). Los registros son públicos:
-# los scripts no imprimen correos ni claves.
-name: Procesador
+# Los lunes de madrugada comprueba en Google Maps si los sitios de Explorar siguen abiertos (no necesita sesión de
+# Google). El análisis de lo pedido NO va aquí: Google anula la sesión si se usa desde un servidor; lo hace el
+# procesador en tu ordenador (tarea de Windows, ver el README). Secretos: SUPABASE_URL y SUPABASE_CLAVE_SERVICIO.
+# Los registros son públicos: el script no imprime correos ni claves.
+name: Comprobar sitios abiertos
 
 on:
-  repository_dispatch:
-    types: [procesar]          # lo lanza la app al pedir algo (secrets [github] de Streamlit)
   schedule:
-    - cron: "17 */3 * * *"     # cada 3 horas: lo pendiente, por si el aviso de la app falla
-    - cron: "0 3 * * 1"        # lunes 3:00 UTC (4:00 en Madrid en invierno, 5:00 en verano): sitios cerrados
+    - cron: "0 3 * * 1"        # lunes 3:00 UTC (4:00 en Madrid en invierno, 5:00 en verano)
   workflow_dispatch:           # a mano, desde la pestaña Actions
-
-concurrency:
-  group: procesador            # de uno en uno: si llegan varios avisos, se juntan en la siguiente ejecución
-  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  procesar:
+  comprobar:
     runs-on: ubuntu-latest
     timeout-minutes: 340       # la comprobación de los lunes dura 5 h (GitHub permite hasta 6)
     env:
@@ -39,11 +31,5 @@ jobs:
         run: |
           pip install -r obtener_datos/requirements.txt
           python -m playwright install --with-deps chromium
-      - name: Listas y restaurantes pedidos
-        env:
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-          GOOGLE_SESION: ${{ secrets.GOOGLE_SESION }}
-        run: python obtener_datos/procesar_solicitudes.py
       - name: Comprobar si los sitios siguen abiertos
-        if: ${{ always() && github.event.schedule == '0 3 * * 1' }}   # solo los lunes (aunque falle lo de arriba)
         run: python obtener_datos/verificar_lugares.py --minutos 300

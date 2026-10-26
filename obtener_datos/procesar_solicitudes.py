@@ -10,8 +10,7 @@ con Jev (clasificar_restaurantes_jev.py). Al final guarda la lista del usuario e
 Los de Explorar pasan por lo mismo, pero se buscan en Google Maps por sus coordenadas y lo que de una
 lista saldría en la lista (nota, precio, cocina, foto) se lee de su ficha.
 
-En la nube lo ejecuta GitHub Actions (.github/workflows/procesador.yml): al pedir algo en la app y
-cada pocas horas, con la sesión de Google del secreto GOOGLE_SESION. Ver el README.
+Para que vaya solo, una tarea de Windows lo arranca con --vigilar al iniciar sesión (ver el README).
 
 USO (desde la raíz del proyecto):
     python obtener_datos/procesar_solicitudes.py           # las listas pendientes
@@ -28,6 +27,7 @@ import argparse
 import asyncio
 import math
 import os
+import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -275,20 +275,6 @@ def lugares_pendientes(bd):
         return []
 
 
-async def comprobar_sesion():
-    """En la nube, antes de tocar nada: que la sesión de Google guardada sigue valiendo (sin ella no salen
-    las reseñas). Si no, para aquí con un aviso y todo sigue pendiente (no se marca nada con error)."""
-    if not os.environ.get("GOOGLE_SESION"):
-        raise SystemExit("ERROR: falta el secreto GOOGLE_SESION (la sesión de Google). Ver el README.")
-    from playwright.async_api import async_playwright
-    async with async_playwright() as p:
-        contexto = await extraer_html._abrir_chrome_con_sesion(p)
-        pagina = await contexto.new_page()
-        await pagina.goto(MAPS, wait_until="load")
-        await extraer_html._asegurar_sesion(pagina, MAPS)
-        await contexto.close()
-
-
 def procesar_explorar(bd):
     lugares = lugares_pendientes(bd)
     if lugares:
@@ -304,23 +290,28 @@ def main(argv=None):
                         help="no termina: cada MINUTOS (10 por defecto) procesa las listas pendientes que haya")
     parser.add_argument("--pestanas", type=int, default=PESTANAS,
                         help=f"restaurantes a la vez al sacar reseñas (por defecto {PESTANAS}; 1 si Google pone pegas)")
+    parser.add_argument("--sin-ventana", action="store_true",
+                        help="Chrome sin ventana (para la tarea de Windows); la sesión de Google tiene que estar ya iniciada")
     args = parser.parse_args(argv)
     PESTANAS = max(1, args.pestanas)
+    extraer_html.SIN_VENTANA = args.sin_ventana
 
     bd = cliente()
     if args.vigilar:
         import time
+        sys.stdout.reconfigure(line_buffering=True)   # que origen/procesador.log (la tarea de Windows) se vea al momento
         print(f"Vigilando listas pendientes cada {args.vigilar} min (Ctrl+C para parar)...")
         while True:
-            pendientes = bd.listas_pendientes()
-            if pendientes:
-                procesar_varias(bd, pendientes)
-            procesar_explorar(bd)
+            try:
+                pendientes = bd.listas_pendientes()
+                if pendientes:
+                    procesar_varias(bd, pendientes)
+                procesar_explorar(bd)
+            except Exception as e:   # p. ej. sin red un rato: se reintenta en la siguiente vuelta
+                print(f"ERROR (se reintenta en {args.vigilar} min): {str(e)[:300]}")
             time.sleep(args.vigilar * 60)
     listas = bd.listas_con_enlace() if args.todas else bd.listas_pendientes()
     lugares = lugares_pendientes(bd)
-    if extraer_html.EN_LA_NUBE and (listas or lugares):
-        asyncio.run(comprobar_sesion())
     if listas:
         procesar_varias(bd, listas)
     else:
@@ -332,8 +323,7 @@ def main(argv=None):
 
 def procesar_varias(bd, listas):
     for lista in listas:
-        # los registros de GitHub Actions son públicos: ahí, sin correos
-        print(f"\n=== {'lista ' + str(lista['id']) if extraer_html.EN_LA_NUBE else lista['usuario']} ===")
+        print(f"\n=== {lista['usuario']} ===")
         try:
             print(f"  OK: {procesar_lista(bd, lista)}")
         except KeyboardInterrupt:

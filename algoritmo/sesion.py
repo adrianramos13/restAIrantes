@@ -30,17 +30,6 @@ def config_multiusuario():
         return None
 
 
-def config_github():
-    """{"repo", "token"} de [github] en los secrets, para lanzar el procesador en la nube; None si no están."""
-    if os.environ.get("RESTAIRANTES_MODO") == "local":
-        return None
-    try:
-        github = st.secrets.get("github") or {}
-        return {"repo": github["repo"], "token": github["token"]} if github.get("repo") and github.get("token") else None
-    except Exception:   # sin archivo de secrets, st.secrets lanza al leerlo
-        return None
-
-
 def usuario_actual():
     """Correo (en minúsculas) del usuario con sesión iniciada, o None."""
     return st.user.email.lower() if st.user.is_logged_in and st.user.get("email") else None

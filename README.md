@@ -387,7 +387,7 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
 
   Las reseñas se sacan **con tu sesión de Google** (sin sesión, Google Maps enseña solo ~5 por sitio; con ella, las 30) y en **3 pestañas a la vez**: unos 20 s por restaurante nuevo. Al terminar cada lista se imprimen los tiempos de cada paso.
 
-  **Importante:** las listas nuevas **solo se procesan mientras el procesador está en marcha** en tu ordenador (necesita Chrome visible y tu sesión de Google; en la nube no se puede). Con `--vigilar` basta con dejarlo abierto. Para que arranque solo al encender Windows: *Programador de tareas → Crear tarea básica → Al iniciar sesión → Iniciar un programa*: `python` con argumentos `obtener_datos\procesar_solicitudes.py --vigilar` e *Iniciar en* la carpeta del proyecto (y `TYPESAFE_API_KEY` definida como variable de entorno de usuario en Windows).
+  **Importante:** lo pedido (listas y *Analizar* de Explorar) **solo se procesa mientras el procesador está en marcha** en tu ordenador: necesita Chrome y tu sesión de Google, y eso no se puede llevar a la nube (lo probamos en GitHub Actions: Chrome ata la sesión a su perfil y Google anula la que se usa desde un servidor). Por eso arranca solo con Windows; ver *Procesador automático* más abajo.
 
   Si alguien pega **una lista que otra persona ya tiene procesada**, se copia al momento, sin esperar al procesador.
 
@@ -398,41 +398,21 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
   La primera vez se abre Chrome para que inicies sesión en Google (queda guardada en `origen/perfil_chrome/`, fuera de git). Solo se analizan con Jev los restaurantes que no estaban en el catálogo. Si una lista falla, el usuario lo ve en "Mi lista" con el motivo.
 - La app tarda hasta 5 minutos en mostrar una lista recién procesada (caché).
 
-### Procesador automático en la nube (sin tu ordenador)
+### Procesador automático (en tu ordenador) y sitios al día
 
-El procesador también corre solo en **GitHub Actions** (gratis: el repositorio es público), con `.github/workflows/procesador.yml`:
+- **Análisis automático:** una tarea de Windows arranca el procesador al iniciar sesión, oculto y en modo `--vigilar 2 --sin-ventana`: cada 2 minutos mira si hay algo pedido (listas o *Analizar este restaurante*) y lo analiza con tu Chrome y tu sesión de Google, **sin abrir ninguna ventana** (Chrome trabaja por detrás). Si la sesión de Google se cierra, lo pedido queda con error y hay que volver a iniciarla una vez con `python obtener_datos/procesar_solicitudes.py` (sin `--sin-ventana`). Lo pedido está listo en unos minutos **mientras el ordenador esté encendido**; si está apagado, se hace al encenderlo. Lo que va haciendo queda en `origen/procesador.log`. Si se cae la red, lo vuelve a intentar en la siguiente vuelta. Para crear la tarea (una vez, en PowerShell desde la carpeta del proyecto, con `TYPESAFE_API_KEY` definida como variable de entorno de usuario):
 
-- **Al pedir algo en la app** (*Analizar este restaurante* o guardar una lista) la app avisa a GitHub y se analiza en unos minutos (~2 min de arranque + ~1 min por restaurante).
-- **Cada 3 horas** pasa solo y procesa lo que haya pendiente (por si el aviso falló).
-- **Los lunes a las 4:00** (5:00 en horario de verano) **comprueba durante 5 horas si los sitios de Explorar siguen abiertos** (`obtener_datos/verificar_lugares.py`: abre su ficha de Google Maps y, si dice *Cerrado permanentemente* y es el mismo sitio, lo oculta). Unos 6.000 sitios por semana: va primero por los nunca comprobados y después por los comprobados hace más de 30 días.
+  ```powershell
+  $accion = New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory (Get-Location) -Argument '-NoProfile -WindowStyle Hidden -Command "$env:PYTHONIOENCODING=''utf-8''; python obtener_datos\procesar_solicitudes.py --vigilar 2 --sin-ventana *>> origen\procesador.log"'
+  $ajustes = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 5)
+  Register-ScheduledTask -TaskName "restAIrantes procesador" -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) -Action $accion -Settings $ajustes
+  ```
+
+  Para pararlo: *Programador de tareas → restAIrantes procesador → Finalizar* (o *Deshabilitar* para que no arranque más).
+- **Los lunes a las 4:00** (5:00 en horario de verano), GitHub Actions (`.github/workflows/procesador.yml`) **comprueba durante 5 horas si los sitios de Explorar siguen abiertos** (`obtener_datos/verificar_lugares.py`: abre su ficha de Google Maps y, si dice *Cerrado permanentemente* y es el mismo sitio, lo oculta). No necesita sesión de Google ni tu ordenador. Unos 6.000 sitios por semana: primero los nunca comprobados y después los comprobados hace más de 30 días. Necesita los secretos del repositorio `SUPABASE_URL` y `SUPABASE_CLAVE_SERVICIO` (*Settings → Secrets and variables → Actions*).
 - **Cada mes** (`.github/workflows/importar_overture.yml`) vuelve a importar las zonas de Explorar con la versión nueva de Overture: entran los sitios nuevos y se ocultan los que Overture ya da por cerrados o ha dejado de publicar (salvo los pedidos o analizados). Las zonas, en la variable del repositorio `ZONAS_OVERTURE` (p. ej. `madrid canarias`); por defecto, `madrid`.
-- Además, en la ficha básica de Explorar cualquiera puede pulsar **¿Ha cerrado? Avísanos** y deja de salir al momento.
-
-Puesta en marcha (una vez):
-
-1. En Supabase, ejecuta `supabase/010_lugares_al_dia.sql`.
-2. **Sesión de Google para la nube.** Sin sesión, Google Maps no enseña las reseñas. Crea una **cuenta de Google solo para esto** (no uses la tuya: la sesión guardada da acceso a esa cuenta). En tu ordenador ejecuta (abre una ventana de Chromium, no tu Chrome: Chrome ata la sesión a su perfil y fuera de él Google la rechaza; el script comprueba que la sesión vale antes de guardarla):
-
-   ```bash
-   python obtener_datos/exportar_sesion_google.py   # inicia sesión con la cuenta nueva; guarda origen/sesion_google.json
-   ```
-
-3. En GitHub: **Settings → Secrets and variables → Actions → New repository secret**, crea:
-   - `SUPABASE_URL` y `SUPABASE_CLAVE_SERVICIO` (los mismos de `.streamlit/secrets.toml`),
-   - `TYPESAFE_API_KEY` (Jev),
-   - `GOOGLE_SESION`: el contenido de `origen/sesion_google.json` (o `gh secret set GOOGLE_SESION < origen/sesion_google.json`). Después **borra el archivo**.
-4. Un token para que la app pueda avisar a GitHub: **GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token**, solo para este repositorio, con el permiso **Contents: Read and write** (es el que pide GitHub para lanzar el procesador). Ponlo en los secrets de Streamlit Cloud:
-
-   ```toml
-   [github]
-   repo = "adrianramos13/restAIrantes"
-   token = "github_pat_..."
-   ```
-
-   Sin esto todo funciona igual, pero lo pedido tarda hasta 3 horas (lo recoge la pasada automática).
-5. Pruébalo: pestaña **Actions → Procesador → Run workflow**.
-
-Si la sesión de Google caduca (Google la cierra de vez en cuando), el procesador falla con un aviso claro, GitHub te manda un correo y todo sigue pendiente: repite los pasos 2 y 3. Los registros de Actions son públicos: los scripts no imprimen correos ni claves.
+- Al analizar un sitio que Google da por cerrado, se oculta sin sacar reseñas ni pasar por Jev. Y en la ficha básica de Explorar cualquiera puede pulsar **¿Ha cerrado? Avísanos** y deja de salir al momento.
+- Ejecuta una vez en Supabase `supabase/010_lugares_al_dia.sql` (estado *cerrado* y fecha de la última comprobación).
 
 ## Servicios externos
 

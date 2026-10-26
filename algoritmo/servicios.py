@@ -19,21 +19,6 @@ VELOCIDAD_RESPALDO_ANDANDO_KMH = 5
 CAJA_MADRID = [(41.17, -4.58), (39.88, -3.05)]   # Comunidad de Madrid (esquinas NO y SE)
 
 
-def avisar_procesador(config):
-    """Lanza ya el procesador en la nube (.github/workflows/procesador.yml) para que analice lo recién pedido.
-    `config`: {"repo": "usuario/repo", "token": ...} (secrets [github]). Sin config, o si GitHub falla, no pasa
-    nada: el procesador también pasa solo cada 3 horas. Devuelve si se ha lanzado."""
-    if not config:
-        return False
-    try:
-        r = requests.post(f"https://api.github.com/repos/{config['repo']}/dispatches",
-                          json={"event_type": "procesar"}, timeout=10,
-                          headers={"Authorization": f"Bearer {config['token']}", "Accept": "application/vnd.github+json"})
-    except requests.RequestException:
-        return False
-    return r.status_code == 204
-
-
 def haversine_km(lat1, lon1, lat2, lon2):
     R = 6371.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)

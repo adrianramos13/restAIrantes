@@ -2,9 +2,9 @@
 Explorar (a la derecha de Inicio en la barra): cualquier restaurante, bar o cafetería, aunque no esté en ninguna
 lista. Los sitios salen de la tabla lugares (datos abiertos de Overture Maps, ver
 obtener_datos/importar_overture.py). Un sitio "analizado" ya está en el catálogo y se abre su ficha completa
-(nota, lo que destacan, eatlist, He ido...); si no, se ve lo básico y se puede pedir que se analice: se avisa
-al procesador en la nube (GitHub Actions, obtener_datos/procesar_solicitudes.py), que saca sus reseñas de Google
-Maps y lo clasifica con Jev en unos minutos. Los que han cerrado no salen (estado "cerrado": lo comprueba solo
+(nota, lo que destacan, eatlist, He ido...); si no, se ve lo básico y se puede pedir que se analice: el
+procesador (obtener_datos/procesar_solicitudes.py --vigilar, que corre solo en el ordenador del dueño) saca sus
+reseñas de Google Maps y lo clasifica con Jev en unos minutos. Los que han cerrado no salen (estado "cerrado": lo comprueba solo
 obtener_datos/verificar_lugares.py, o lo avisa cualquiera con "¿Ha cerrado?").
 """
 
@@ -13,8 +13,6 @@ import urllib.parse
 import streamlit as st
 
 import datos as bd
-import servicios
-import sesion
 from amigos import texto_seguro
 from servicios import haversine_km
 
@@ -74,7 +72,6 @@ def _pedir(cliente, usuario, lugar):
         return
     st.session_state.setdefault("lugares_pedidos", set()).add(lugar["id"])
     _buscar.clear()
-    servicios.avisar_procesador(sesion.config_github())   # si no se puede, el procesador pasa solo cada 3 h
     st.toast("¡Pedido! En unos minutos tendrá su ficha completa.", icon=":material/hourglass_top:")
 
 

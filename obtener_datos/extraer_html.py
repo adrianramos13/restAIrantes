@@ -41,8 +41,6 @@ USO:
 """
 
 import asyncio
-import json
-import os
 import re
 import unicodedata
 import urllib.parse
@@ -72,7 +70,7 @@ PAUSA_POR_ENTRADA_MS = 150                # al recorrer la lista, para que Googl
 # Sesión de Google guardada (solo en este ordenador, fuera de git): con ella la lista trae el precio.
 PERFIL_CHROME_DIR = BASE_DIR.parent / "origen" / "perfil_chrome"
 ESPERA_INICIO_SESION_S = 300
-EN_LA_NUBE = bool(os.environ.get("CI"))   # GitHub Actions (.github/workflows/procesador.yml): sin ventanas ni nadie delante
+SIN_VENTANA = False   # Chrome sin ventana (procesar_solicitudes.py --sin-ventana, la tarea de Windows)
 
 # --------------------------------------------------------------- #
 
@@ -282,17 +280,22 @@ async def _abrir_chrome_con_sesion(p):
     """Chrome con un perfil propio (PERFIL_CHROME_DIR) que recuerda la sesión de Google entre
     ejecuciones. Usa el Chrome instalado si lo hay (Google pone menos pegas al iniciar sesión
     en él que en el Chromium de Playwright) y, si no, el de Playwright.
-    En la nube (GitHub Actions), un Chromium sin ventana con la sesión de la variable GOOGLE_SESION
-    (la que guarda obtener_datos/exportar_sesion_google.py)."""
-    if os.environ.get("GOOGLE_SESION"):
-        navegador = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-        return await navegador.new_context(storage_state=json.loads(os.environ["GOOGLE_SESION"]), locale="es-ES",
-                                           viewport={"width": 1440, "height": 900})
+    Ojo: la sesión NO se puede llevar a otro ordenador (p. ej. a GitHub Actions): Chrome la ata a su perfil y
+    Google anula la que se usa desde un servidor de otro sitio (lo probamos)."""
     opciones = dict(user_data_dir=str(PERFIL_CHROME_DIR), headless=False, locale="es-ES",
                     viewport={"width": 1440, "height": 900},
                     args=["--disable-blink-features=AutomationControlled"],
                     # sin las marcas de "navegador automatizado", Google pone menos pegas al iniciar sesión
                     ignore_default_args=["--enable-automation", "--no-sandbox"])
+    if SIN_VENTANA:   # sin ventana Chrome dice ser "HeadlessChrome" y Google no da la sesión: se presenta como Chrome
+        try:
+            navegador = await p.chromium.launch(channel="chrome", headless=True)
+            version = navegador.version
+            await navegador.close()
+        except Exception:
+            version = "140.0.0.0"
+        opciones.update(headless=True, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                                  f"(KHTML, like Gecko) Chrome/{version} Safari/537.36")
     try:
         return await p.chromium.launch_persistent_context(channel="chrome", **opciones)
     except Exception:
@@ -308,9 +311,9 @@ async def _asegurar_sesion(page, url):
     Si no hay sesión guardada, abre el inicio de sesión de Google y espera a que entres."""
     if await _con_sesion(page):
         return
-    if EN_LA_NUBE:   # ahí no hay nadie para iniciar sesión
-        raise SystemExit("ERROR: la sesión de Google (secreto GOOGLE_SESION) falta o ha caducado. Vuelve a "
-                         "guardarla con obtener_datos/exportar_sesion_google.py y actualiza el secreto en GitHub.")
+    if SIN_VENTANA:   # no hay ventana donde iniciar sesión
+        raise SystemExit("ERROR: no hay sesión de Google en el Chrome del procesador. Ejecuta una vez "
+                         "'python obtener_datos/procesar_solicitudes.py' (sin --sin-ventana) e inicia sesión.")
     print("\n  No hay sesión de Google guardada. Inicia sesión en la ventana de Chrome que se ha abierto")
     print(f"  (solo hace falta la primera vez). Esperando hasta {ESPERA_INICIO_SESION_S // 60} minutos...\n")
     # Google solo deja volver a sus propios dominios tras iniciar sesión (con el enlace corto
