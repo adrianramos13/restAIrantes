@@ -46,10 +46,11 @@ function cargarMapLibre() {
 
 function crearPin(r, seleccionado) {
   const pin = document.createElement('div');
-  pin.className = 'fm-pin' + (seleccionado ? ' fm-sel' : '') + (r.n === 1 ? ' fm-top' : '');
+  pin.className = 'fm-pin' + (seleccionado ? ' fm-sel' : '') + (r.n === 1 && !r.estado ? ' fm-top' : '')
+    + (r.estado ? ` fm-${r.estado}` : '');
   const foto = document.createElement('div');
   foto.className = 'fm-foto';
-  const sinFoto = () => { foto.textContent = '🍽️'; };
+  const sinFoto = () => { foto.textContent = r.icono || '🍽️'; };
   if (r.foto) {
     const img = document.createElement('img');
     img.alt = ''; img.referrerPolicy = 'no-referrer';
@@ -139,10 +140,12 @@ function pintar(L, estado) {
   estado.seleccionado = seleccionado;
   estado.capa.clearLayers();
 
-  L.marker([usuario.lat, usuario.lon], {
-    icon: L.divIcon({ className: 'fm-icono', html: crearPuntoUsuario(), iconSize: [22, 22], iconAnchor: [11, 11] }),
-    interactive: false, keyboard: false, zIndexOffset: -1000,
-  }).addTo(estado.capa);
+  if (usuario) {   // en Explorar se puede buscar sin dar la ubicación
+    L.marker([usuario.lat, usuario.lon], {
+      icon: L.divIcon({ className: 'fm-icono', html: crearPuntoUsuario(), iconSize: [22, 22], iconAnchor: [11, 11] }),
+      interactive: false, keyboard: false, zIndexOffset: -1000,
+    }).addTo(estado.capa);
+  }
 
   restaurantes.forEach((r) => {
     const marcador = L.marker([r.lat, r.lon], {
@@ -158,14 +161,14 @@ function pintar(L, estado) {
 
   // Encuadre: solo cuando cambia el conjunto de restaurantes (no al seleccionar uno),
   // para no perder el zoom/posición que haya puesto la persona.
-  const clave = usuario.lat + ',' + usuario.lon + '|' + restaurantes.map((r) => r.id).join(',');
+  const clave = (usuario ? usuario.lat + ',' + usuario.lon : '') + '|' + restaurantes.map((r) => r.id).join(',');
   if (clave !== estado.clave) {
     estado.clave = clave;
     if (restaurantes.length) {
-      const puntos = restaurantes.map((r) => [r.lat, r.lon]).concat([[usuario.lat, usuario.lon]]);
-      estado.mapa.fitBounds(L.latLngBounds(puntos), { paddingTopLeft: [40, 75], paddingBottomRight: [40, 35], maxZoom: 16 });
+      const puntos = restaurantes.map((r) => [r.lat, r.lon]).concat(usuario ? [[usuario.lat, usuario.lon]] : []);
+      estado.mapa.fitBounds(L.latLngBounds(puntos), { paddingTopLeft: [40, 75], paddingBottomRight: [40, 35], maxZoom: 18 });
     } else {
-      estado.mapa.setView([usuario.lat, usuario.lon], 15);
+      estado.mapa.setView(usuario ? [usuario.lat, usuario.lon] : [40.4168, -3.7038], usuario ? 15 : 12);
     }
   }
   estado.mapa.invalidateSize();

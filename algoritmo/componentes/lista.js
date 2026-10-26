@@ -13,7 +13,7 @@ export default function (component) {
       + (r.visitado ? ' lr-visitado' : '');
     const partes = [r.amigo ? `${r.amigo} fue ${r.cuando}` : r.cuando, `${r.n}. ${r.nombre}`, r.cocina, r.meta,
       r.nota != null && `${String(r.nota).replace('.', ',')} de 5 estrellas`, r.cita && `«${r.cita}»`,
-      r.cerrado, r.visitado && 'Has ido', 'Ver ficha'];
+      r.estado_texto, r.cerrado, r.visitado && 'Has ido', 'Ver ficha'];
     boton.setAttribute('aria-label', partes.filter(Boolean).join('. '));
 
     const foto = document.createElement('div');
@@ -21,6 +21,7 @@ export default function (component) {
     const inicial = () => {
       const d = document.createElement('div');
       d.className = 'lr-inicial'; d.textContent = (r.nombre.trim()[0] || '?').toUpperCase();
+      if (r.icono) { d.classList.add('lr-icono'); d.textContent = r.icono; }   // Explorar: según la cocina
       return d;
     };
     if (r.foto) {
@@ -67,6 +68,11 @@ export default function (component) {
     if (r.cita) {
       const cita = document.createElement('span'); cita.className = 'lr-cita'; cita.textContent = `«${r.cita}»`;
       info.appendChild(cita);
+    }
+    if (r.estado_texto) {   // Explorar: analizado / analizando / datos básicos
+      const estado = document.createElement('span');
+      estado.className = `lr-etiqueta lr-estado-${r.estado}`; estado.textContent = r.estado_texto;
+      info.appendChild(estado);
     }
     if (r.visitado) {
       const ido = document.createElement('span'); ido.className = 'lr-etiqueta lr-ido'; ido.textContent = '✓ Has ido';

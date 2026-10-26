@@ -16,9 +16,14 @@ import datos as bd
 from amigos import texto_seguro
 from servicios import haversine_km
 
-RADIO_CERCA_KM = 1.5     # sin texto: lo que hay alrededor
+# Sin texto: lo que hay alrededor, ampliando si hay pocos. En el centro de Madrid caben ~400 sitios en 250 m y
+# más de 1.000 (el tope de una consulta) en 500 m: si se pasa del tope llegan unos cualesquiera, no los más cercanos.
+RADIOS_CERCA_KM = (0.25, 0.5, 1.5, 4)
 RADIO_TEXTO_KM = 40      # con texto y ubicación: por nombre, en tu zona
 POR_PAGINA = 15
+CANDIDATOS = 1000        # se piden de sobra y luego se ordenan por distancia: si no, se cuelan sitios lejanos
+MAX_RESULTADOS = 200
+MAX_EN_MAPA = 50         # más pines se amontonan y no se distingue ninguno
 ESTADOS = {   # estado_analisis -> (texto, color, icono)
     "analizado": ("Analizado", "green", ":material/verified:"),
     "pendiente": ("Análisis en camino", "orange", ":material/hourglass_top:"),
@@ -33,8 +38,13 @@ FALTA_TABLA = "Explorar aún no está activado: falta ejecutar `supabase/009_lug
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _buscar(_cliente, texto, cerca):
-    radio = RADIO_TEXTO_KM if bd.texto_busqueda(texto) else RADIO_CERCA_KM
-    return _cliente.buscar_lugares(texto, cerca, radio_km=radio)
+    if bd.texto_busqueda(texto):
+        return _cliente.buscar_lugares(texto, cerca, radio_km=RADIO_TEXTO_KM, limite=CANDIDATOS if cerca else MAX_RESULTADOS)
+    for radio in RADIOS_CERCA_KM:   # de cerca a lejos, hasta que haya bastantes
+        lugares = _cliente.buscar_lugares("", cerca, radio_km=radio, limite=CANDIDATOS)
+        if len(lugares) >= MAX_EN_MAPA:
+            break
+    return lugares
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -150,31 +160,72 @@ def _ficha_lugar(cliente, usuario, lugar, ficha):
     _ventana()
 
 
-def _tarjetas(lugares, cerca, prefijo):
-    ocultos = st.session_state.get("lugares_ocultos", ())   # avisados como cerrados en esta visita
-    for i, lugar in enumerate(l for l in lugares if l["id"] not in ocultos):
-        texto, color, _ = ESTADOS.get(_estado(lugar), ESTADOS["sin_analizar"])
-        detalle = " · ".join(t for t in (lugar.get("categoria"), lugar.get("ciudad"), _distancia(lugar, cerca)) if t)
-        with st.container(border=True, horizontal=True, vertical_alignment="center", key=f"{prefijo}_{i}"):
-            st.markdown(f"**{texto_seguro(lugar['nombre'])}**  \n{texto_seguro(detalle)}  \n:{color}-badge[{texto}]")
-            st.button("Ver", key=f"{prefijo}_ver_{i}", type="tertiary", icon=":material/chevron_right:",
-                      on_click=st.session_state.update, args=({"lugar_abrir": lugar},))
+# Icono de cada sitio en la lista y en el mapa (no hay foto hasta que se analiza), según su categoría.
+ICONOS = {
+    "Japonesa": "🍣", "Sushi": "🍣", "Pizzería": "🍕", "Italiana": "🍝", "China": "🥡", "Asiática": "🥢",
+    "Coreana": "🥢", "Tailandesa": "🍜", "Vietnamita": "🍜", "India": "🍛", "Mexicana": "🌮", "Peruana": "🐟",
+    "Marisquería": "🦐", "Tapas": "🍤", "Española": "🥘", "Mediterránea": "🫒", "Hamburguesas": "🍔",
+    "Comida rápida": "🍟", "Pollos": "🍗", "Asador": "🥩", "Brasa": "🥩", "Argentina": "🥩", "Kebab": "🥙",
+    "Turca": "🥙", "Libanesa": "🥙", "Griega": "🥗", "Vegana": "🥗", "Vegetariana": "🥗", "Cafetería": "☕",
+    "Desayunos y brunch": "🥞", "Panadería": "🥐", "Heladería": "🍦", "Postres": "🍰", "Bocadillos": "🥪",
+    "Bar": "🍺", "Pub": "🍺", "Cervecería": "🍺", "Bar restaurante": "🍺", "Gastrobar": "🍷", "Vinoteca": "🍷",
+    "Coctelería": "🍸",
+}
+VISTAS = ["Lista", "Mapa"]
 
 
-def _tus_peticiones(cliente, usuario, cerca):
+def _icono(lugar):
+    return ICONOS.get(lugar.get("categoria"), "🍽️")
+
+
+def _visibles(lugares):
+    """Sin los que se acaban de avisar como cerrados en esta visita (la búsqueda está en caché)."""
+    ocultos = st.session_state.get("lugares_ocultos", ())
+    return [l for l in lugares if l["id"] not in ocultos]
+
+
+def _al_tocar(key, campo):
+    """Al tocar un sitio en la lista (`abrir`) o en el mapa (`seleccion`): se abre su ventana."""
+    lugar = st.session_state.get("ex_por_id", {}).get(getattr(st.session_state[key], campo, None))
+    if lugar is not None:
+        st.session_state["lugar_abrir"] = lugar
+
+
+def _lista(lugares, cerca, key, lista):
+    """Tarjetas (las mismas de Comer hoy): icono de su cocina, categoría, ciudad, distancia y estado."""
+    st.session_state.setdefault("ex_por_id", {}).update({l["id"]: l for l in lugares})
+    items = [{"id": l["id"], "n": n, "nombre": l["nombre"], "cocina": l.get("categoria") or "",
+              "meta": " · ".join(t for t in (l.get("ciudad"), _distancia(l, cerca)) if t), "foto": None,
+              "icono": _icono(l), "estado": _estado(l), "estado_texto": ESTADOS[_estado(l)][0]}
+             for n, l in enumerate(lugares, start=1)]
+    lista(items, key=key, al_abrir=lambda: _al_tocar(key, "abrir"))
+
+
+def _mapa(lugares, cerca, mapa):
+    st.session_state.setdefault("ex_por_id", {}).update({l["id"]: l for l in lugares})
+    puntos = [{"id": l["id"], "n": n, "nombre": l["nombre"], "lat": l["lat"], "lon": l["lon"], "foto": None,
+               "icono": _icono(l), "estado": _estado(l)} for n, l in enumerate(lugares, start=1)]
+    mapa(puntos, cerca, key="mapa_explorar", al_tocar=lambda: _al_tocar("mapa_explorar", "seleccion"))
+    st.caption(("🔵 Tú · " if cerca else "") + (f"Los {len(lugares)} " + ("más cercanos" if cerca else "primeros")
+                                                + ". " if len(lugares) == MAX_EN_MAPA else "")
+               + "Toca un sitio para ver su ficha. Con borde verde, los analizados.")
+
+
+def _tus_peticiones(cliente, usuario, cerca, lista):
     try:
         pedidas = cliente.solicitudes_de(usuario)
     except bd.ErrorSupabase:
         return
-    lugares = [p["lugares"] for p in pedidas if p.get("lugares")]
+    lugares = _visibles([p["lugares"] for p in pedidas if p.get("lugares")])
     if lugares:
         st.subheader("Has pedido analizar")
-        _tarjetas(lugares, cerca, "pedido")
+        _lista(lugares, cerca, "lista_pedidos", lista)
 
 
-def seccion(cliente, usuario, *, ficha, boton_ubicacion):
+def seccion(cliente, usuario, *, ficha, boton_ubicacion, lista, mapa):
     """`ficha(fila, df_platos)`: la ficha completa de un restaurante del catálogo (la de siempre).
-    `boton_ubicacion(key)`: el botón "Usar mi ubicación" (comparte la ubicación con "Comer hoy")."""
+    `boton_ubicacion(key)`: el botón "Usar mi ubicación" (comparte la ubicación con "Comer hoy").
+    `lista(items, key, al_abrir)` y `mapa(puntos, centro, key, al_tocar)`: los componentes de Comer hoy."""
     st.header("Explorar")
     if cliente is None:
         st.info("Explorar está disponible en el modo con cuentas de usuario.")
@@ -195,19 +246,24 @@ def seccion(cliente, usuario, *, ficha, boton_ubicacion):
     if not bd.texto_busqueda(texto) and not cerca:
         st.caption("Escribe un nombre o usa tu ubicación para ver lo que hay cerca. Los sitios **analizados** "
                    "tienen ficha completa; los demás puedes pedir que se analicen.")
-        _tus_peticiones(cliente, usuario, cerca)
+        _tus_peticiones(cliente, usuario, cerca, lista)
         return
     try:
-        lugares = _ordenar(_buscar(cliente, texto, tuple(cerca) if cerca else None), cerca)
+        lugares = _visibles(_ordenar(_buscar(cliente, texto, tuple(cerca) if cerca else None), cerca))[:MAX_RESULTADOS]
     except bd.ErrorSupabase:
         st.warning(FALTA_TABLA)
         return
     if not lugares:
         st.info("No hemos encontrado nada así" + (" por aquí." if cerca else ". Prueba con otro nombre o usa tu ubicación."))
         return
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.caption(f"{len(lugares)}{'+' if len(lugares) >= MAX_RESULTADOS else ''} sitio{'s' if len(lugares) != 1 else ''}")
+        vista = st.segmented_control("Vista", VISTAS, default="Lista", key="ex_vista", label_visibility="collapsed")
+    if vista == "Mapa":
+        _mapa(lugares[:MAX_EN_MAPA], cerca, mapa)
+        return
     visibles = st.session_state.get("ex_visibles", POR_PAGINA)
-    st.caption(f"{len(lugares)}{'+' if len(lugares) >= 200 else ''} sitio{'s' if len(lugares) != 1 else ''}")
-    _tarjetas(lugares[:visibles], cerca, "lugar")
+    _lista(lugares[:visibles], cerca, "lista_explorar", lista)
     if len(lugares) > visibles:
         st.button("Ver más", key="ex_ver_mas", width="stretch",
                   on_click=st.session_state.update, args=({"ex_visibles": visibles + POR_PAGINA},))

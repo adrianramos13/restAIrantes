@@ -36,6 +36,11 @@
   background: var(--st-border-color); color: var(--st-text-color);
 }
 .lr-flecha { flex: 0 0 auto; font-size: 22px; opacity: 0.4; }
+/* Explorar: icono de la cocina sobre fondo suave (no hay foto) y etiqueta del estado del análisis */
+.lr-inicial.lr-icono { font-size: 36px; background: var(--st-border-color); opacity: 1; }
+.lr-estado-analizado { background: #DCFCE7; color: #14532D; }
+.lr-estado-pendiente, .lr-estado-procesando { background: #FFEDD5; color: #7C2D12; }
+.lr-estado-error { background: #FEE2E2; color: #7F1D1D; }
 /* Ya has ido: borde y etiqueta verdes */
 .lr-visitado { border-color: #16A34A; }
 .lr-ido { background: #DCFCE7; color: #14532D; }
@@ -55,7 +60,9 @@
   overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
 @media (prefers-color-scheme: dark) {
-  .lr-ido { background: #14532D; color: #DCFCE7; }
+  .lr-ido, .lr-estado-analizado { background: #14532D; color: #DCFCE7; }
+  .lr-estado-pendiente, .lr-estado-procesando { background: #7C2D12; color: #FFEDD5; }
+  .lr-estado-error { background: #7F1D1D; color: #FEE2E2; }
 }
 /* Carrusel ("Tus amigos han ido a"): tarjetas pequeñas en fila, se desliza hacia la derecha. La
    siguiente asoma por el borde para que se vea que hay más. */
