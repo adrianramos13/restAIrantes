@@ -656,6 +656,19 @@ def mostrar_mapa(lat_u, lon_u, restaurantes=None, seleccionado_id=None):
         st.caption("🔵 Tú — comprueba que el mapa te sitúa donde esperabas.")
 
 
+def lista_de_lugares(items, key, al_abrir):
+    """Explorar: las tarjetas de siempre con sitios de Overture (ids de texto, icono en vez de foto, estado)."""
+    _LISTA_RESTAURANTES(data={"items": items, "seleccionado": None, "carrusel": False, "estatica": False},
+                        key=key, on_abrir_change=al_abrir)
+
+
+def mapa_de_lugares(puntos, centro, key, al_tocar):
+    """Explorar: el mapa de siempre con sitios de Overture; sin `centro` (sin ubicación) encuadra los sitios."""
+    _MAPA_FOTOS(data={"usuario": {"lat": centro[0], "lon": centro[1]} if centro else None, "restaurantes": puntos,
+                      "seleccionado": None, "base": configuracion_mapa_base()},
+                key=key, on_seleccion_change=al_tocar)
+
+
 # ----------------------- BOTÓN "UBICACIÓN ACTUAL" ----------------------- #
 # Componente propio (st.components.v2, sin paquetes externos). Al pulsarlo, el
 # navegador pide permiso y devuelve las coordenadas a Python. Se ejecuta en la
@@ -868,7 +881,7 @@ _BARRA = st.components.v2.component(
 
 # Widgets de cada sección cuyo valor tiene que sobrevivir mientras se está en otra.
 CLAVES_FORMULARIOS = {
-    "explorar": ("ex_texto",),
+    "explorar": ("ex_texto", "ex_vista"),
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
     # sin "ml_idos" (solo los que he ido): lo activa "Ver en formato lista" y se olvida al salir de Mi lista
     "mi_lista": ("ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
@@ -1553,7 +1566,8 @@ if seccion == "inicio":
     seccion_inicio(maestro, df_platos, hay_intro, momento_portada, nombre_usuario)
     st.stop()
 if seccion == "explorar":
-    explorar.seccion(BD, usuario, ficha=contenido_ficha, boton_ubicacion=boton_ubicacion_actual)
+    explorar.seccion(BD, usuario, ficha=contenido_ficha, boton_ubicacion=boton_ubicacion_actual,
+                     lista=lista_de_lugares, mapa=mapa_de_lugares)
     st.stop()
 if seccion == "mi_lista":
     seccion_mi_lista(maestro, df_platos)

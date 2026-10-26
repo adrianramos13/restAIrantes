@@ -1141,27 +1141,45 @@ def explorar(multiusuario, monkeypatch):
     monkeypatch.setattr(datos.Supabase, "solicitudes_de", lambda self, u, limite=20: [])
     monkeypatch.setattr(datos.Supabase, "restaurantes_por_ids", lambda self, ids: (
         maestro[maestro["ID"].isin(ids)].copy(), pd.DataFrame(columns=datos.COLUMNAS_PLATOS)))
+    monkeypatch.setattr(datos.Supabase, "lugar_por_id", lambda self, i: next(
+        dict(l) for l in estado["lugares"] if l["id"] == i))
     return estado
+
+
+def componente(at, contiene):
+    """Los datos (en texto) del componente propio que lleva `contiene` ("" si no está)."""
+    return next((str(c.proto) for c in at.get("bidi_component") if contiene in str(c.proto)), "")
 
 
 def test_explorar_busca_cerca_y_pide_analizar(explorar):
     at = correr(seccion="explorar")
-    assert "lugar_ver_0" not in [b.key for b in at.button]              # sin texto ni ubicación: nada aún
+    assert not componente(at, "estado_texto")                           # sin texto ni ubicación: nada aún
     at.session_state["ubicacion_actual"] = CHUECA
     at.text_input(key="ex_texto").input("taberna").run()
     assert not at.exception, [e.value for e in at.exception]
     assert explorar["busquedas"][-1] == ("taberna", CHUECA)
-    tarjetas = [m.value for m in at.markdown if "badge[" in m.value]
-    assert "Ya Analizado" in tarjetas[0] and "Taberna Nueva" in tarjetas[1]   # el más cercano primero
-    assert "44 m" in tarjetas[1]
-    at.button(key="lugar_ver_1").click().run()                          # su ventana: datos básicos
+    lista = componente(at, "estado_texto")                              # las tarjetas de Comer hoy
+    assert lista.index("Ya Analizado") < lista.index("Taberna Nueva")    # el más cercano primero
+    assert "44 m" in lista and "Analizado" in lista and "Datos b" in lista
+    at.session_state["lugar_abrir"] = explorar["lugares"][0]            # lo que hace tocar su tarjeta
+    at.run()                                                            # su ventana: datos básicos
     assert not at.exception, [e.value for e in at.exception]
     assert "analizar_lugar" in [b.key for b in at.button]
     assert not [b for b in at.get("link_button") if b.label == "Web"]    # javascript: no se enlaza
     at.button(key="analizar_lugar").click().run()
     assert explorar["pedidos"] == [("ana@ejemplo.com", "l1")]
-    tarjetas = [m.value for m in at.markdown if "badge[" in m.value]
-    assert "Análisis en camino" in tarjetas[1]                          # se ve al momento
+    assert "lisis en camino" in componente(at, "estado_texto")           # se ve al momento
+
+
+def test_explorar_en_mapa(explorar):
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["ubicacion_actual"] = CHUECA
+    at.session_state["ex_vista"] = "Mapa"
+    at = correr(at, seccion="explorar")
+    mapa = componente(at, "mapa_explorar")
+    assert "Taberna Nueva" in mapa and "Ya Analizado" in mapa and "analizado" in mapa   # pin verde
+    assert not componente(at, "estado_texto")                           # en vez de la lista
+    assert any("borde verde" in c.value for c in at.caption)
 
 
 def test_explorar_un_sitio_analizado_abre_su_ficha_completa(explorar):
@@ -1215,14 +1233,14 @@ def test_avisar_de_que_ha_cerrado_lo_quita(explorar, monkeypatch):
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["ubicacion_actual"] = CHUECA
     at = correr(at, seccion="explorar")
-    assert len([m for m in at.markdown if "badge[" in m.value]) == 2
+    assert "Taberna Nueva" in componente(at, "estado_texto")
     at.session_state["lugar_abrir"] = explorar["lugares"][0]
     at.run()
     at.button(key="avisar_cerrado").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert cerrados == ["l1"]
-    tarjetas = [m.value for m in at.markdown if "badge[" in m.value]
-    assert len(tarjetas) == 1 and "Taberna Nueva" not in tarjetas[0]   # ya no sale
+    lista = componente(at, "estado_texto")
+    assert "Ya Analizado" in lista and "Taberna Nueva" not in lista    # ya no sale
 
 
 
