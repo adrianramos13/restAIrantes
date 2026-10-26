@@ -403,7 +403,8 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
 El procesador también corre solo en **GitHub Actions** (gratis: el repositorio es público), con `.github/workflows/procesador.yml`:
 
 - **Al pedir algo en la app** (*Analizar este restaurante* o guardar una lista) la app avisa a GitHub y se analiza en unos minutos (~2 min de arranque + ~1 min por restaurante).
-- **Cada 3 horas** pasa solo: procesa lo que haya pendiente (por si el aviso falló) y **comprueba durante 40 min si los sitios de Explorar siguen abiertos** (`obtener_datos/verificar_lugares.py`: abre su ficha de Google Maps y, si dice *Cerrado permanentemente* y es el mismo sitio, lo oculta). Va primero por los nunca comprobados y después repasa cada sitio cada 30 días.
+- **Cada 3 horas** pasa solo y procesa lo que haya pendiente (por si el aviso falló).
+- **Los lunes a las 4:00** (5:00 en horario de verano) **comprueba durante 5 horas si los sitios de Explorar siguen abiertos** (`obtener_datos/verificar_lugares.py`: abre su ficha de Google Maps y, si dice *Cerrado permanentemente* y es el mismo sitio, lo oculta). Unos 6.000 sitios por semana: va primero por los nunca comprobados y después por los comprobados hace más de 30 días.
 - **Cada mes** (`.github/workflows/importar_overture.yml`) vuelve a importar las zonas de Explorar con la versión nueva de Overture: entran los sitios nuevos y se ocultan los que Overture ya da por cerrados o ha dejado de publicar (salvo los pedidos o analizados). Las zonas, en la variable del repositorio `ZONAS_OVERTURE` (p. ej. `madrid canarias`); por defecto, `madrid`.
 - Además, en la ficha básica de Explorar cualquiera puede pulsar **¿Ha cerrado? Avísanos** y deja de salir al momento.
 
