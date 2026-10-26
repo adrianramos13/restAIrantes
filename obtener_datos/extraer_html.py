@@ -287,15 +287,10 @@ async def _abrir_chrome_con_sesion(p):
                     args=["--disable-blink-features=AutomationControlled"],
                     # sin las marcas de "navegador automatizado", Google pone menos pegas al iniciar sesión
                     ignore_default_args=["--enable-automation", "--no-sandbox"])
-    if SIN_VENTANA:   # sin ventana Chrome dice ser "HeadlessChrome" y Google no da la sesión: se presenta como Chrome
-        try:
-            navegador = await p.chromium.launch(channel="chrome", headless=True)
-            version = navegador.version
-            await navegador.close()
-        except Exception:
-            version = "140.0.0.0"
-        opciones.update(headless=True, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                                                  f"(KHTML, like Gecko) Chrome/{version} Safari/537.36")
+    if SIN_VENTANA:
+        # Chrome normal con la ventana fuera de la pantalla. NO el modo headless: sin ventana Google no da la
+        # sesión, y disfrazarlo de Chrome normal hizo que Google la anulara del todo (lo probamos).
+        opciones["args"] = opciones["args"] + ["--window-position=-32000,-32000"]
     try:
         return await p.chromium.launch_persistent_context(channel="chrome", **opciones)
     except Exception:

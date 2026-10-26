@@ -25,7 +25,9 @@ ESTADOS = {   # estado_analisis -> (texto, color, icono)
     "procesando": ("Análisis en camino", "orange", ":material/hourglass_top:"),
     "error": ("No se pudo analizar", "red", ":material/error:"),
     "sin_analizar": ("Datos básicos", "gray", ":material/info:"),
+    "cerrado": ("Ha cerrado", "red", ":material/block:"),
 }
+SEGUNDOS_ENTRE_COMPROBACIONES = 5   # mientras se analiza, cada cuánto mira la ventana si ya está
 FALTA_TABLA = "Explorar aún no está activado: falta ejecutar `supabase/009_lugares.sql` e importar una zona."
 
 
@@ -72,7 +74,7 @@ def _pedir(cliente, usuario, lugar):
         return
     st.session_state.setdefault("lugares_pedidos", set()).add(lugar["id"])
     _buscar.clear()
-    st.toast("¡Pedido! En unos minutos tendrá su ficha completa.", icon=":material/hourglass_top:")
+    st.toast("¡Pedido! En un par de minutos tendrá su ficha completa.", icon=":material/hourglass_top:")
 
 
 def _avisar_cerrado(cliente, lugar):
@@ -84,6 +86,23 @@ def _avisar_cerrado(cliente, lugar):
     st.session_state.setdefault("lugares_ocultos", set()).add(lugar["id"])
     _buscar.clear()
     st.toast("Gracias: ya no saldrá en Explorar.", icon=":material/check:")
+
+
+@st.fragment(run_every=SEGUNDOS_ENTRE_COMPROBACIONES)
+def _esperar_analisis(cliente, lugar):
+    """Mientras se analiza: mira si ya está y, en cuanto lo está, vuelve a abrir la ventana con el resultado
+    (la ficha completa, o por qué no se ha podido). Así no hay que cerrarla y volver más tarde."""
+    try:
+        ahora = cliente.lugar_por_id(lugar["id"])
+    except bd.ErrorSupabase:
+        ahora = None
+    if ahora and ahora.get("estado_analisis") not in ("pendiente", "procesando"):
+        st.session_state.get("lugares_pedidos", set()).discard(lugar["id"])
+        _buscar.clear()
+        st.session_state["lugar_abrir"] = ahora
+        st.rerun()
+    st.info("Analizando (nota, precio, foto y lo que dicen sus reseñas). Suele tardar uno o dos minutos: "
+            "esta ventana se actualiza sola.", icon=":material/hourglass_top:")
 
 
 def _ficha_lugar(cliente, usuario, lugar, ficha):
@@ -115,9 +134,11 @@ def _ficha_lugar(cliente, usuario, lugar, ficha):
         if lugar["id"] in st.session_state.get("lugares_ocultos", ()):
             st.success("Gracias por avisar: ya no sale en Explorar.")
             return
+        if estado == "cerrado":
+            st.warning("Según Google Maps ha cerrado, así que ya no sale en Explorar.")
+            return
         if estado in ("pendiente", "procesando"):
-            st.info("Se está analizando solo (nota, precio, foto y lo que dicen sus reseñas): suele tardar unos "
-                    "minutos. Vuelve en un rato.")
+            _esperar_analisis(cliente, lugar)
         else:
             st.caption("Aún no sabemos qué dicen sus reseñas. Al analizarlo tendrá su ficha completa (nota, precio, "
                        "lo que destacan) y podrás añadirlo a tu eatlist o marcar «He ido».")

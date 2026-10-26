@@ -286,7 +286,7 @@ def main(argv=None):
     global PESTANAS
     parser = argparse.ArgumentParser(description="Procesa las listas pedidas desde la app.")
     parser.add_argument("--todas", action="store_true", help="vuelve a procesar todas las listas, no solo las pendientes")
-    parser.add_argument("--vigilar", type=int, metavar="MINUTOS", nargs="?", const=10,
+    parser.add_argument("--vigilar", type=float, metavar="MINUTOS", nargs="?", const=10,
                         help="no termina: cada MINUTOS (10 por defecto) procesa las listas pendientes que haya")
     parser.add_argument("--pestanas", type=int, default=PESTANAS,
                         help=f"restaurantes a la vez al sacar reseñas (por defecto {PESTANAS}; 1 si Google pone pegas)")
@@ -300,7 +300,7 @@ def main(argv=None):
     if args.vigilar:
         import time
         sys.stdout.reconfigure(line_buffering=True)   # que origen/procesador.log (la tarea de Windows) se vea al momento
-        print(f"Vigilando listas pendientes cada {args.vigilar} min (Ctrl+C para parar)...")
+        print(f"Vigilando lo pendiente cada {args.vigilar:g} min (Ctrl+C para parar)...")
         while True:
             try:
                 pendientes = bd.listas_pendientes()
@@ -308,7 +308,7 @@ def main(argv=None):
                     procesar_varias(bd, pendientes)
                 procesar_explorar(bd)
             except Exception as e:   # p. ej. sin red un rato: se reintenta en la siguiente vuelta
-                print(f"ERROR (se reintenta en {args.vigilar} min): {str(e)[:300]}")
+                print(f"ERROR (se reintenta en {args.vigilar:g} min): {str(e)[:300]}")
             time.sleep(args.vigilar * 60)
     listas = bd.listas_con_enlace() if args.todas else bd.listas_pendientes()
     lugares = lugares_pendientes(bd)
