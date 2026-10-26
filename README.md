@@ -410,7 +410,7 @@ El procesador también corre solo en **GitHub Actions** (gratis: el repositorio 
 Puesta en marcha (una vez):
 
 1. En Supabase, ejecuta `supabase/010_lugares_al_dia.sql`.
-2. **Sesión de Google para la nube.** Sin sesión, Google Maps no enseña las reseñas. Crea una **cuenta de Google solo para esto** (no uses la tuya: la sesión guardada da acceso a esa cuenta). En tu ordenador, cierra la sesión de tu cuenta en el Chrome del procesador (o borra `origen/perfil_chrome/`) y ejecuta:
+2. **Sesión de Google para la nube.** Sin sesión, Google Maps no enseña las reseñas. Crea una **cuenta de Google solo para esto** (no uses la tuya: la sesión guardada da acceso a esa cuenta). En tu ordenador ejecuta (abre una ventana de Chromium, no tu Chrome: Chrome ata la sesión a su perfil y fuera de él Google la rechaza; el script comprueba que la sesión vale antes de guardarla):
 
    ```bash
    python obtener_datos/exportar_sesion_google.py   # inicia sesión con la cuenta nueva; guarda origen/sesion_google.json
