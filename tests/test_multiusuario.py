@@ -1223,3 +1223,35 @@ def test_avisar_de_que_ha_cerrado_lo_quita(explorar, monkeypatch):
     assert cerrados == ["l1"]
     tarjetas = [m.value for m in at.markdown if "badge[" in m.value]
     assert len(tarjetas) == 1 and "Taberna Nueva" not in tarjetas[0]   # ya no sale
+
+
+
+def test_lugar_por_id(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [{"id": "x"}])
+    assert bd_.lugar_por_id("x") == {"id": "x"} and llamadas[0][2]["id"] == "eq.x"
+
+
+def test_la_ventana_de_un_sitio_en_analisis_se_actualiza_sola(explorar, monkeypatch):
+    pendiente = {**explorar["lugares"][0], "estado_analisis": "pendiente"}
+    estado_bd = {"lugar": dict(pendiente)}
+    monkeypatch.setattr(datos.Supabase, "lugar_por_id", lambda self, i: dict(estado_bd["lugar"]))
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["lugar_abrir"] = pendiente
+    at = correr(at, seccion="explorar")
+    assert any("se actualiza sola" in i.value for i in at.info)            # aún analizándose
+    assert "analizar_lugar" not in [b.key for b in at.button]
+    # el procesador termina: la próxima vez que la ventana mira, se abre con la ficha completa
+    estado_bd["lugar"] = {**pendiente, "estado_analisis": "analizado", "restaurante_id": explorar["id_analizado"]}
+    at.session_state["lugar_abrir"] = pendiente                            # (AppTest: se vuelve a abrir la ventana)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any(b.label == "Cómo llegar" for b in at.get("link_button"))
+    assert f"he_ido_{explorar['id_analizado']}" in [b.key for b in at.button]
+
+
+def test_un_sitio_que_ha_cerrado_lo_dice(explorar, monkeypatch):
+    cerrado = {**explorar["lugares"][0], "estado_analisis": "cerrado"}
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["lugar_abrir"] = cerrado
+    at = correr(at, seccion="explorar")
+    assert any("ha cerrado" in w.value for w in at.warning) and "analizar_lugar" not in [b.key for b in at.button]

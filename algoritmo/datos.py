@@ -662,6 +662,10 @@ class Supabase:
                 return estados
             desde += 1000
 
+    def lugar_por_id(self, lugar_id):
+        filas = self._rest("GET", "lugares", params={"id": f"eq.{lugar_id}", "select": COLUMNAS_LUGAR})
+        return filas[0] if filas else None
+
     def marcar_lugar(self, lugar_id, estado, restaurante_id=None, mensaje=None):
         cambios = {"estado_analisis": estado, "mensaje": mensaje, "actualizado_en": _ahora()}
         if restaurante_id is not None:
