@@ -304,8 +304,12 @@ async def _con_sesion(page):
 async def _asegurar_sesion(page, url):
     """Con sesión, la lista trae precio y demás datos de cada restaurante; sin ella, no.
     Si no hay sesión guardada, abre el inicio de sesión de Google y espera a que entres."""
-    if await _con_sesion(page):
+    try:   # el botón de la cuenta tarda unos segundos en aparecer tras cargar Maps
+        await page.locator('a[href*="accounts.google.com/SignOutOptions"]').first.wait_for(state="attached",
+                                                                                          timeout=15000)
         return
+    except Exception:
+        pass
     if SIN_VENTANA:   # no hay ventana donde iniciar sesión
         raise SystemExit("ERROR: no hay sesión de Google en el Chrome del procesador. Ejecuta una vez "
                          "'python obtener_datos/procesar_solicitudes.py' (sin --sin-ventana) e inicia sesión.")
