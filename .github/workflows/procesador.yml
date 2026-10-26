@@ -1,6 +1,6 @@
 # Procesador en la nube: analiza lo que se pide desde la app (listas y "Analizar" de Explorar) sin que haga
-# falta tener encendido ningún ordenador, y va comprobando en Google Maps si los sitios de Explorar siguen
-# abiertos. Secretos que necesita (Settings -> Secrets and variables -> Actions): SUPABASE_URL,
+# falta tener encendido ningún ordenador, y los lunes de madrugada comprueba en Google Maps si los sitios de
+# Explorar siguen abiertos. Secretos que necesita (Settings -> Secrets and variables -> Actions): SUPABASE_URL,
 # SUPABASE_CLAVE_SERVICIO, TYPESAFE_API_KEY y GOOGLE_SESION (ver el README). Los registros son públicos:
 # los scripts no imprimen correos ni claves.
 name: Procesador
@@ -9,7 +9,8 @@ on:
   repository_dispatch:
     types: [procesar]          # lo lanza la app al pedir algo (secrets [github] de Streamlit)
   schedule:
-    - cron: "17 */3 * * *"     # cada 3 horas: por si el aviso falla, y para comprobar sitios cerrados
+    - cron: "17 */3 * * *"     # cada 3 horas: lo pendiente, por si el aviso de la app falla
+    - cron: "0 3 * * 1"        # lunes 3:00 UTC (4:00 en Madrid en invierno, 5:00 en verano): sitios cerrados
   workflow_dispatch:           # a mano, desde la pestaña Actions
 
 concurrency:
@@ -22,7 +23,7 @@ permissions:
 jobs:
   procesar:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 340       # la comprobación de los lunes dura 5 h (GitHub permite hasta 6)
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_CLAVE_SERVICIO: ${{ secrets.SUPABASE_CLAVE_SERVICIO }}
@@ -44,5 +45,5 @@ jobs:
           GOOGLE_SESION: ${{ secrets.GOOGLE_SESION }}
         run: python obtener_datos/procesar_solicitudes.py
       - name: Comprobar si los sitios siguen abiertos
-        if: ${{ always() && github.event_name != 'repository_dispatch' }}
-        run: python obtener_datos/verificar_lugares.py --minutos 40
+        if: ${{ always() && github.event.schedule == '0 3 * * 1' }}   # solo los lunes (aunque falle lo de arriba)
+        run: python obtener_datos/verificar_lugares.py --minutos 300
