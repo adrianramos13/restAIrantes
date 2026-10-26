@@ -511,15 +511,19 @@ def bloque_valoracion(fila):
     visita = mis_visitas().get(id_restaurante)
     clave = f"{'visitado' if visita is not None else 'valoracion'}_{id_restaurante}"
     with st.container(border=True, key=clave):
+        # Estrellas arriba y los botones debajo: estrellas, "He ido" y "Añadir comensal" no caben en una fila del móvil
+        nota = estrellas(f"nota_visita_{id_restaurante}", _o_none(visita["Nota visita"]) if visita is not None else None)
         with st.container(horizontal=True, vertical_alignment="center"):
-            nota = estrellas(f"nota_visita_{id_restaurante}",
-                             _o_none(visita["Nota visita"]) if visita is not None else None)
             guardar = st.button("Guardar" if visita is not None else "He ido", type="primary",
                                 icon=":material/check_circle:", key=f"he_ido_{id_restaurante}")
+            abierto = f"comensales_{id_restaurante}"
+            st.button("Añadir comensal", icon=":material/group_add:", key=f"comensal_abrir_{id_restaurante}",
+                      on_click=lambda: st.session_state.update({abierto: not st.session_state.get(abierto)}))
         comentario = st.text_area(
             "Lo que más te gustó", value=(_o_none(visita["Comentario visita"]) or "") if visita is not None else "",
             max_chars=bd.LARGO_MAX_COMENTARIO, key=f"comentario_visita_{id_restaurante}", height=68,
             placeholder="Lo que más te gustó (opcional)", label_visibility="collapsed")
+        bloque_comensales(id_restaurante, visita, nota, comentario)
         quitar = visita is not None and st.button("Ya no he ido", type="tertiary", icon=":material/close:",
                                                   key=f"quitar_visita_{id_restaurante}")
     if not (guardar or quitar):
@@ -541,6 +545,69 @@ def bloque_valoracion(fila):
         st.rerun(scope="fragment")   # la ventana se vuelve a dibujar ya en verde (o sin verde, si lo has quitado)
     except StreamlitAPIException:    # no venía de la ventana (p. ej. en AppTest, que recarga todo): recarga entera
         st.rerun()
+
+
+def _recargar_ventana():
+    try:
+        st.rerun(scope="fragment")   # la ficha es una ventana: solo se vuelve a dibujar ella
+    except StreamlitAPIException:    # no venía de la ventana (p. ej. en AppTest, que recarga todo)
+        st.rerun()
+
+
+def bloque_comensales(id_restaurante, visita, nota, comentario):
+    """"He ido con...": los amigos que fueron contigo. Al añadirlos, a cada uno le sale el restaurante en su
+    Diario y en su perfil (sin nota: la pone él). Solo amigos aceptados; los correos nunca llegan a la pantalla
+    (el desplegable lleva posiciones, no correos)."""
+    amigos_ok = {r["usuario"]: r for r in amigos.cargar_relaciones(BD, usuario) if r["estado"] == "aceptada"}
+    try:
+        con = [c for c in BD.comensales_de(usuario, id_restaurante) if c in amigos_ok]
+        te_anadio = BD.anadido_por(usuario, id_restaurante)
+    except bd.ErrorSupabase:   # p. ej. aún sin supabase/011_comensales.sql
+        con, te_anadio = [], None
+    if te_anadio:
+        st.caption(f"Fuiste con {amigos.quien(amigos_ok[te_anadio]) if te_anadio in amigos_ok else 'un amigo'}, "
+                   "que te añadió como comensal.")
+    for i, amigo in enumerate(con):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.caption(f"Con {amigos.quien(amigos_ok[amigo])}")
+            quitar = st.button("Quitar", type="tertiary", key=f"comensal_quitar_{id_restaurante}_{i}",
+                               help="Solo si aún no ha puesto su propia nota")
+        if quitar:
+            try:
+                BD.quitar_comensal(usuario, id_restaurante, amigo)
+            except bd.ErrorSupabase:
+                st.error("No se ha podido quitar ahora mismo.")
+                return
+            amigos.limpiar_cache()
+            _recargar_ventana()
+    if not st.session_state.get(f"comensales_{id_restaurante}"):
+        return
+    opciones = [a for a in amigos_ok if a not in con]
+    if not opciones:
+        st.caption("Añade amigos en **Buscar → Personas** para apuntar con quién fuiste." if not amigos_ok
+                   else "Ya has añadido a todos tus amigos.")
+        return
+    elegidos = st.multiselect("¿Con quién fuiste?", range(len(opciones)), key=f"comensales_elegidos_{id_restaurante}",
+                              format_func=lambda i: amigos.etiqueta_amigo(amigos_ok[opciones[i]]),
+                              placeholder="Elige a tus amigos")
+    if not st.button("Añadir", type="primary", icon=":material/group_add:", disabled=not elegidos,
+                     key=f"comensales_guardar_{id_restaurante}"):
+        return
+    try:
+        if visita is None:   # si fuiste con alguien, es que has ido
+            BD.registrar_visita(usuario, id_restaurante, nota, comentario)
+            quitar_de_la_eatlist(id_restaurante)
+        BD.anadir_comensales(usuario, id_restaurante, [opciones[i] for i in elegidos])
+    except ValueError as e:
+        st.error(str(e))
+        return
+    except bd.ErrorSupabase:
+        st.error("No se ha podido guardar ahora mismo (¿falta ejecutar supabase/011_comensales.sql?).")
+        return
+    st.session_state.pop(f"comensales_{id_restaurante}", None)
+    amigos.limpiar_cache()
+    st.toast("Les sale también en su perfil.", icon=":material/group:")
+    _recargar_ventana()
 
 
 def mostrar_ficha(fila, df_platos, plato=None, modo_transporte=None):

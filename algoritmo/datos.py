@@ -502,6 +502,35 @@ class Supabase:
                    json={"usuario": usuario, "restaurante_id": int(restaurante_id), "nota": validar_nota(nota),
                          "comentario": validar_comentario(comentario), "creado_en": _ahora()})
 
+    # ---------------- "He ido con..." (comensales; supabase/011_comensales.sql) ----------------
+
+    def anadir_comensales(self, usuario, restaurante_id, amigos):
+        """A cada amigo se le apunta que ha ido a ese restaurante (sin nota: la pone él), marcado como añadido por
+        `usuario`. Si ya lo tenía, no se toca. Quien llama comprueba que son amigos suyos."""
+        amigos = sorted(set(amigos) - {usuario})
+        if amigos:
+            self._rest("POST", "visitas", params={"on_conflict": "usuario,restaurante_id"},
+                       prefer="resolution=ignore-duplicates",
+                       json=[{"usuario": a, "restaurante_id": int(restaurante_id), "anadido_por": usuario,
+                              "creado_en": _ahora()} for a in amigos])
+
+    def comensales_de(self, usuario, restaurante_id):
+        """Los amigos (correos) que el usuario ha apuntado como comensales en ese restaurante."""
+        return [f["usuario"] for f in self._rest("GET", "visitas", params={
+            "anadido_por": f"eq.{usuario}", "restaurante_id": f"eq.{int(restaurante_id)}", "select": "usuario"})]
+
+    def anadido_por(self, usuario, restaurante_id):
+        """Quién apuntó al usuario como comensal en ese restaurante (correo), o None."""
+        filas = self._rest("GET", "visitas", params={"usuario": f"eq.{usuario}", "restaurante_id": f"eq.{int(restaurante_id)}",
+                                                     "anadido_por": "not.is.null", "select": "anadido_por"})
+        return filas[0]["anadido_por"] if filas else None
+
+    def quitar_comensal(self, usuario, restaurante_id, amigo):
+        """Deshace un comensal añadido por error: solo si su visita la creó el usuario y el amigo aún no la ha
+        valorado (sin nota ni comentario); si ya la ha hecho suya, no se toca."""
+        self._rest("DELETE", "visitas", params={"usuario": f"eq.{amigo}", "restaurante_id": f"eq.{int(restaurante_id)}",
+                                                "anadido_por": f"eq.{usuario}", "nota": "is.null", "comentario": "is.null"})
+
     def quitar_visita(self, usuario, restaurante_id):
         self._rest("DELETE", "visitas", params={"usuario": f"eq.{usuario}",
                                                 "restaurante_id": f"eq.{int(restaurante_id)}"})

@@ -224,6 +224,12 @@ def multiusuario(monkeypatch):
     monkeypatch.setattr(datos.Supabase, "eatlist_de", lambda self, u: estado["eatlist"])
     monkeypatch.setattr(datos.Supabase, "guardar_eatlist", lambda self, u, ids: estado["eatlists_guardadas"].append(list(ids)))
     monkeypatch.setattr(datos.Supabase, "guardar_foto", lambda self, u, n, f: estado["fotos_guardadas"].append((u, f)))
+    # "He ido con...": nadie añadido salvo que el test diga otra cosa
+    estado.update(comensales=[], anadido_por=None, comensales_anadidos=[])
+    monkeypatch.setattr(datos.Supabase, "comensales_de", lambda self, u, i: estado["comensales"])
+    monkeypatch.setattr(datos.Supabase, "anadido_por", lambda self, u, i: estado["anadido_por"])
+    monkeypatch.setattr(datos.Supabase, "anadir_comensales", lambda self, u, i, amigos:
+                        estado["comensales_anadidos"].append((u, i, list(amigos))))
     st.cache_data.clear()
     yield estado
     st.cache_data.clear()
@@ -1273,3 +1279,53 @@ def test_un_sitio_que_ha_cerrado_lo_dice(explorar, monkeypatch):
     at.session_state["lugar_abrir"] = cerrado
     at = correr(at, seccion="explorar")
     assert any("ha cerrado" in w.value for w in at.warning) and "analizar_lugar" not in [b.key for b in at.button]
+
+
+
+# ---------------------------------------------------------------- "He ido con..." (comensales)
+
+def test_anadir_y_quitar_comensal_en_la_base_de_datos(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
+    bd_.anadir_comensales("ana@x.com", 7, ["luis@x.com", "luis@x.com", "ana@x.com"])   # sin repetir ni a ti
+    metodo, tabla, params, cuerpo = llamadas[0]
+    assert (metodo, tabla) == ("POST", "visitas") and params == {"on_conflict": "usuario,restaurante_id"}
+    assert cuerpo == [{"usuario": "luis@x.com", "restaurante_id": 7, "anadido_por": "ana@x.com",
+                       "creado_en": cuerpo[0]["creado_en"]}]                     # sin nota: la pone él
+    bd_.quitar_comensal("ana@x.com", 7, "luis@x.com")
+    assert llamadas[1][2] == {"usuario": "eq.luis@x.com", "restaurante_id": "eq.7", "anadido_por": "eq.ana@x.com",
+                              "nota": "is.null", "comentario": "is.null"}       # si ya la ha valorado, no se toca
+    llamadas.clear()
+    bd_.anadir_comensales("ana@x.com", 7, [])
+    assert llamadas == []
+
+
+LUIS = {"usuario": "luis@x.com", "nombre": "Luis", "alias": "luis", "estado": "aceptada", "enviada": False, "foto": None}
+
+
+def test_he_ido_con_un_amigo(multiusuario):
+    multiusuario["relaciones"] = [LUIS, {**LUIS, "usuario": "eva@x.com", "alias": "eva", "estado": "pendiente"}]
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.run()
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"comensal_abrir_{id_restaurante}").click().run()      # a la derecha de "He ido"
+    elegir = at.multiselect(key=f"comensales_elegidos_{id_restaurante}")
+    assert elegir.options == ["Luis · @luis"]                              # solo amigos aceptados y sin correos
+    at.session_state["ficha_abrir"] = id_restaurante
+    elegir.select(0).run()
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"comensales_guardar_{id_restaurante}").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert multiusuario["comensales_anadidos"] == [("ana@ejemplo.com", id_restaurante, ["luis@x.com"])]
+    assert [v[:2] for v in multiusuario["visitas_guardadas"]] == [("ana@ejemplo.com", id_restaurante)]   # y tú has ido
+
+
+def test_al_amigo_le_dice_quien_le_anadio(multiusuario):
+    multiusuario.update(relaciones=[LUIS], anadido_por="luis@x.com")
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.run()
+    assert any("@luis" in c.value and "comensal" in c.value for c in at.caption)
+    assert "luis@x.com" not in str(at)                                     # el correo no sale
