@@ -62,14 +62,14 @@ from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS,
                     ORDEN_RESENAS, VOTOS_MIN_SECUNDARIA, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, sugerencia_plato, tiene_categorias_jev, insights_perfil,
                     insertar_en_orden, vista_previa_posicion)
-from servicios import avisar_procesador, geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
+from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
 import acceso
 import amigos
 import datos as bd
 import explorar
 from cuentas import Cuentas
 from logica import hace_cuanto
-from sesion import config_github, config_multiusuario, datos_google, usuario_actual
+from sesion import config_multiusuario, datos_google, usuario_actual
 
 for _nombre in _MODULOS_PROPIOS:   # se apunta qué versión de cada archivo está cargada (ver arriba)
     if _nombre in sys.modules:
@@ -1239,7 +1239,6 @@ def pedir_sincronizar_lista(usuario, enlace):
     except bd.ErrorSupabase:
         return "No se ha podido guardar ahora mismo. Inténtalo en un momento."
     cargar_datos_usuario.clear()
-    avisar_procesador(config_github())   # el procesador en la nube la descarga ya (si no, pasa solo cada 3 h)
     return None
 
 

@@ -1209,29 +1209,6 @@ def test_lugares_a_verificar_y_marcar(monkeypatch):
     assert set(llamadas[2][3]) == {"verificado_en"}                    # abierto: solo la fecha
 
 
-def test_avisar_procesador(monkeypatch):
-    import servicios
-    llamadas = []
-    monkeypatch.setattr(servicios.requests, "post", lambda url, **kw: llamadas.append((url, kw)) or RespuestaFalsa(None, 204))
-    assert servicios.avisar_procesador(None) is False and llamadas == []   # sin [github]: no se avisa
-    assert servicios.avisar_procesador({"repo": "yo/repo", "token": "t"}) is True
-    url, kw = llamadas[0]
-    assert url == "https://api.github.com/repos/yo/repo/dispatches" and kw["json"] == {"event_type": "procesar"}
-    assert kw["headers"]["Authorization"] == "Bearer t"
-
-
-def test_analizar_avisa_al_procesador_en_la_nube(explorar, monkeypatch):
-    import servicios
-    avisos = []
-    monkeypatch.setattr(sesion, "config_github", lambda: {"repo": "yo/repo", "token": "t"})
-    monkeypatch.setattr(servicios, "avisar_procesador", lambda config: avisos.append(config) or True)
-    at = AppTest.from_file(APP, default_timeout=180)
-    at.session_state["lugar_abrir"] = explorar["lugares"][0]
-    at = correr(at, seccion="explorar")
-    at.button(key="analizar_lugar").click().run()
-    assert explorar["pedidos"] == [("ana@ejemplo.com", "l1")] and avisos == [{"repo": "yo/repo", "token": "t"}]
-
-
 def test_avisar_de_que_ha_cerrado_lo_quita(explorar, monkeypatch):
     cerrados = []
     monkeypatch.setattr(datos.Supabase, "avisar_cerrado", lambda self, i: cerrados.append(i))
