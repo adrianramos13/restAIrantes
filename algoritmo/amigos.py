@@ -36,6 +36,12 @@ def quien(relacion):
     return f"**{nombre}** · @{relacion['alias']}" if relacion.get("alias") else f"**{nombre}**"
 
 
+def etiqueta_amigo(relacion):
+    """Texto plano (para un desplegable): "Nombre · @usuario"."""
+    nombre = relacion.get("nombre") or relacion.get("alias") or "Alguien"
+    return f"{nombre} · @{relacion['alias']}" if relacion.get("alias") else nombre
+
+
 def _nombre(p):
     return p.get("nombre") or p.get("alias") or "Alguien"
 
