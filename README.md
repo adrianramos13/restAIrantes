@@ -335,7 +335,7 @@ flowchart LR
 >
 > **Y para la Eatlist** (los restaurantes a los que quieres ir, en tu orden), ejecuta `supabase/008_eatlist.sql`.
 >
-> **Y para «He ido con…» (comensales)**, ejecuta `supabase/011_comensales.sql`.
+> **Y para «Con quién fuiste» (comensales)**, ejecuta `supabase/011_comensales.sql` (invitaciones; se puede volver a ejecutar).
 >
 > **Y para Explorar** (cualquier restaurante, aunque no esté en ninguna lista), ejecuta `supabase/009_lugares.sql` y después importa una zona (gratis: datos abiertos de [Overture Maps](https://overturemaps.org), sin clave; necesita `pip install duckdb`):
 >
@@ -373,8 +373,8 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
 - **Quitar de mi lista** (en la ficha de los restaurantes de tu lista, con confirmación): solo deja de estar en *tu* lista; el restaurante no se borra de la app (sigue en las listas de los demás, en «Todos los restaurantes» y en tus valoraciones). Si vuelves a sincronizar y sigue en tu lista de Google Maps, volverá.
 - **Amigos**: eliges un **@usuario** (3-20 letras sin tildes, números, `_` o `.`) y buscas a otros en **Buscar → Personas** por su @usuario o nombre. La amistad es con **solicitud**: el otro la acepta o la rechaza; las pendientes salen en una tarjeta de color en el listado de amigos (al tocar «amigos» en la cabecera del Perfil) y con un globito con el número sobre tu foto en la barra de abajo. Al tocar «Ver» en un amigo se abre su **mini perfil**: % de gustos en común, nota media, a cuántos sitios ha ido, cocina favorita, sus últimas valoraciones y los restaurantes en común. Los correos no se enseñan nunca.
   - *Afinidad*: lo parecidas que son las cocinas de vuestras listas (60 %) y, si habéis valorado al menos 2 sitios en común, lo parecidas que son vuestras notas (40 %).
-- **Añadir comensal** (a la derecha de *He ido*): eliges con qué amigos fuiste y a cada uno le sale ese restaurante en su Diario y en su perfil, sin nota (la pone él; si ya lo tenía valorado, no se toca). Si aún no habías marcado *He ido*, se marca. En la ficha salen los comensales (*Con @luis*, con *Quitar* mientras él no lo haya valorado) y, a tu amigo, quién le añadió. Solo amigos aceptados.
-- **He ido** (arriba en la ficha de cualquier restaurante): nota opcional de 0,5 a 5 estrellas (medias estrellas) y «lo que más te gustó». Una valoración por restaurante: se puede cambiar o quitar, y el recuadro sale en verde si ya has ido. Lo ven tus amigos en su Inicio; en las listas, los sitios a los que has ido llevan «✓ Has ido», y en tu Perfil está **Los restaurantes a los que has ido**.
+- **Ya he ido** (debajo de la foto de cualquier restaurante; si ya has ido, en verde con tu nota y el día: *Has ido · ★ 4,5 · 12/10/2026*): abre encima de la ficha una ventanita con las estrellas (de 0,5 a 5, medias estrellas), **cuándo fuiste** (hoy por defecto; es la fecha que sale en tu Diario y en el Inicio de tus amigos), lo que más te gustó y **con quién fuiste**. Una valoración por restaurante: se puede cambiar o quitar (*Ya no he ido*). Lo ven tus amigos en su Inicio; en las listas, los sitios a los que has ido llevan «✓ Has ido».
+- **Con quién fuiste**: a cada amigo que eliges le llega en su Inicio *«Ana dice que fuisteis juntos a Casa Pepe el 12/10. ¿Es correcto?»*. Hasta que no lo confirma no le sale nada. Si dice **Sí**, se le abre la ventanita con esa fecha para poner **sus** estrellas y **su** comentario, y le queda una única entrada suya (si ya tenía ese restaurante valorado, se actualiza esa misma). Si dice **No**, desaparece. Tú ves a cada uno como *pendiente* (y puedes retirarlo) o como confirmado. Solo amigos aceptados; los correos nunca se ven.
 
 ### Día a día
   

@@ -16,8 +16,9 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
 }
 .st-key-boton_buscar button { min-height: 52px; font-size: 1.05rem; font-weight: 600; }
 
-/* Ficha: el recuadro de la valoración se pone verde si ya has ido (contenedor con key "visitado_" + id del restaurante). */
-[class*="st-key-visitado_"] { background: rgba(22, 163, 74, 0.10); border: 1px solid #16A34A !important; border-radius: 12px; }
+/* Ficha: el botón "Ya he ido" se pone verde si ya has ido (contenedor con key "visitado_" + id del restaurante). */
+[class*="st-key-visitado_"] button { background: rgba(22, 163, 74, 0.10); border-color: #16A34A; color: #15803D; }
+@media (prefers-color-scheme: dark) { [class*="st-key-visitado_"] button { color: #4ADE80; } }
 
 /* Perfil, "Tus estadísticas": el nº de restaurantes es un botón (lleva a Mi lista) con pinta de cifra grande. */
 /* Como st.metric: la palabra pequeña arriba y la cifra grande debajo (column-reverse: en el texto va primero
@@ -61,14 +62,14 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
 .insight-texto { font-size: 0.85rem; opacity: 0.75; line-height: 1.3; }
 
 /* Ficha, "Tu eatlist": ventanita flotante encima de la ficha, con el resto oscurecido (sombra enorme) */
-.st-key-capa_eatlist {
+.st-key-capa_eatlist, .st-key-capa_visita {
   position: fixed; z-index: 1000; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: min(92vw, 420px); max-height: 85vh; overflow-y: auto; padding: 8px 20px 20px; border-radius: 16px;
   background: #FBF7F2; border: 1px solid rgba(0, 0, 0, 0.08);   /* aquí no llegan las variables --st-* del tema */
   box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45), 0 12px 32px rgba(0, 0, 0, 0.3);
 }
 @media (prefers-color-scheme: dark) {
-  .st-key-capa_eatlist { background: #16130F; border-color: rgba(255, 255, 255, 0.12); }
+  .st-key-capa_eatlist, .st-key-capa_visita { background: #16130F; border-color: rgba(255, 255, 255, 0.12); }
 }
 
 /* Ficha, eatlist: vista previa sutil de cómo quedaría la lista alrededor del puesto elegido */

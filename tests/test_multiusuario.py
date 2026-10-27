@@ -215,8 +215,11 @@ def multiusuario(monkeypatch):
     estado.update(relaciones=[], visitas=[], visitas_guardadas=[], confirmacion=True)
     monkeypatch.setattr(datos.Supabase, "relaciones_de", lambda self, u: estado["relaciones"])
     monkeypatch.setattr(datos.Supabase, "visitas_de", lambda self, usuarios, limite=10, desde=None: estado["visitas"])
-    monkeypatch.setattr(datos.Supabase, "registrar_visita", lambda self, u, i, nota=None, comentario=None:
-                        estado["visitas_guardadas"].append((u, i, nota, comentario)))
+    def registrar_visita(self, u, i, nota=None, comentario=None, fecha=None, anadido_por=None):
+        estado["visitas_guardadas"].append((u, i, nota, comentario))
+        estado["fechas_visita"].append(fecha)
+    estado["fechas_visita"] = []
+    monkeypatch.setattr(datos.Supabase, "registrar_visita", registrar_visita)
     monkeypatch.setattr(cuentas.Cuentas, "confirmacion_obligatoria", lambda self: estado["confirmacion"])
     estado["fotos_guardadas"] = []
     # Eatlist: filas como las devuelve Supabase (con el restaurante embebido) y lo que se guarda.
@@ -224,12 +227,19 @@ def multiusuario(monkeypatch):
     monkeypatch.setattr(datos.Supabase, "eatlist_de", lambda self, u: estado["eatlist"])
     monkeypatch.setattr(datos.Supabase, "guardar_eatlist", lambda self, u, ids: estado["eatlists_guardadas"].append(list(ids)))
     monkeypatch.setattr(datos.Supabase, "guardar_foto", lambda self, u, n, f: estado["fotos_guardadas"].append((u, f)))
-    # "He ido con...": nadie añadido salvo que el test diga otra cosa
-    estado.update(comensales=[], anadido_por=None, comensales_anadidos=[])
+    # "He ido con...": sin invitaciones salvo que el test diga otra cosa
+    estado.update(comensales=[], anadido_por=None, invitados=[], invitaciones=[], invitaciones_enviadas=[],
+                  invitaciones_borradas=[], invitaciones_aceptadas=[])
     monkeypatch.setattr(datos.Supabase, "comensales_de", lambda self, u, i: estado["comensales"])
     monkeypatch.setattr(datos.Supabase, "anadido_por", lambda self, u, i: estado["anadido_por"])
-    monkeypatch.setattr(datos.Supabase, "anadir_comensales", lambda self, u, i, amigos:
-                        estado["comensales_anadidos"].append((u, i, list(amigos))))
+    monkeypatch.setattr(datos.Supabase, "invitados_de", lambda self, u, i: estado["invitados"])
+    monkeypatch.setattr(datos.Supabase, "invitaciones_para", lambda self, u: estado["invitaciones"])
+    monkeypatch.setattr(datos.Supabase, "invitar_comensales", lambda self, u, i, amigos, fecha=None:
+                        estado["invitaciones_enviadas"].append((u, i, list(amigos), fecha)))
+    monkeypatch.setattr(datos.Supabase, "borrar_invitacion", lambda self, de, para, i:
+                        estado["invitaciones_borradas"].append((de, para, i)))
+    monkeypatch.setattr(datos.Supabase, "aceptar_invitacion", lambda self, u, de, i, nota=None, comentario=None, fecha=None:
+                        estado["invitaciones_aceptadas"].append((u, de, i, nota, comentario, fecha)))
     st.cache_data.clear()
     yield estado
     st.cache_data.clear()
@@ -494,6 +504,14 @@ def test_registrar_visita_actualiza_la_que_hubiera(monkeypatch):
     assert llamadas[-1][:3] == ("DELETE", "visitas", {"usuario": "eq.ana@x.com", "restaurante_id": "eq.7"})
 
 
+def test_fecha_de_la_visita():
+    from datetime import date, timedelta
+    assert datos.momento_visita(date(2026, 10, 12)) == "2026-10-12T14:00:00+02:00"   # ese día, hora de Madrid
+    with pytest.raises(ValueError):
+        datos.momento_visita(date.today() + timedelta(days=2))                        # nunca en el futuro
+    assert datos.momento_visita(None)[:10] == datos._ahora()[:10]                   # sin decir: ahora
+
+
 @pytest.mark.parametrize("nota", [0, 0.3, 4.25, 5.5, 6, True, "4"])
 def test_nota_no_valida(nota):
     with pytest.raises(ValueError):
@@ -648,16 +666,26 @@ def test_perfil_solicitudes_y_busqueda(multiusuario, monkeypatch):
     assert solicitudes == [("ana@ejemplo.com", "eva@x.com")]
 
 
+def abrir_ventana_he_ido(at, id_restaurante):
+    """Toca "Ya he ido" (debajo de la foto) para abrir la ventanita. (AppTest recarga todo en cada paso: se
+    vuelve a pedir abrir la ficha antes de cada clic, como hace Streamlit con la ventana abierta.)"""
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"he_ido_{id_restaurante}").click().run()
+    at.session_state["ficha_abrir"] = id_restaurante
+    return at
+
+
 def test_he_ido_desde_la_ficha(multiusuario):
     at = correr(seccion="inicio")
     _, id_restaurante, _ = at.session_state["sugerencia"]
     at.button(key="ver_ficha_sugerida").click().run()
-    # En Streamlit real, el botón de la ventana solo recarga la ventana; AppTest recarga todo el script,
-    # así que se vuelve a pedir abrir la ficha antes del clic.
-    at.session_state["ficha_abrir"] = id_restaurante
+    assert at.button(key=f"he_ido_{id_restaurante}").label == "Ya he ido"   # debajo de la foto
+    assert not [t for t in at.text_area if t.key == f"comentario_visita_{id_restaurante}"]   # aún cerrada
+    abrir_ventana_he_ido(at, id_restaurante)
+    assert at.date_input(key=f"fecha_visita_{id_restaurante}")              # estrellas, fecha, comentario...
     at.text_area(key=f"comentario_visita_{id_restaurante}").input("Las croquetas")
     at.session_state["ficha_abrir"] = id_restaurante
-    at.button(key=f"he_ido_{id_restaurante}").click().run()
+    at.button(key=f"visita_guardar_{id_restaurante}").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert multiusuario["visitas_guardadas"] == [("ana@ejemplo.com", id_restaurante, None, "Las croquetas")]
 
@@ -676,9 +704,10 @@ def test_ficha_en_verde_si_ya_has_ido(multiusuario):
     at.session_state["ficha_abrir"] = id_restaurante
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    assert not any("Has ido" in m.value or "Puntúalo" in m.value for m in at.markdown)   # sin texto arriba
+    assert at.button(key=f"he_ido_{id_restaurante}").label == "Has ido · ★ 4,5 · 12/10/2026"
+    abrir_ventana_he_ido(at, id_restaurante)
     assert at.text_area(key=f"comentario_visita_{id_restaurante}").value == "Las bravas"
-    assert at.button(key=f"he_ido_{id_restaurante}").label == "Guardar"
+    assert str(at.date_input(key=f"fecha_visita_{id_restaurante}").value) == "2026-10-12"
 
 
 def test_visitas_de_solo_desde_una_fecha(monkeypatch):
@@ -1035,8 +1064,8 @@ def test_he_ido_lo_quita_de_la_eatlist(multiusuario):
     st.cache_data.clear()
     at.session_state["ficha_abrir"] = id_restaurante
     at.run()
-    at.session_state["ficha_abrir"] = id_restaurante
-    at.button(key=f"he_ido_{id_restaurante}").click().run()
+    abrir_ventana_he_ido(at, id_restaurante)
+    at.button(key=f"visita_guardar_{id_restaurante}").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert multiusuario["eatlists_guardadas"] == [[901, 902, 903]]      # ya has ido: fuera de la eatlist
 
@@ -1284,48 +1313,103 @@ def test_un_sitio_que_ha_cerrado_lo_dice(explorar, monkeypatch):
 
 # ---------------------------------------------------------------- "He ido con..." (comensales)
 
-def test_anadir_y_quitar_comensal_en_la_base_de_datos(monkeypatch):
+def test_invitaciones_de_comensal_en_la_base_de_datos(monkeypatch):
+    from datetime import date
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
-    bd_.anadir_comensales("ana@x.com", 7, ["luis@x.com", "luis@x.com", "ana@x.com"])   # sin repetir ni a ti
+    bd_.invitar_comensales("ana@x.com", 7, ["luis@x.com", "luis@x.com", "ana@x.com"], fecha=date(2026, 10, 12))
     metodo, tabla, params, cuerpo = llamadas[0]
-    assert (metodo, tabla) == ("POST", "visitas") and params == {"on_conflict": "usuario,restaurante_id"}
-    assert cuerpo == [{"usuario": "luis@x.com", "restaurante_id": 7, "anadido_por": "ana@x.com",
-                       "creado_en": cuerpo[0]["creado_en"]}]                     # sin nota: la pone él
-    bd_.quitar_comensal("ana@x.com", 7, "luis@x.com")
-    assert llamadas[1][2] == {"usuario": "eq.luis@x.com", "restaurante_id": "eq.7", "anadido_por": "eq.ana@x.com",
-                              "nota": "is.null", "comentario": "is.null"}       # si ya la ha valorado, no se toca
+    assert (metodo, tabla) == ("POST", "invitaciones_visita")              # a él aún no le sale nada
+    assert cuerpo == [{"de": "ana@x.com", "para": "luis@x.com", "restaurante_id": 7, "fecha": "2026-10-12"}]
     llamadas.clear()
-    bd_.anadir_comensales("ana@x.com", 7, [])
-    assert llamadas == []
+    bd_.aceptar_invitacion("luis@x.com", "ana@x.com", 7, 4.5, "Rico", fecha=date(2026, 10, 12))
+    (m1, t1, p1, visita), (m2, t2, p2, _) = llamadas
+    assert (m1, t1, p1) == ("POST", "visitas", {"on_conflict": "usuario,restaurante_id"})   # su única entrada
+    assert {k: visita[k] for k in ("usuario", "nota", "comentario", "anadido_por")} == {
+        "usuario": "luis@x.com", "nota": 4.5, "comentario": "Rico", "anadido_por": "ana@x.com"}
+    assert (m2, t2, p2) == ("DELETE", "invitaciones_visita", {"de": "eq.ana@x.com", "para": "eq.luis@x.com",
+                                                              "restaurante_id": "eq.7"})
+    llamadas.clear()
+    bd_.registrar_visita("ana@x.com", 7)
+    assert "anadido_por" not in llamadas[0][3]                              # funciona sin 011_comensales.sql
 
 
-LUIS = {"usuario": "luis@x.com", "nombre": "Luis", "alias": "luis", "estado": "aceptada", "enviada": False, "foto": None}
-
-
-def test_he_ido_con_un_amigo(multiusuario):
+def test_he_ido_con_un_amigo_le_pregunta_a_el(multiusuario):
     multiusuario["relaciones"] = [LUIS, {**LUIS, "usuario": "eva@x.com", "alias": "eva", "estado": "pendiente"}]
     at = correr(seccion="inicio")
     _, id_restaurante, _ = at.session_state["sugerencia"]
     at.session_state["ficha_abrir"] = id_restaurante
     at.run()
-    at.session_state["ficha_abrir"] = id_restaurante
-    at.button(key=f"comensal_abrir_{id_restaurante}").click().run()      # a la derecha de "He ido"
+    abrir_ventana_he_ido(at, id_restaurante)
     elegir = at.multiselect(key=f"comensales_elegidos_{id_restaurante}")
     assert elegir.options == ["Luis · @luis"]                              # solo amigos aceptados y sin correos
     at.session_state["ficha_abrir"] = id_restaurante
     elegir.select(0).run()
     at.session_state["ficha_abrir"] = id_restaurante
-    at.button(key=f"comensales_guardar_{id_restaurante}").click().run()
+    at.button(key=f"visita_guardar_{id_restaurante}").click().run()
     assert not at.exception, [e.value for e in at.exception]
-    assert multiusuario["comensales_anadidos"] == [("ana@ejemplo.com", id_restaurante, ["luis@x.com"])]
-    assert [v[:2] for v in multiusuario["visitas_guardadas"]] == [("ana@ejemplo.com", id_restaurante)]   # y tú has ido
+    assert [v[:2] for v in multiusuario["visitas_guardadas"]] == [("ana@ejemplo.com", id_restaurante)]
+    assert [e[:3] for e in multiusuario["invitaciones_enviadas"]] == [("ana@ejemplo.com", id_restaurante, ["luis@x.com"])]
 
 
-def test_al_amigo_le_dice_quien_le_anadio(multiusuario):
+def test_invitacion_pendiente_se_ve_y_se_puede_quitar(multiusuario):
+    multiusuario.update(relaciones=[LUIS], invitados=["luis@x.com"])
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.run()
+    abrir_ventana_he_ido(at, id_restaurante)
+    assert any("@luis" in c.value and "pendiente" in c.value for c in at.caption)
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"comensal_quitar_{id_restaurante}_0").click().run()
+    assert multiusuario["invitaciones_borradas"] == [("ana@ejemplo.com", "luis@x.com", id_restaurante)]
+
+
+def invitacion_de_luis(multiusuario, monkeypatch, id_restaurante):
+    maestro = pd.read_excel(EXCEL, sheet_name="Restaurantes")
+    monkeypatch.setattr(datos.Supabase, "restaurantes_por_ids", lambda self, ids: (
+        maestro[maestro["ID"].isin(ids)].copy(), pd.DataFrame(columns=datos.COLUMNAS_PLATOS)))
+    multiusuario.update(relaciones=[LUIS], invitaciones=[{
+        "de": "luis@x.com", "restaurante_id": id_restaurante, "fecha": "2026-10-12",
+        "restaurantes": {"id": id_restaurante, "datos": {"Nombre": "Casa Pepe"}}}])
+    st.cache_data.clear()   # la lista de amigos ya estaba en caché (vacía)
+
+
+def test_aceptar_invitacion_pone_tus_estrellas_y_comentario(multiusuario, monkeypatch):
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    invitacion_de_luis(multiusuario, monkeypatch, id_restaurante)
+    at.run()
+    assert any("dice que fuisteis juntos a **Casa Pepe** el 12/10/2026" in m.value for m in at.markdown)
+    assert multiusuario["visitas_guardadas"] == []                          # hasta que no aceptas, nada
+    at.button(key="invitacion_si_0").click().run()                          # abre la ficha con la ventanita
+    assert not at.exception, [e.value for e in at.exception]
+    assert str(at.date_input(key=f"fecha_visita_{id_restaurante}").value) == "2026-10-12"
+    at.session_state["ficha_invitacion"] = id_restaurante                   # (AppTest: se vuelve a abrir)
+    at.text_area(key=f"comentario_visita_{id_restaurante}").input("Muy rico")
+    at.session_state["ficha_invitacion"] = id_restaurante
+    at.button(key=f"visita_guardar_{id_restaurante}").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    (u, de, i, nota, comentario, fecha), = multiusuario["invitaciones_aceptadas"]
+    assert (u, de, i, comentario, str(fecha)) == ("ana@ejemplo.com", "luis@x.com", id_restaurante, "Muy rico", "2026-10-12")
+    assert multiusuario["visitas_guardadas"] == []                          # una sola entrada: la de la invitación
+
+
+def test_rechazar_invitacion(multiusuario, monkeypatch):
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    invitacion_de_luis(multiusuario, monkeypatch, id_restaurante)
+    at.run()
+    at.button(key="invitacion_no_0").click().run()
+    assert multiusuario["invitaciones_borradas"] == [("luis@x.com", "ana@ejemplo.com", id_restaurante)]
+    assert multiusuario["visitas_guardadas"] == [] and multiusuario["invitaciones_aceptadas"] == []
+
+
+def test_al_amigo_le_dice_con_quien_fue(multiusuario):
     multiusuario.update(relaciones=[LUIS], anadido_por="luis@x.com")
     at = correr(seccion="inicio")
     _, id_restaurante, _ = at.session_state["sugerencia"]
     at.session_state["ficha_abrir"] = id_restaurante
     at.run()
-    assert any("@luis" in c.value and "comensal" in c.value for c in at.caption)
+    abrir_ventana_he_ido(at, id_restaurante)
+    assert any("Fuiste con" in c.value and "@luis" in c.value for c in at.caption)
     assert "luis@x.com" not in str(at)                                     # el correo no sale
