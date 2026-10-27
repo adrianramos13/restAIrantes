@@ -25,10 +25,13 @@ REQUISITOS:
 
 import argparse
 import asyncio
+import json
 import math
 import os
+import random
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -282,6 +285,68 @@ def procesar_explorar(bd):
         procesar_lugares(bd, lugares)
 
 
+# ----------------------------- Análisis por adelantado (--lote) -----------------------------
+
+GASTO_JEV = Path(__file__).resolve().parent.parent / "origen" / "gasto_jev.json"   # lo gastado en el lote (en .gitignore)
+POR_TANDA = 40                 # sitios seguidos antes de descansar
+PAUSA_MIN = 12                 # descanso entre tandas, para no parecer un robot ante Google
+ESPERA_ENTRE_S = (5, 20)       # espera al azar entre uno y otro
+MAX_ERRORES_SEGUIDOS = 5       # más seguidos: Google pone pegas o se ha perdido la sesión -> se para el lote
+
+
+def gastado_en_lote():
+    try:
+        return float(json.loads(GASTO_JEV.read_text(encoding="utf-8"))["usd"])
+    except (OSError, ValueError, KeyError):
+        return 0.0
+
+
+class Lote:
+    """Analiza por adelantado, de uno en uno, los sitios de Descubrir mejor valorados en Google (su ficha rápida),
+    para que su ficha completa esté ya cuando alguien los abra. Con tope de gasto en Jev (se acumula entre
+    ejecuciones), tandas con descanso y freno si empiezan a fallar. Entre uno y otro, el bucle de --vigilar atiende
+    antes lo que piden los usuarios."""
+
+    def __init__(self, tope_usd, por_tanda=POR_TANDA, pausa_min=PAUSA_MIN):
+        self.tope_usd, self.por_tanda, self.pausa_min = tope_usd, por_tanda, pausa_min
+        self.en_tanda, self.pausa_hasta, self.errores_seguidos, self.parado = 0, 0.0, 0, False
+
+    def toca(self):
+        return not self.parado and time.monotonic() >= self.pausa_hasta and gastado_en_lote() < self.tope_usd
+
+    def uno(self, bd):
+        """Analiza el siguiente. Devuelve si ha hecho algo (si no, toca esperar: descanso, tope o nada que hacer)."""
+        if not self.toca():
+            return False
+        siguientes = bd.lugares_para_analizar(1)
+        if not siguientes:
+            print("Por adelantado: no queda ninguno con ficha rápida por analizar.")
+            self.parado = True
+            return False
+        import clasificar_restaurantes_jev as clasif   # para contar los tokens de Jev
+        lugar, antes = siguientes[0], clasif._tokens_entrada
+        procesar_lugares(bd, siguientes)
+        gasto = gastado_en_lote() + (clasif._tokens_entrada - antes) / 1_000_000 * clasif.PRECIO_USD_POR_MILLON_TOKENS
+        GASTO_JEV.parent.mkdir(parents=True, exist_ok=True)
+        GASTO_JEV.write_text(json.dumps({"usd": round(gasto, 6)}), encoding="utf-8")
+        estado = (bd.lugar_por_id(lugar["id"]) or {}).get("estado_analisis")
+        self.errores_seguidos = self.errores_seguidos + 1 if estado == "error" else 0
+        print(f"Por adelantado: {lugar['nombre']} -> {estado} · gastado {gasto:.2f} de {self.tope_usd:g} $")
+        if self.errores_seguidos >= MAX_ERRORES_SEGUIDOS:
+            print(f"Por adelantado: PARADO tras {MAX_ERRORES_SEGUIDOS} errores seguidos (¿Google pone pegas o se ha "
+                  "perdido la sesión?). Revisa la sesión y reinicia la tarea.")
+            self.parado = True
+        elif gasto >= self.tope_usd:
+            print(f"Por adelantado: alcanzado el tope de {self.tope_usd:g} $ de Jev. Se para.")
+        self.en_tanda += 1
+        if self.en_tanda >= self.por_tanda:
+            self.en_tanda, self.pausa_hasta = 0, time.monotonic() + self.pausa_min * 60
+            print(f"Por adelantado: descanso de {self.pausa_min:g} min.")
+        else:
+            time.sleep(random.uniform(*ESPERA_ENTRE_S))
+        return True
+
+
 def main(argv=None):
     global PESTANAS
     parser = argparse.ArgumentParser(description="Procesa las listas pedidas desde la app.")
@@ -292,24 +357,32 @@ def main(argv=None):
                         help=f"restaurantes a la vez al sacar reseñas (por defecto {PESTANAS}; 1 si Google pone pegas)")
     parser.add_argument("--sin-ventana", action="store_true",
                         help="Chrome sin ventana (para la tarea de Windows); la sesión de Google tiene que estar ya iniciada")
+    parser.add_argument("--lote", action="store_true",
+                        help="con --vigilar: cuando no hay nada pedido, analiza por adelantado los mejor valorados")
+    parser.add_argument("--tope-usd", type=float, default=10, help="tope de gasto en Jev del --lote (por defecto 10 $)")
     args = parser.parse_args(argv)
     PESTANAS = max(1, args.pestanas)
     extraer_html.SIN_VENTANA = args.sin_ventana
 
     bd = cliente()
     if args.vigilar:
-        import time
         sys.stdout.reconfigure(line_buffering=True)   # que origen/procesador.log (la tarea de Windows) se vea al momento
         print(f"Vigilando lo pendiente cada {args.vigilar:g} min (Ctrl+C para parar)...")
+        lote = Lote(args.tope_usd) if args.lote else None
+        if lote:
+            print(f"Por adelantado: activado, con tope de {args.tope_usd:g} $ (gastado hasta ahora: {gastado_en_lote():.2f} $).")
         while True:
-            try:
+            hecho = False
+            try:   # lo que piden los usuarios va siempre antes que el análisis por adelantado
                 pendientes = bd.listas_pendientes()
                 if pendientes:
                     procesar_varias(bd, pendientes)
                 procesar_explorar(bd)
+                hecho = bool(lote) and lote.uno(bd)
             except Exception as e:   # p. ej. sin red un rato: se reintenta en la siguiente vuelta
                 print(f"ERROR (se reintenta en {args.vigilar:g} min): {str(e)[:300]}")
-            time.sleep(args.vigilar * 60)
+            if not hecho:
+                time.sleep(args.vigilar * 60)
     listas = bd.listas_con_enlace() if args.todas else bd.listas_pendientes()
     lugares = lugares_pendientes(bd)
     if listas:

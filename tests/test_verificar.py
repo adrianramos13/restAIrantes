@@ -34,14 +34,21 @@ def test_veredicto():
 
 class BDFalsa:
     def __init__(self, lugares):
-        self.pendientes, self.marcados = list(lugares), []
+        self.pendientes, self.marcados, self.fichas, self.fotos = list(lugares), [], {}, {}
 
     def lugares_a_verificar(self, limite):
         lote, self.pendientes = self.pendientes[:limite], self.pendientes[limite:]
         return lote
 
-    def marcar_verificado(self, lugar_id, cerrado=False):
+    def marcar_verificado(self, lugar_id, cerrado=False, ficha=None):
         self.marcados.append((lugar_id, cerrado))
+        self.fichas[lugar_id] = ficha
+
+    def con_ficha_rapida(self):
+        return True
+
+    def subir_foto(self, archivo, contenido):
+        self.fotos[archivo] = contenido
 
 
 def test_verificar_marca_todos_y_oculta_solo_los_cerrados(monkeypatch):
@@ -65,7 +72,7 @@ def test_verificar_marca_todos_y_oculta_solo_los_cerrados(monkeypatch):
             return False
 
     fichas = {"a": {"nombre_google": "Bar A", "estado": "Cerrado permanentemente"},
-              "b": {"nombre_google": "Bar B", "estado": ""}}
+              "b": {"nombre_google": "Bar B", "estado": "", "nota": 4.3, "cocina": "Taberna", "foto": "https://x/f=w100-h100"}}
 
     async def leer(page, lugar):
         if lugar["id"] == "c":
@@ -75,9 +82,29 @@ def test_verificar_marca_todos_y_oculta_solo_los_cerrados(monkeypatch):
     import playwright.async_api
     monkeypatch.setattr(playwright.async_api, "async_playwright", lambda: Playwright())
     monkeypatch.setattr(vl, "leer_ficha", leer)
+    monkeypatch.setattr(vl, "foto_pequena", lambda url: b"jpg")
     bd = BDFalsa([{"id": i, "nombre": f"Bar {i.upper()}"} for i in "abc"])
 
     cuenta = asyncio.run(vl.verificar(bd, minutos=1, pestanas=2))
 
     assert sorted(bd.marcados) == [("a", True), ("b", False), ("c", False)]   # el que falla, apuntado igual
     assert cuenta == {"cerrado": 1, "abierto": 1, "no_coincide": 1}
+    assert bd.fichas["b"] == {"nota_google": 4.3, "cocina_google": "Taberna", "foto": "lugares/b.jpg"}   # ficha rápida
+    assert bd.fotos == {"lugares/b.jpg": b"jpg"} and bd.fichas["a"] is None and bd.fichas["c"] is None
+
+
+def test_foto_pequena(monkeypatch):
+    import io
+    from PIL import Image
+    grande = io.BytesIO()
+    Image.new("RGB", (1200, 800), "orange").save(grande, "JPEG")
+
+    class Respuesta:
+        content = grande.getvalue()
+
+        def raise_for_status(self):
+            pass
+    pedidas = []
+    monkeypatch.setattr(vl.requests, "get", lambda url, timeout: pedidas.append(url) or Respuesta())
+    pequena = Image.open(io.BytesIO(vl.foto_pequena("https://lh3.googleusercontent.com/x=w491-h240-k-no")))
+    assert max(pequena.size) <= vl.LADO_FOTO and pedidas == ["https://lh3.googleusercontent.com/x=w400-h400-k-no"]

@@ -8,3 +8,4 @@ lxml
 playwright
 typesafe-sdk
 duckdb
+pillow
