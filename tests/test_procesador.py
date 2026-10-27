@@ -230,3 +230,91 @@ def test_un_sitio_cerrado_se_oculta_sin_pasar_por_jev(analizados, fichas):
     bd = BDFalsa()
     ps.procesar_lugares(bd, [lugar("x", "Cerrado Ya")])
     assert analizados == [] and bd.estados[-1] == ("x", "cerrado", None)
+
+
+
+# ---------------------------------------------------------------- Análisis por adelantado (--lote)
+
+class ClasifFalso:
+    """clasificar_restaurantes_jev sin Jev: cada análisis "gasta" 50.000 tokens (~0,002 $)."""
+    PRECIO_USD_POR_MILLON_TOKENS = 0.042
+    _tokens_entrada = 0
+
+
+@pytest.fixture
+def lote(monkeypatch, tmp_path):
+    monkeypatch.setattr(ps, "GASTO_JEV", tmp_path / "gasto_jev.json")
+    monkeypatch.setattr(ps.time, "sleep", lambda s: None)
+    monkeypatch.setitem(sys.modules, "clasificar_restaurantes_jev", ClasifFalso)
+    estado = {"cola": [lugar(f"l{i}", f"Sitio {i}") for i in range(10)], "resultado": "analizado", "analizados": []}
+
+    def procesar(bd, lugares):
+        ClasifFalso._tokens_entrada += 50_000
+        estado["analizados"] += [l["id"] for l in lugares]
+    monkeypatch.setattr(ps, "procesar_lugares", procesar)
+
+    class BD:
+        def lugares_para_analizar(self, limite):
+            return [estado["cola"].pop(0)] if estado["cola"] else []
+
+        def lugar_por_id(self, i):
+            return {"estado_analisis": estado["resultado"]}
+    return estado, BD()
+
+
+def test_lote_para_al_llegar_al_tope(lote):
+    estado, bd = lote
+    l = ps.Lote(tope_usd=0.005)                 # ~2 análisis
+    while l.uno(bd):
+        pass
+    assert estado["analizados"] == ["l0", "l1", "l2"] and ps.gastado_en_lote() >= 0.005
+    assert ps.Lote(tope_usd=0.005).uno(bd) is False                    # el gasto se recuerda entre ejecuciones
+
+
+def test_lote_descansa_tras_cada_tanda(lote):
+    estado, bd = lote
+    l = ps.Lote(tope_usd=10, por_tanda=3, pausa_min=12)
+    while l.uno(bd):
+        pass
+    assert estado["analizados"] == ["l0", "l1", "l2"] and not l.toca()   # 3 y a descansar
+    l.pausa_hasta = 0                                                   # pasado el descanso, sigue
+    assert l.uno(bd) and estado["analizados"][-1] == "l3"
+
+
+def test_lote_se_frena_si_falla_seguido(lote):
+    estado, bd = lote
+    estado["resultado"] = "error"
+    l = ps.Lote(tope_usd=10)
+    while l.uno(bd):
+        pass
+    assert len(estado["analizados"]) == ps.MAX_ERRORES_SEGUIDOS and l.parado   # para y no sigue gastando
+
+
+def test_vigilar_atiende_antes_a_los_usuarios(monkeypatch, lote):
+    estado, bd_lote = lote
+    orden = []
+    bd = BDFalsa()
+    bd.lugares_para_analizar = bd_lote.lugares_para_analizar
+    bd.lugar_por_id = bd_lote.lugar_por_id
+    monkeypatch.setattr(ps, "cliente", lambda: bd)
+    monkeypatch.setattr(ps, "procesar_explorar", lambda b: orden.append("usuarios"))
+    procesar = ps.procesar_lugares
+
+    def procesar_y_parar(b, lugares):
+        procesar(b, lugares)
+        orden.append("lote")
+        if len(orden) >= 4:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(ps, "procesar_lugares", procesar_y_parar)
+    with pytest.raises(KeyboardInterrupt):
+        ps.main(["--vigilar", "0.25", "--lote"])
+    assert orden == ["usuarios", "lote", "usuarios", "lote"]           # antes lo pedido, luego uno por adelantado
+
+
+def test_informe_de_espacio():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "obtener_datos"))
+    import espacio
+    lineas = espacio.informe({"base de datos": 450 * 1024 * 1024, "fotos": 100 * 1024 * 1024,
+                              "tabla lugares": 30 * 1024 * 1024, "tabla visitas": 1024 * 1024})
+    assert lineas[0].startswith("Base de datos: 450.0 MB de 500 MB (90%)") and "AVISO" in lineas[0]
+    assert "AVISO" not in lineas[1] and lineas[3] == "  lugares: 30.0 MB"

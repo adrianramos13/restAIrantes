@@ -172,6 +172,23 @@ ICONOS = {
     "Coctelería": "🍸",
 }
 VISTAS = ["Lista", "Mapa"]
+ORDENES = ["Más cerca", "Mejor nota"]
+
+
+def _nota(lugar):
+    if not lugar.get("nota_google"):
+        return ""
+    return "★ " + f"{float(lugar['nota_google']):g}".replace(".", ",")
+
+
+def _foto(cliente, lugar):
+    """La foto pequeña de su ficha rápida (supabase/012_ficha_rapida.sql), o None."""
+    return cliente.url_foto(lugar["foto"]) if lugar.get("foto") else None
+
+
+def _por_nota(lugares):
+    """Mejor nota de Google primero (los que aún no tienen, al final); a igualdad, el orden que traían."""
+    return sorted(lugares, key=lambda l: -(l.get("nota_google") or 0))
 
 
 def _icono(lugar):
@@ -191,19 +208,20 @@ def _al_tocar(key, campo):
         st.session_state["lugar_abrir"] = lugar
 
 
-def _lista(lugares, cerca, key, lista):
+def _lista(cliente, lugares, cerca, key, lista):
     """Tarjetas (las mismas de Comer hoy): icono de su cocina, categoría, ciudad, distancia y estado."""
     st.session_state.setdefault("ex_por_id", {}).update({l["id"]: l for l in lugares})
-    items = [{"id": l["id"], "n": n, "nombre": l["nombre"], "cocina": l.get("categoria") or "",
-              "meta": " · ".join(t for t in (l.get("ciudad"), _distancia(l, cerca)) if t), "foto": None,
+    items = [{"id": l["id"], "n": n, "nombre": l["nombre"], "cocina": l.get("cocina_google") or l.get("categoria") or "",
+              "meta": " · ".join(t for t in (_nota(l), l.get("ciudad"), _distancia(l, cerca)) if t),
+              "foto": _foto(cliente, l),
               "icono": _icono(l), "estado": _estado(l), "estado_texto": ESTADOS[_estado(l)][0]}
              for n, l in enumerate(lugares, start=1)]
     lista(items, key=key, al_abrir=lambda: _al_tocar(key, "abrir"))
 
 
-def _mapa(lugares, cerca, mapa):
+def _mapa(cliente, lugares, cerca, mapa):
     st.session_state.setdefault("ex_por_id", {}).update({l["id"]: l for l in lugares})
-    puntos = [{"id": l["id"], "n": n, "nombre": l["nombre"], "lat": l["lat"], "lon": l["lon"], "foto": None,
+    puntos = [{"id": l["id"], "n": n, "nombre": l["nombre"], "lat": l["lat"], "lon": l["lon"], "foto": _foto(cliente, l),
                "icono": _icono(l), "estado": _estado(l)} for n, l in enumerate(lugares, start=1)]
     mapa(puntos, cerca, key="mapa_explorar", al_tocar=lambda: _al_tocar("mapa_explorar", "seleccion"))
     st.caption(("🔵 Tú · " if cerca else "") + (f"Los {len(lugares)} " + ("más cercanos" if cerca else "primeros")
@@ -219,7 +237,7 @@ def _tus_peticiones(cliente, usuario, cerca, lista):
     lugares = _visibles([p["lugares"] for p in pedidas if p.get("lugares")])
     if lugares:
         st.subheader("Has pedido analizar")
-        _lista(lugares, cerca, "lista_pedidos", lista)
+        _lista(cliente, lugares, cerca, "lista_pedidos", lista)
 
 
 def seccion(cliente, usuario, *, ficha, boton_ubicacion, lista, mapa):
@@ -257,11 +275,16 @@ def seccion(cliente, usuario, *, ficha, boton_ubicacion, lista, mapa):
     with st.container(horizontal=True, vertical_alignment="center"):
         st.caption(f"{len(lugares)}{'+' if len(lugares) >= MAX_RESULTADOS else ''} sitio{'s' if len(lugares) != 1 else ''}")
         vista = st.segmented_control("Vista", VISTAS, default="Lista", key="ex_vista", label_visibility="collapsed")
+    if any(l.get("nota_google") for l in lugares):   # con la ficha rápida se puede ordenar por la nota de Google
+        orden = st.segmented_control("Orden", ORDENES, default=ORDENES[0], key="ex_orden", label_visibility="collapsed",
+                                     on_change=st.session_state.pop, args=("ex_visibles", None))
+        if orden == "Mejor nota" or not cerca:
+            lugares = _por_nota(lugares)
     if vista == "Mapa":
-        _mapa(lugares[:MAX_EN_MAPA], cerca, mapa)
+        _mapa(cliente, lugares[:MAX_EN_MAPA], cerca, mapa)
         return
     visibles = st.session_state.get("ex_visibles", POR_PAGINA)
-    _lista(lugares[:visibles], cerca, "lista_explorar", lista)
+    _lista(cliente, lugares[:visibles], cerca, "lista_explorar", lista)
     if len(lugares) > visibles:
         st.button("Ver más", key="ex_ver_mas", width="stretch",
                   on_click=st.session_state.update, args=({"ex_visibles": visibles + POR_PAGINA},))

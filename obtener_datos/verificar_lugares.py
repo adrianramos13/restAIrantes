@@ -6,7 +6,11 @@ No necesita sesión de Google (sin ella la ficha también dice "Cerrado permanen
 nunca comprobados y luego por los comprobados hace más de datos.DIAS_ENTRE_VERIFICACIONES días. Solo se oculta
 un sitio si Google ha encontrado el mismo (nombre parecido): "Zaga" no es "Reformas Zaga S L".
 
-Lo ejecuta solo GitHub Actions (.github/workflows/procesador.yml) cada pocas horas, un rato cada vez.
+De cada sitio que es el mismo y sigue abierto guarda además su "ficha rápida" (supabase/012_ficha_rapida.sql):
+nota de Google, tipo de cocina y una foto pequeña, que Descubrir enseña al momento sin necesidad de analizarlo.
+
+Lo ejecuta solo GitHub Actions (.github/workflows/procesador.yml): los lunes, y seguido (una ejecución tras otra)
+mientras queden sitios sin ficha rápida.
 
 USO (desde la raíz del proyecto):
     python obtener_datos/verificar_lugares.py --minutos 30
@@ -15,8 +19,13 @@ USO (desde la raíz del proyecto):
 import argparse
 import asyncio
 import difflib
+import io
+import os
+import re
 import time
 from collections import Counter
+
+import requests
 
 import extraer_resenas
 from conexion_supabase import cliente, datos
@@ -24,6 +33,7 @@ from conexion_supabase import cliente, datos
 PESTANAS = 3       # sitios a la vez
 POR_LOTE = 60      # sitios que se piden a la base de datos de una vez
 PARECIDO = 0.75    # de los nombres (0-1) para dar por hecho que Google ha encontrado el mismo sitio
+LADO_FOTO = 240    # px: la foto de la ficha rápida, pequeña (~10 KB) para que quepan todas en el almacenamiento
 
 
 def mismo_sitio(nombre, nombre_google):
@@ -50,7 +60,37 @@ async def leer_ficha(page, lugar):
     await extraer_resenas.abrir_ficha_desde_resultados(page, lugar["nombre"])
     ficha = await extraer_resenas.obtener_datos_ficha(page)
     extra = await extraer_resenas.obtener_datos_extra(page)
-    return {"nombre_google": ficha["nombre_google"], "estado": extra["estado"]}
+    return {"nombre_google": ficha["nombre_google"], "estado": extra["estado"], "nota": ficha["rating_google"],
+            "cocina": extra["cocina"], "foto": extra["foto"]}
+
+
+def foto_pequena(url):
+    """La foto de Google en JPEG de LADO_FOTO px como mucho (bytes), o None si no se puede."""
+    from PIL import Image
+    try:
+        r = requests.get(re.sub(r"=w\d+-h\d+[^/]*$", "=w400-h400-k-no", url), timeout=15)
+        r.raise_for_status()
+        imagen = Image.open(io.BytesIO(r.content)).convert("RGB")
+    except Exception:
+        return None
+    imagen.thumbnail((LADO_FOTO, LADO_FOTO))
+    salida = io.BytesIO()
+    imagen.save(salida, "JPEG", quality=72, optimize=True)
+    return salida.getvalue()
+
+
+def ficha_rapida(bd, lugar, leido):
+    """{nota_google, cocina_google, foto} para guardar del sitio (la foto se sube al almacenamiento)."""
+    ficha = {"nota_google": leido.get("nota"), "cocina_google": leido.get("cocina") or None, "foto": None}
+    contenido = foto_pequena(leido["foto"]) if leido.get("foto") else None
+    if contenido:
+        archivo = f"lugares/{lugar['id']}.jpg"
+        try:
+            bd.subir_foto(archivo, contenido)
+            ficha["foto"] = archivo
+        except datos.ErrorSupabase:
+            pass
+    return ficha
 
 
 async def verificar(bd, minutos, pestanas=PESTANAS):
@@ -72,7 +112,8 @@ async def verificar(bd, minutos, pestanas=PESTANAS):
                     except Exception:   # se apunta igual como comprobado: si no, se atascaría siempre en el mismo
                         leido = None
                     v = veredicto(lugar, leido)
-                    bd.marcar_verificado(lugar["id"], cerrado=v == "cerrado")
+                    ficha = ficha_rapida(bd, lugar, leido) if v == "abierto" and bd.con_ficha_rapida() else None
+                    bd.marcar_verificado(lugar["id"], cerrado=v == "cerrado", ficha=ficha)
                     cuenta[v] += 1
                     if v == "cerrado":
                         print(f"  Cerrado: {lugar['nombre']}")
@@ -93,6 +134,10 @@ def main(argv=None):
         raise SystemExit(f"ERROR: {str(e)[:200]}")
     print(f"Comprobados {sum(cuenta.values())}: {cuenta['abierto']} abiertos, {cuenta['cerrado']} cerrados "
           f"(ocultados), {cuenta['no_coincide']} sin encontrar el mismo sitio en Google.")
+    # En GitHub Actions: si aún quedan sitios sin ficha rápida, el flujo lanza otra ejecución (carga inicial)
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as salida:
+            salida.write(f"quedan={'si' if cliente().quedan_sin_ficha() else 'no'}\n")
 
 
 if __name__ == "__main__":

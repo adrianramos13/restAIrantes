@@ -1,21 +1,27 @@
-# Los lunes de madrugada comprueba en Google Maps si los sitios de Explorar siguen abiertos (no necesita sesión de
-# Google). El análisis de lo pedido NO va aquí: Google anula la sesión si se usa desde un servidor; lo hace el
-# procesador en tu ordenador (tarea de Windows, ver el README). Secretos: SUPABASE_URL y SUPABASE_CLAVE_SERVICIO.
-# Los registros son públicos: el script no imprime correos ni claves.
+# Comprueba en Google Maps si los sitios de Descubrir siguen abiertos y guarda su "ficha rápida" (nota de Google,
+# cocina y foto pequeña; no necesita sesión de Google). Los lunes de madrugada y, mientras queden sitios sin ficha
+# rápida (la carga inicial), una ejecución detrás de otra. El análisis completo NO va aquí: Google anula la sesión
+# si se usa desde un servidor; lo hace el procesador en tu ordenador (tarea de Windows, ver el README).
+# Secretos: SUPABASE_URL y SUPABASE_CLAVE_SERVICIO. Los registros son públicos: el script no imprime correos ni claves.
 name: Comprobar sitios abiertos
 
 on:
   schedule:
     - cron: "0 3 * * 1"        # lunes 3:00 UTC (4:00 en Madrid en invierno, 5:00 en verano)
-  workflow_dispatch:           # a mano, desde la pestaña Actions
+  workflow_dispatch:           # a mano, desde la pestaña Actions (y la carga inicial, que se relanza sola)
+
+concurrency:
+  group: comprobar-sitios      # de una en una
+  cancel-in-progress: false
 
 permissions:
   contents: read
+  actions: write               # para relanzarse mientras dure la carga inicial
 
 jobs:
   comprobar:
     runs-on: ubuntu-latest
-    timeout-minutes: 340       # la comprobación de los lunes dura 5 h (GitHub permite hasta 6)
+    timeout-minutes: 340       # cada ejecución dura 5 h (GitHub permite hasta 6)
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_CLAVE_SERVICIO: ${{ secrets.SUPABASE_CLAVE_SERVICIO }}
@@ -31,5 +37,11 @@ jobs:
         run: |
           pip install -r obtener_datos/requirements.txt
           python -m playwright install --with-deps chromium
-      - name: Comprobar si los sitios siguen abiertos
+      - name: Comprobar los sitios y guardar su ficha rápida
+        id: comprobar
         run: python obtener_datos/verificar_lugares.py --minutos 300
+      - name: Seguir con la carga inicial si quedan sitios sin ficha rápida
+        if: ${{ steps.comprobar.outputs.quedan == 'si' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run procesador.yml --ref "${{ github.ref_name }}"

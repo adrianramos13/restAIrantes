@@ -1133,7 +1133,7 @@ def test_buscar_lugares_por_nombre_y_zona(monkeypatch):
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
     assert bd_.buscar_lugares("  *, ") == [] and llamadas == []         # ni texto ni sitio: ni pregunta
     bd_.buscar_lugares("Casa*Labra,", cerca=(40.0, -3.7), radio_km=1.1132)
-    metodo, tabla, params, _ = llamadas[0]
+    metodo, tabla, params, _ = llamadas[-1]                             # (antes, una que mira si está la 012)
     assert (metodo, tabla) == ("GET", "lugares")
     assert params["nombre_busqueda"] == "ilike.*casa*labra*"            # sin comodines ni filtros colados
     assert params["and"].startswith("(lat.gte.39.990000,lat.lte.40.010000,lon.gte.-3.71")
@@ -1254,19 +1254,82 @@ def test_buscar_tiene_mis_restaurantes_descubrir_y_personas(multiusuario):
 def test_buscar_lugares_no_ensena_los_cerrados(monkeypatch):
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
     bd_.buscar_lugares("casa")
-    assert llamadas[0][2]["estado_analisis"] == "neq.cerrado"
+    assert llamadas[-1][2]["estado_analisis"] == "neq.cerrado"
 
 
-def test_lugares_a_verificar_y_marcar(monkeypatch):
-    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
+def test_lugares_a_verificar_y_marcar_sin_la_012(monkeypatch):
+    def respuestas(metodo, tabla, params):
+        if params.get("select") == "ficha_en":
+            raise datos.ErrorSupabase("GET lugares: 400 column ficha_en does not exist")
+        return []
+    bd_, llamadas = _supabase_falso(monkeypatch, respuestas)
     bd_.lugares_a_verificar(10, dias=30)
-    params = llamadas[0][2]
+    params = llamadas[-1][2]
     assert params["order"] == "verificado_en.asc.nullsfirst" and params["estado_analisis"] == "neq.cerrado"
     assert params["or"].startswith("(verificado_en.is.null,verificado_en.lt.")
     bd_.marcar_verificado("a", cerrado=True)
-    bd_.marcar_verificado("b")
-    assert llamadas[1][3]["estado_analisis"] == "cerrado" and "verificado_en" in llamadas[1][3]
-    assert set(llamadas[2][3]) == {"verificado_en"}                    # abierto: solo la fecha
+    bd_.marcar_verificado("b", ficha={"nota_google": 4.3})
+    assert llamadas[-2][3]["estado_analisis"] == "cerrado" and "verificado_en" in llamadas[-2][3]
+    assert set(llamadas[-1][3]) == {"verificado_en"}                   # sin la 012: ni ficha_en ni ficha
+
+
+def test_ficha_rapida_con_la_012(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
+    bd_.lugares_a_verificar(10)
+    params = llamadas[-1][2]
+    assert params["order"] == "ficha_en.asc.nullsfirst" and params["or"].startswith("(ficha_en.is.null,")   # primero los que no tienen
+    bd_.marcar_verificado("b", ficha={"nota_google": 4.3, "cocina_google": "Taberna", "foto": "lugares/b.jpg"})
+    cambios = llamadas[-1][3]
+    assert cambios["ficha_en"] == cambios["verificado_en"] and cambios["nota_google"] == 4.3 and cambios["foto"] == "lugares/b.jpg"
+    bd_.lugares_para_analizar(1)
+    params = llamadas[-1][2]
+    assert params["order"] == "nota_google.desc" and params["estado_analisis"] == "eq.sin_analizar"   # mejor nota primero
+    assert params["restaurante_id"] == "is.null" and params["nota_google"] == "not.is.null"
+    assert "nota_google" in bd_._columnas_lugar()
+
+
+def test_restaurantes_cerca_pide_solo_la_zona(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [
+        {"id": 7, "datos": {"Nombre": "Casa Pepe"}, "platos": [{"Plato": "cachopo", "Sentimiento": "Buena"}], "imagen": None}])
+    maestro, platos = bd_.restaurantes_cerca(40.0, -3.7, 1.1132)
+    metodo, tabla, params, _ = llamadas[0]
+    assert (metodo, tabla) == ("GET", "restaurantes") and params["and"].startswith("(lat.gte.39.990000,lat.lte.40.010000,")
+    assert list(maestro["ID"]) == [7] and list(platos["Plato"]) == ["cachopo"]
+
+
+def test_comer_hoy_todos_los_restaurantes_por_zona(multiusuario, monkeypatch):
+    maestro = pd.read_excel(EXCEL, sheet_name="Restaurantes")
+    platos = pd.read_excel(EXCEL, sheet_name="Platos mencionados")
+    zonas = []
+    monkeypatch.setattr(datos.Supabase, "con_ficha_rapida", lambda self: True)
+    monkeypatch.setattr(datos.Supabase, "cocinas_del_catalogo", lambda self: (["Japonesa", "Tapas"], 5000))
+    monkeypatch.setattr(datos.Supabase, "todos_los_restaurantes",
+                        lambda self: pytest.fail("no debería descargar el catálogo entero"))
+    monkeypatch.setattr(datos.Supabase, "restaurantes_cerca", lambda self, lat, lon, radio:
+                        zonas.append((lat, lon, radio)) or (maestro.copy(), platos.copy()))
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["fuente"] = "Todos los restaurantes"
+    at.session_state["ubicacion_actual"] = CHUECA
+    at = correr(at)
+    assert at.selectbox(key="cocina").options == ["Cualquiera", "Japonesa", "Tapas"]   # sin bajarse el catálogo
+    at.button(key="boton_buscar").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    (lat, lon, radio), = zonas
+    assert (lat, lon) == (round(CHUECA[0], 3), round(CHUECA[1], 3)) and radio == 20 * 1.3   # 20 min en coche
+    assert at.session_state["resultado"]["df_puntuado"] is not None
+
+
+def test_descubrir_ensena_la_ficha_rapida(explorar):
+    explorar["lugares"][0].update(nota_google=4.6, cocina_google="Taberna", foto="lugares/l1.jpg")
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["ubicacion_actual"] = CHUECA
+    at = descubrir(at)
+    lista = componente(at, "estado_texto")
+    assert "4,6" in lista and "Taberna" in lista and "lugares/l1.jpg" in lista   # nota, cocina y foto al momento
+    at.session_state["ex_orden"] = "Mejor nota"
+    at = descubrir(at)
+    lista = componente(at, "estado_texto")
+    assert lista.index("Taberna Nueva") < lista.index("Ya Analizado")    # la de mejor nota, primero
 
 
 def test_avisar_de_que_ha_cerrado_lo_quita(explorar, monkeypatch):

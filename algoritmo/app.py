@@ -1021,7 +1021,7 @@ _BARRA = st.components.v2.component(
 CLAVES_FORMULARIOS = {
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
     # sin "ml_idos" (solo los que he ido): lo activa "Ver en formato lista" y se olvida al salir de Mi lista
-    "mi_lista": ("ex_texto", "ex_vista", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
+    "mi_lista": ("ex_texto", "ex_vista", "ex_orden", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
 }
 
 
@@ -1283,8 +1283,25 @@ FUENTE_MI_LISTA, FUENTE_TODOS = "Mi lista", "Todos los restaurantes"
 
 @st.cache_data(ttl=600, show_spinner=False)
 def cargar_catalogo():
-    """Todos los restaurantes de la base de datos (de todas las listas), para "Buscar en: Todos"."""
+    """Todos los restaurantes de la base de datos (de todas las listas), para "Buscar en: Todos". Solo sin
+    supabase/012_ficha_rapida.sql: con ella se piden solo los de la zona (cargar_catalogo_cerca)."""
     return BD.todos_los_restaurantes()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cargar_cocinas_catalogo():
+    """(cocinas, nº de restaurantes) de todo el catálogo, para el buscador antes de saber dónde estás."""
+    return BD.cocinas_del_catalogo()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def cargar_catalogo_cerca(lat, lon, radio_km):
+    return BD.restaurantes_cerca(lat, lon, radio_km)
+
+
+def radio_busqueda_km(modo_transporte, minutos):
+    """Hasta dónde se puede llegar en ese tiempo, con margen: en coche ~1 km por minuto y andando ~0,1."""
+    return max(1.0, minutos * (1.0 if modo_transporte == "En coche" else 0.1) * 1.3)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1719,14 +1736,20 @@ if seccion == "perfil":
     st.stop()
 
 # ----------------------- COMER HOY: EL BUSCADOR ----------------------- #
+todos_por_zona, cocinas_todos = False, None
 if CONFIG_MULTIUSUARIO:
     if st.session_state.get("fuente") == FUENTE_TODOS:   # "Buscar en: Todos los restaurantes"
         try:
-            maestro, df_platos = cargar_catalogo()
+            if BD.con_ficha_rapida():   # solo los de tu zona, al buscar (el catálogo entero no cabría en memoria)
+                cocinas_todos, total_todos = cargar_cocinas_catalogo()
+                todos_por_zona = True
+            else:
+                maestro, df_platos = cargar_catalogo()
+                total_todos = len(maestro)
         except bd.ErrorSupabase:
             st.error("No se han podido cargar todos los restaurantes ahora mismo. Prueba en un momento.")
             st.stop()
-        momento_portada = f"🍽️ Todos los restaurantes · {len(maestro)} sitios"
+        momento_portada = f"🍽️ Todos los restaurantes · {total_todos} sitios"
 
 vista = st.session_state.setdefault("vista", "buscador")
 if vista == "resultados" and st.session_state.get("resultado") is not None:
@@ -1738,7 +1761,7 @@ with st.container(key="buscador"):
     if CONFIG_MULTIUSUARIO:
         st.segmented_control("Buscar en", [FUENTE_MI_LISTA, FUENTE_TODOS], default=FUENTE_MI_LISTA,
                              key="fuente", width="stretch")
-        if maestro.empty:
+        if maestro.empty and not todos_por_zona:
             st.info("Todavía no tienes restaurantes en tu lista. Añádela en tus **ajustes** (toca tu foto en el Perfil) "
                     "o busca en **Todos los restaurantes**.")
             st.button("Añadir tu lista", on_click=abrir_tus_listas, icon=":material/add_location_alt:")
@@ -1788,7 +1811,8 @@ with st.container(key="buscador"):
     tiempo_maximo_min = st.slider("Tiempo máximo", 5, 60, preferencias["tiempo"], step=5, format="%d min",
                                   key="tiempo")
 
-    cocina = st.selectbox("Cocina", ["Cualquiera"] + cocinas_disponibles(maestro), key="cocina")
+    cocina = st.selectbox("Cocina", ["Cualquiera"] + (cocinas_todos if todos_por_zona else cocinas_disponibles(maestro)),
+                          key="cocina")
 
     presupuesto_min, presupuesto_max = st.slider(
         "Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, tuple(preferencias["presupuesto"]), step=5,
@@ -1841,6 +1865,16 @@ with st.container(key="buscador"):
             "plato_deseado": plato_deseado.strip(),
         }
 
+        if todos_por_zona:   # "Todos los restaurantes": solo los que están a tu alcance
+            try:
+                with st.spinner("Buscando restaurantes por tu zona..."):
+                    maestro, df_platos = cargar_catalogo_cerca(round(ubicacion_usuario[0], 3), round(ubicacion_usuario[1], 3),
+                                                               radio_busqueda_km(modo_transporte, tiempo_maximo_min))
+            except bd.ErrorSupabase:
+                fallar_busqueda("No se han podido cargar los restaurantes de tu zona ahora mismo. Prueba en un momento.")
+            if maestro.empty:
+                fallar_busqueda("Todavía no hay restaurantes analizados por esa zona. Prueba en Buscar → Descubrir.")
+
         texto_spinner = ("Calculando tiempos en coche..." if modo_transporte == "En coche"
                          else "Calculando tiempos andando...")
         aviso_tiempos = None
@@ -1859,7 +1893,7 @@ with st.container(key="buscador"):
 
         # El resultado se guarda en la sesión: cambiar el orden, la vista o pulsar
         # "Ver más" vuelve a dibujar la página sin repetir toda la búsqueda.
-        st.session_state["resultado"] = {"df_puntuado": df_puntuado, "respuestas": respuestas}
+        st.session_state["resultado"] = {"df_puntuado": df_puntuado, "respuestas": respuestas, "df_platos": df_platos}
         st.session_state["num_mostrados"] = TOP_N
         st.session_state["restaurante_seleccionado"] = None
         st.session_state["vista"] = "resultados"
@@ -1931,5 +1965,6 @@ if vista == "resultados" and resultado is not None:
     # mapa (pop), así que al cerrarla con ✕ no vuelve a aparecer sola.
     abrir = st.session_state.pop("ficha_abrir", None)
     if abrir in ids_top:
-        mostrar_ficha(top.iloc[ids_top.index(abrir)], df_platos, respuestas["plato_deseado"],
+        mostrar_ficha(top.iloc[ids_top.index(abrir)], st.session_state["resultado"].get("df_platos", df_platos),
+                      respuestas["plato_deseado"],
                       respuestas["modo_transporte"])

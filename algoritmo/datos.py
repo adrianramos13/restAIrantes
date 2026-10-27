@@ -189,6 +189,7 @@ def caja_alrededor(lat, lon, radio_km):
 
 
 COLUMNAS_LUGAR = "id,nombre,categoria,lat,lon,direccion,ciudad,pais,web,telefono,estado_analisis,restaurante_id"
+COLUMNAS_FICHA = "nota_google,cocina_google,foto"   # la ficha rápida (supabase/012_ficha_rapida.sql)
 DIAS_ENTRE_VERIFICACIONES = 30   # cada cuánto se vuelve a comprobar en Google Maps si un sitio sigue abierto
 
 
@@ -641,13 +642,26 @@ class Supabase:
 
     # ---------------- explorar: lugares de Overture (supabase/009_lugares.sql) ----------------
 
+    def con_ficha_rapida(self):
+        """¿Está ya supabase/012_ficha_rapida.sql? (se mira una vez): sin ella, todo funciona como antes."""
+        if getattr(self, "_con_ficha", None) is None:
+            try:
+                self._rest("GET", "lugares", params={"select": "ficha_en", "limit": 1})
+                self._con_ficha = True
+            except ErrorSupabase:
+                self._con_ficha = False
+        return self._con_ficha
+
+    def _columnas_lugar(self):
+        return COLUMNAS_LUGAR + ("," + COLUMNAS_FICHA if self.con_ficha_rapida() else "")
+
     def buscar_lugares(self, texto="", cerca=None, radio_km=2.0, limite=200):
         """Lugares cuyo nombre lleva las palabras de `texto` (en ese orden) y/o dentro del cuadrado de
         `radio_km` alrededor de `cerca` (lat, lon). Sin ordenar por distancia: eso lo hace quien llama."""
         palabras = texto_busqueda(texto).split()
         if not palabras and not cerca:
             return []
-        params = {"select": COLUMNAS_LUGAR, "limit": limite, "order": "confianza.desc.nullslast",
+        params = {"select": self._columnas_lugar(), "limit": limite, "order": "confianza.desc.nullslast",
                   "estado_analisis": "neq.cerrado"}
         if palabras:
             params["nombre_busqueda"] = "ilike.*" + "*".join(palabras) + "*"
@@ -689,17 +703,66 @@ class Supabase:
     # ---------------- Explorar al día (supabase/010_lugares_al_dia.sql) ----------------
 
     def lugares_a_verificar(self, limite=60, dias=DIAS_ENTRE_VERIFICACIONES):
-        """Los que toca comprobar en Google Maps: nunca comprobados o hace más de `dias`; primero los más viejos."""
+        """Los que toca mirar en Google Maps: los que aún no tienen ficha rápida y los comprobados hace más de
+        `dias`; primero los más viejos."""
         hace = (datetime.now(timezone.utc) - timedelta(days=dias)).isoformat()
-        return self._rest("GET", "lugares", params={
-            "select": "id,nombre,lat,lon", "estado_analisis": "neq.cerrado", "limit": limite,
-            "or": f"(verificado_en.is.null,verificado_en.lt.{hace})", "order": "verificado_en.asc.nullsfirst"})
+        if self.con_ficha_rapida():
+            filtro, orden = f"(ficha_en.is.null,verificado_en.lt.{hace})", "ficha_en.asc.nullsfirst"
+        else:
+            filtro, orden = f"(verificado_en.is.null,verificado_en.lt.{hace})", "verificado_en.asc.nullsfirst"
+        return self._rest("GET", "lugares", params={"select": "id,nombre,lat,lon", "estado_analisis": "neq.cerrado",
+                                                    "limit": limite, "or": filtro, "order": orden})
 
-    def marcar_verificado(self, lugar_id, cerrado=False):
+    def quedan_sin_ficha(self):
+        """¿Queda algún sitio abierto sin ficha rápida? (para encadenar la carga inicial en GitHub Actions)"""
+        return self.con_ficha_rapida() and bool(self._rest("GET", "lugares", params={
+            "select": "id", "ficha_en": "is.null", "estado_analisis": "neq.cerrado", "limit": 1}))
+
+    def marcar_verificado(self, lugar_id, cerrado=False, ficha=None):
+        """Apunta que se ha mirado en Google Maps; si ha cerrado, lo oculta. `ficha`: {nota_google, cocina_google,
+        foto} leídos de su ficha (solo si es el mismo sitio)."""
         cambios = {"verificado_en": _ahora()}
+        if self.con_ficha_rapida():
+            cambios["ficha_en"] = cambios["verificado_en"]
+            cambios.update(ficha or {})
         if cerrado:
             cambios.update(estado_analisis="cerrado", mensaje="Cerrado permanentemente según Google Maps")
         self._rest("PATCH", "lugares", params={"id": f"eq.{lugar_id}"}, json=cambios)
+
+    def lugares_para_analizar(self, limite=1):
+        """Los siguientes a analizar por adelantado: sin analizar y con ficha rápida, los mejor valorados primero."""
+        return self._rest("GET", "lugares", params={
+            "select": COLUMNAS_LUGAR, "estado_analisis": "eq.sin_analizar", "restaurante_id": "is.null",
+            "nota_google": "not.is.null", "order": "nota_google.desc", "limit": limite})
+
+    # ---------------- "Todos los restaurantes" por zona y espacio (supabase/012_ficha_rapida.sql) ----------------
+
+    def restaurantes_cerca(self, lat, lon, radio_km, limite=3000):
+        """(maestro, df_platos) de los restaurantes del catálogo dentro del cuadrado de `radio_km` alrededor."""
+        a, b, c, d = caja_alrededor(lat, lon, radio_km)
+        filas = self._rest("GET", "restaurantes", params={
+            "select": "id,datos,platos,imagen", "limit": limite,
+            "and": f"(lat.gte.{a:.6f},lat.lte.{b:.6f},lon.gte.{c:.6f},lon.lte.{d:.6f})"})
+        return filas_a_dataframes([{"posicion": i, "restaurantes": f} for i, f in enumerate(filas)])
+
+    def cocinas_del_catalogo(self):
+        """(cocinas distintas, nº de restaurantes) de todo el catálogo, sin bajarse sus datos."""
+        cocinas, total, desde = set(), 0, 0
+        while True:   # PostgREST devuelve como mucho 1000 filas por petición
+            lote = self._rest("GET", "restaurantes", params={"select": "cocina", "order": "id.asc",
+                                                             "limit": 1000, "offset": desde})
+            cocinas.update(f["cocina"] for f in lote if f.get("cocina"))
+            total += len(lote)
+            if len(lote) < 1000:
+                return sorted(cocinas), total
+            desde += 1000
+
+    def tamano(self):
+        """{qué: bytes} de la base de datos, cada tabla y las fotos."""
+        r = requests.post(f"{self.url}/rest/v1/rpc/tamano_bd", headers=self._cabeceras, json={}, timeout=TIMEOUT_S)
+        if not r.ok:
+            raise ErrorSupabase(f"tamano_bd: {r.status_code} {r.text[:200]}")
+        return {f["que"]: f["bytes"] for f in r.json()}
 
     def avisar_cerrado(self, lugar_id):
         """Un usuario avisa de que ha cerrado: deja de salir en Explorar para todos."""
