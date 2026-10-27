@@ -792,6 +792,15 @@ class Supabase:
         filas = self._rest("GET", "lugares", params={"id": f"eq.{lugar_id}", "select": COLUMNAS_LUGAR})
         return filas[0] if filas else None
 
+    def rescatar_interrumpidos(self):
+        """Vuelve a "pendiente" lo que se quedó en "procesando" (el ordenador se apagó a medias). Devuelve cuántos."""
+        cambios = {"mensaje": "interrumpido; se volverá a intentar", "actualizado_en": _ahora()}
+        listas = self._rest("PATCH", "listas", params={"estado": "eq.procesando"}, json={"estado": "pendiente", **cambios},
+                            prefer="return=representation")
+        lugares = self._rest("PATCH", "lugares", params={"estado_analisis": "eq.procesando"},
+                             json={"estado_analisis": "pendiente", **cambios}, prefer="return=representation")
+        return len(listas or []) + len(lugares or [])
+
     def marcar_lugar(self, lugar_id, estado, restaurante_id=None, mensaje=None):
         cambios = {"estado_analisis": estado, "mensaje": mensaje, "actualizado_en": _ahora()}
         if restaurante_id is not None:

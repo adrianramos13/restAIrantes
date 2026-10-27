@@ -368,7 +368,9 @@ def main(argv=None):
     if args.vigilar:
         sys.stdout.reconfigure(line_buffering=True)   # que origen/procesador.log (la tarea de Windows) se vea al momento
         print(f"Vigilando lo pendiente cada {args.vigilar:g} min (Ctrl+C para parar)...")
-        lote = Lote(args.tope_usd) if args.lote else None
+        # ponytail: supone un solo procesador; si lanzas otro --vigilar a la vez, repetiría lo que el primero tiene a medias
+        print(f"Rescatados {bd.rescatar_interrumpidos()} análisis que se quedaron a medias.")
+        lote =Lote(args.tope_usd) if args.lote else None
         if lote:
             print(f"Por adelantado: activado, con tope de {args.tope_usd:g} $ (gastado hasta ahora: {gastado_en_lote():.2f} $).")
         while True:

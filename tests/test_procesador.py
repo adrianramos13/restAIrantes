@@ -16,6 +16,9 @@ ENLACE = "https://maps.app.goo.gl/5QLC8VhBqetTCbjGA"
 
 
 class BDFalsa:
+    def rescatar_interrumpidos(self):
+        return 0
+
     def __init__(self, catalogo=None, listas=None):
         self.catalogo = dict(catalogo or {})          # clave -> fila
         self.listas = listas or []

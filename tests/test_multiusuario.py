@@ -1483,3 +1483,11 @@ def test_al_amigo_le_dice_con_quien_fue(multiusuario):
     abrir_ventana_he_ido(at, id_restaurante)
     assert any("Fuiste con" in c.value and "@luis" in c.value for c in at.caption)
     assert "luis@x.com" not in str(at)                                     # el correo no sale
+
+
+def test_rescatar_interrumpidos_vuelve_a_pendiente(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [{"id": 1}] if t == "lugares" else [])
+    assert bd_.rescatar_interrumpidos() == 1
+    (m1, t1, p1, j1), (m2, t2, p2, j2) = llamadas[-2:]
+    assert (m1, t1, p1, j1["estado"]) == ("PATCH", "listas", {"estado": "eq.procesando"}, "pendiente")
+    assert (m2, t2, p2, j2["estado_analisis"]) == ("PATCH", "lugares", {"estado_analisis": "eq.procesando"}, "pendiente")
