@@ -320,8 +320,8 @@ class Lote:
             return False
         siguientes = bd.lugares_para_analizar(1)
         if not siguientes:
-            print("Por adelantado: no queda ninguno con ficha rápida por analizar.")
-            self.parado = True
+            print("Por adelantado: no queda ninguno con ficha rápida por analizar. Se vuelve a mirar en 1 h.")
+            self.pausa_hasta = time.monotonic() + 3600   # el comprobador de GitHub va añadiendo fichas rápidas
             return False
         import clasificar_restaurantes_jev as clasif   # para contar los tokens de Jev
         lugar, antes = siguientes[0], clasif._tokens_entrada
