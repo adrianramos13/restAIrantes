@@ -275,6 +275,22 @@ def validar_comentario(comentario):
     return comentario or None
 
 
+def momento_visita(fecha=None):
+    """creado_en de una visita (es la fecha que se ve en el Diario y en el Inicio de los amigos): ahora si fue
+    hoy (o no se dice) y, si fue otro día, ese día a las 14:00 de Madrid. Nunca en el futuro."""
+    try:
+        from zoneinfo import ZoneInfo
+        zona = ZoneInfo("Europe/Madrid")
+    except Exception:   # sistema sin base de zonas horarias
+        zona = timezone.utc
+    hoy = datetime.now(zona).date()
+    if fecha is None or fecha == hoy:
+        return _ahora()
+    if fecha > hoy:
+        raise ValueError("La fecha no puede ser de un día que aún no ha llegado.")
+    return datetime(fecha.year, fecha.month, fecha.day, 14, tzinfo=zona).isoformat()
+
+
 def visitas_a_dataframe(visitas, nombres):
     """Visitas de amigos (con su restaurante embebido) -> DataFrame como el maestro, más las columnas
     "Amigo" (su nombre, de `nombres`: {usuario: nombre}), "Nota visita" y "Fecha visita"."""
@@ -494,42 +510,60 @@ class Supabase:
         """Deja de ser amigo (o cancela una solicitud enviada), en cualquiera de los dos sentidos."""
         self._rest("DELETE", "amistades", params={"or": _par(usuario, otro)})
 
-    def registrar_visita(self, usuario, restaurante_id, nota=None, comentario=None):
-        """"He ido": una valoración por persona y restaurante; si ya existía, se actualiza (y su fecha, para
-        que vuelva a salir arriba en el Inicio de los amigos)."""
+    def registrar_visita(self, usuario, restaurante_id, nota=None, comentario=None, fecha=None, anadido_por=None):
+        """"He ido": una valoración por persona y restaurante; si ya existía, se actualiza. `fecha`: el día que
+        fue (por defecto hoy; ver momento_visita). `anadido_por`: quién le invitó, al aceptar una invitación."""
+        fila = {"usuario": usuario, "restaurante_id": int(restaurante_id), "nota": validar_nota(nota),
+                "comentario": validar_comentario(comentario), "creado_en": momento_visita(fecha)}
+        if anadido_por:   # solo entonces (la columna es de supabase/011_comensales.sql)
+            fila["anadido_por"] = anadido_por
         self._rest("POST", "visitas", params={"on_conflict": "usuario,restaurante_id"},
-                   prefer="resolution=merge-duplicates",
-                   json={"usuario": usuario, "restaurante_id": int(restaurante_id), "nota": validar_nota(nota),
-                         "comentario": validar_comentario(comentario), "creado_en": _ahora()})
+                   prefer="resolution=merge-duplicates", json=fila)
 
-    # ---------------- "He ido con..." (comensales; supabase/011_comensales.sql) ----------------
+    # ---------------- "He ido con..." (invitaciones; supabase/011_comensales.sql) ----------------
 
-    def anadir_comensales(self, usuario, restaurante_id, amigos):
-        """A cada amigo se le apunta que ha ido a ese restaurante (sin nota: la pone él), marcado como añadido por
-        `usuario`. Si ya lo tenía, no se toca. Quien llama comprueba que son amigos suyos."""
+    def invitar_comensales(self, usuario, restaurante_id, amigos, fecha=None):
+        """Pregunta a esos amigos si fueron con el usuario: hasta que no lo aceptan, no les sale nada en su perfil.
+        Quien llama comprueba que son amigos suyos."""
         amigos = sorted(set(amigos) - {usuario})
         if amigos:
-            self._rest("POST", "visitas", params={"on_conflict": "usuario,restaurante_id"},
-                       prefer="resolution=ignore-duplicates",
-                       json=[{"usuario": a, "restaurante_id": int(restaurante_id), "anadido_por": usuario,
-                              "creado_en": _ahora()} for a in amigos])
+            dia = (fecha or datetime.now(timezone.utc).date()).isoformat()
+            self._rest("POST", "invitaciones_visita", params={"on_conflict": "de,para,restaurante_id"},
+                       prefer="resolution=merge-duplicates",
+                       json=[{"de": usuario, "para": a, "restaurante_id": int(restaurante_id), "fecha": dia}
+                             for a in amigos])
+
+    def invitados_de(self, usuario, restaurante_id):
+        """A quién ha invitado el usuario en ese restaurante y aún no ha contestado (correos)."""
+        return [f["para"] for f in self._rest("GET", "invitaciones_visita", params={
+            "de": f"eq.{usuario}", "restaurante_id": f"eq.{int(restaurante_id)}", "select": "para"})]
+
+    def invitaciones_para(self, usuario):
+        """Las que tiene que contestar el usuario, con el restaurante embebido (las últimas primero)."""
+        return self._rest("GET", "invitaciones_visita", params={
+            "para": f"eq.{usuario}", "order": "creado_en.desc",
+            "select": "de,restaurante_id,fecha,restaurantes(id,datos)"})
+
+    def borrar_invitacion(self, de, para, restaurante_id):
+        self._rest("DELETE", "invitaciones_visita", params={"de": f"eq.{de}", "para": f"eq.{para}",
+                                                            "restaurante_id": f"eq.{int(restaurante_id)}"})
+
+    def aceptar_invitacion(self, usuario, de, restaurante_id, nota=None, comentario=None, fecha=None):
+        """Sí, fue con `de`: se le guarda su visita (con su nota y su comentario; si ya la tenía, se actualiza esa
+        misma: una sola entrada) y la invitación desaparece."""
+        self.registrar_visita(usuario, restaurante_id, nota, comentario, fecha=fecha, anadido_por=de)
+        self.borrar_invitacion(de, usuario, restaurante_id)
 
     def comensales_de(self, usuario, restaurante_id):
-        """Los amigos (correos) que el usuario ha apuntado como comensales en ese restaurante."""
+        """Los amigos (correos) que aceptaron que fueron con el usuario a ese restaurante."""
         return [f["usuario"] for f in self._rest("GET", "visitas", params={
             "anadido_por": f"eq.{usuario}", "restaurante_id": f"eq.{int(restaurante_id)}", "select": "usuario"})]
 
     def anadido_por(self, usuario, restaurante_id):
-        """Quién apuntó al usuario como comensal en ese restaurante (correo), o None."""
+        """Con quién fue el usuario a ese restaurante, si aceptó una invitación suya (correo), o None."""
         filas = self._rest("GET", "visitas", params={"usuario": f"eq.{usuario}", "restaurante_id": f"eq.{int(restaurante_id)}",
                                                      "anadido_por": "not.is.null", "select": "anadido_por"})
         return filas[0]["anadido_por"] if filas else None
-
-    def quitar_comensal(self, usuario, restaurante_id, amigo):
-        """Deshace un comensal añadido por error: solo si su visita la creó el usuario y el amigo aún no la ha
-        valorado (sin nota ni comentario); si ya la ha hecho suya, no se toca."""
-        self._rest("DELETE", "visitas", params={"usuario": f"eq.{amigo}", "restaurante_id": f"eq.{int(restaurante_id)}",
-                                                "anadido_por": f"eq.{usuario}", "nota": "is.null", "comentario": "is.null"})
 
     def quitar_visita(self, usuario, restaurante_id):
         self._rest("DELETE", "visitas", params={"usuario": f"eq.{usuario}",
