@@ -1,5 +1,5 @@
 """
-Explorar (a la derecha de Inicio en la barra): cualquier restaurante, bar o cafetería, aunque no esté en ninguna
+Buscar -> "Descubrir" (solo con cuentas): cualquier restaurante, bar o cafetería, aunque no esté en ninguna
 lista. Los sitios salen de la tabla lugares (datos abiertos de Overture Maps, ver
 obtener_datos/importar_overture.py). Un sitio "analizado" ya está en el catálogo y se abre su ficha completa
 (nota, lo que destacan, eatlist, He ido...); si no, se ve lo básico y se puede pedir que se analice: el
@@ -226,9 +226,7 @@ def seccion(cliente, usuario, *, ficha, boton_ubicacion, lista, mapa):
     """`ficha(fila, df_platos)`: la ficha completa de un restaurante del catálogo (la de siempre).
     `boton_ubicacion(key)`: el botón "Usar mi ubicación" (comparte la ubicación con "Comer hoy").
     `lista(items, key, al_abrir)` y `mapa(puntos, centro, key, al_tocar)`: los componentes de Comer hoy."""
-    st.header("Explorar")
-    if cliente is None:
-        st.info("Explorar está disponible en el modo con cuentas de usuario.")
+    if cliente is None:   # solo hay "Descubrir" con cuentas de usuario
         return
     if (lugar := st.session_state.pop("lugar_abrir", None)) is not None:
         _ficha_lugar(cliente, usuario, lugar, ficha)

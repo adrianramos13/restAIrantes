@@ -1,8 +1,6 @@
 export default function (component) {
   const { parentElement, data, setTriggerValue } = component;
   const botones = parentElement.querySelectorAll('[data-seccion]');
-  // Explorar solo existe con cuentas de usuario (modo multiusuario)
-  parentElement.querySelector('[data-seccion="explorar"]').hidden = !data.explorar;
   botones.forEach((boton) => {
     const activa = boton.dataset.seccion === data.activa;
     if (activa) boton.setAttribute('aria-current', 'page'); else boton.removeAttribute('aria-current');
