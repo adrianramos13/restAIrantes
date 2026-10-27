@@ -1003,7 +1003,7 @@ def test_cabecera_estilo_instagram(multiusuario):
     assert any(h.value == "Tus datos" for h in at.subheader)
     at.button(key="contador_idos").click().run()                       # "idos": Buscar con "solo los que he ido"
     assert at.session_state["seccion"] == "mi_lista" and at.toggle(key="ml_idos").value
-    assert at.session_state["buscar_modo"] == "Restaurantes"
+    assert at.session_state["buscar_modo"] == "Mis restaurantes"
     at.session_state["seccion"] = "perfil"
     at.run()
     at.button(key="contador_lista").click().run()                      # "en tu lista": Buscar, sin ese filtro
@@ -1181,13 +1181,21 @@ def explorar(multiusuario, monkeypatch):
     return estado
 
 
+def descubrir(at=None):
+    """Buscar -> Descubrir (antes, la sección Explorar)."""
+    if at is None:   # (un AppTest sin ejecutar cuenta como "vacío": `at or ...` no sirve)
+        at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["buscar_modo"] = "Descubrir"
+    return correr(at, seccion="mi_lista")
+
+
 def componente(at, contiene):
     """Los datos (en texto) del componente propio que lleva `contiene` ("" si no está)."""
     return next((str(c.proto) for c in at.get("bidi_component") if contiene in str(c.proto)), "")
 
 
 def test_explorar_busca_cerca_y_pide_analizar(explorar):
-    at = correr(seccion="explorar")
+    at = descubrir()
     assert not componente(at, "estado_texto")                           # sin texto ni ubicación: nada aún
     at.session_state["ubicacion_actual"] = CHUECA
     at.text_input(key="ex_texto").input("taberna").run()
@@ -1210,7 +1218,7 @@ def test_explorar_en_mapa(explorar):
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["ubicacion_actual"] = CHUECA
     at.session_state["ex_vista"] = "Mapa"
-    at = correr(at, seccion="explorar")
+    at = descubrir(at)
     mapa = componente(at, "mapa_explorar")
     assert "Taberna Nueva" in mapa and "Ya Analizado" in mapa and "analizado" in mapa   # pin verde
     assert not componente(at, "estado_texto")                           # en vez de la lista
@@ -1220,7 +1228,7 @@ def test_explorar_en_mapa(explorar):
 def test_explorar_un_sitio_analizado_abre_su_ficha_completa(explorar):
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["lugar_abrir"] = explorar["lugares"][1]
-    at = correr(at, seccion="explorar")
+    at = descubrir(at)
     assert any(b.label == "Cómo llegar" for b in at.get("link_button"))
     assert f"he_ido_{explorar['id_analizado']}" in [b.key for b in at.button]   # con "He ido", eatlist...
     assert "analizar_lugar" not in [b.key for b in at.button]
@@ -1232,17 +1240,16 @@ def test_explorar_sin_la_tabla_avisa(multiusuario, monkeypatch):
     monkeypatch.setattr(datos.Supabase, "buscar_lugares", falla)
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["ubicacion_actual"] = CHUECA
-    at = correr(at, seccion="explorar")
+    at = descubrir(at)
     assert any("009_lugares.sql" in w.value for w in at.warning)
 
 
-def test_explorar_en_modo_local_no_falla():
-    at = correr(seccion="explorar")
-    assert any("modo con cuentas" in i.value for i in at.info)
+def test_buscar_tiene_mis_restaurantes_descubrir_y_personas(multiusuario):
+    at = correr(seccion="mi_lista")
+    modos = at.get("button_group")[0]
+    assert "Mis restaurantes" in str(modos.proto) and "Descubrir" in str(modos.proto) and "Personas" in str(modos.proto)
+    assert at.session_state["buscar_modo"] == "Mis restaurantes"
 
-
-
-# ---------------------------------------------------------------- Explorar al día y análisis automático
 
 def test_buscar_lugares_no_ensena_los_cerrados(monkeypatch):
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
@@ -1267,7 +1274,7 @@ def test_avisar_de_que_ha_cerrado_lo_quita(explorar, monkeypatch):
     monkeypatch.setattr(datos.Supabase, "avisar_cerrado", lambda self, i: cerrados.append(i))
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["ubicacion_actual"] = CHUECA
-    at = correr(at, seccion="explorar")
+    at = descubrir(at)
     assert "Taberna Nueva" in componente(at, "estado_texto")
     at.session_state["lugar_abrir"] = explorar["lugares"][0]
     at.run()
@@ -1290,7 +1297,7 @@ def test_la_ventana_de_un_sitio_en_analisis_se_actualiza_sola(explorar, monkeypa
     monkeypatch.setattr(datos.Supabase, "lugar_por_id", lambda self, i: dict(estado_bd["lugar"]))
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["lugar_abrir"] = pendiente
-    at = correr(at, seccion="explorar")
+    at = descubrir(at)
     assert any("se actualiza sola" in i.value for i in at.info)            # aún analizándose
     assert "analizar_lugar" not in [b.key for b in at.button]
     # el procesador termina: la próxima vez que la ventana mira, se abre con la ficha completa
@@ -1306,7 +1313,7 @@ def test_un_sitio_que_ha_cerrado_lo_dice(explorar, monkeypatch):
     cerrado = {**explorar["lugares"][0], "estado_analisis": "cerrado"}
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["lugar_abrir"] = cerrado
-    at = correr(at, seccion="explorar")
+    at = descubrir(at)
     assert any("ha cerrado" in w.value for w in at.warning) and "analizar_lugar" not in [b.key for b in at.button]
 
 

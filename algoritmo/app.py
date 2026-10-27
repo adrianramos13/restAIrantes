@@ -625,7 +625,8 @@ def selector_comensales(id_restaurante, invitacion=None):
         return []
     elegidos = st.multiselect("Con quién fuiste", range(len(opciones)), key=f"comensales_elegidos_{id_restaurante}",
                               format_func=lambda i: amigos.etiqueta_amigo(amigos_ok[opciones[i]]),
-                              placeholder="Escribe su nombre o @usuario (opcional)")   # filtra al escribir
+                              placeholder="Escribe su nombre o @usuario (opcional)",   # filtra al escribir
+                              select_all=False)   # sin "Select all": no tiene sentido invitar a todos a la vez
     return [opciones[i] for i in elegidos]
 
 
@@ -1007,21 +1008,20 @@ def mostrar_portada(num_restaurantes, tras_intro=False, maestro=None,
 
 
 # ----------------------- BARRA DE SECCIONES ----------------------- #
-# Componente propio fijo abajo: Inicio, Explorar (cualquier restaurante; solo con cuentas), Comer hoy (el
-# buscador), Mi lista y Perfil (con la foto de Google del usuario como icono). Solo se dibuja la sección elegida; lo escrito en las demás se
+# Componente propio fijo abajo: Inicio, Comer hoy (el buscador), Buscar (tus restaurantes, "Descubrir" cualquier
+# restaurante y personas) y Perfil (con la foto de Google del usuario como icono). Solo se dibuja la sección elegida; lo escrito en las demás se
 # conserva con conservar_formularios().
 
-SECCIONES = ("inicio", "explorar", "comer", "mi_lista", "perfil")
+SECCIONES = ("inicio", "comer", "mi_lista", "perfil")
 _BARRA = st.components.v2.component(
     "barra_secciones", html=recurso("barra.html"), css=recurso("barra.css"), js=recurso("barra.js"),
 )
 
 # Widgets de cada sección cuyo valor tiene que sobrevivir mientras se está en otra.
 CLAVES_FORMULARIOS = {
-    "explorar": ("ex_texto", "ex_vista"),
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
     # sin "ml_idos" (solo los que he ido): lo activa "Ver en formato lista" y se olvida al salir de Mi lista
-    "mi_lista": ("ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
+    "mi_lista": ("ex_texto", "ex_vista", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
 }
 
 
@@ -1059,7 +1059,7 @@ def limpiar_filtros_mi_lista():
 
 def barra_secciones(seccion, foto=None, avisos=0):
     """`avisos`: solicitudes de amistad pendientes (globito sobre el icono de Perfil)."""
-    _BARRA(key="barra_secciones", data={"activa": seccion, "foto": foto, "avisos": avisos, "explorar": BD is not None},
+    _BARRA(key="barra_secciones", data={"activa": seccion, "foto": foto, "avisos": avisos},
            on_seccion_change=_al_cambiar_seccion)
 
 
@@ -1194,17 +1194,23 @@ def restaurantes_a_los_que_has_ido():
     return df.drop(columns=["Amigo", "Nota visita", "Comentario visita", "Fecha visita"]).drop_duplicates("ID")
 
 
-MODOS_BUSCAR = ("Restaurantes", "Personas")
+MODO_MIOS, MODO_DESCUBRIR, MODO_PERSONAS = "Mis restaurantes", "Descubrir", "Personas"
+MODOS_BUSCAR = (MODO_MIOS, MODO_DESCUBRIR, MODO_PERSONAS)
 
 
 def seccion_mi_lista(maestro, df_platos):
-    """Buscar: tus restaurantes (con filtros) o, en "Personas", gente registrada para hacerte su amigo."""
+    """Buscar: tus restaurantes (con filtros); en "Descubrir", cualquier restaurante, bar o cafetería (explorar.py);
+    en "Personas", gente registrada para hacerte su amigo."""
     st.header("Buscar")
     if CONFIG_MULTIUSUARIO:
-        st.session_state.setdefault("buscar_modo", "Restaurantes")
+        st.session_state.setdefault("buscar_modo", MODO_MIOS)
         modo = st.segmented_control("Qué buscar", MODOS_BUSCAR, key="buscar_modo", label_visibility="collapsed",
-                                    width="stretch") or "Restaurantes"
-        if modo == "Personas":
+                                    width="stretch") or MODO_MIOS
+        if modo == MODO_DESCUBRIR:
+            explorar.seccion(BD, usuario, ficha=contenido_ficha, boton_ubicacion=boton_ubicacion_actual,
+                             lista=lista_de_lugares, mapa=mapa_de_lugares)
+            return
+        if modo == MODO_PERSONAS:
             amigos.buscador_de_personas(BD, usuario, nombre_usuario, perfil, al_guardar_alias=cargar_perfil.clear)
             return
     # "Solo a los que he ido": lo mismo que Mi lista pero con tus "He ido" (aunque no estén en tu lista).
@@ -1450,13 +1456,13 @@ def ver_en_mi_lista(cocina=None, solo_idos=False):
     restaurantes a los que has ido."""
     st.session_state["ml_cocinas"] = [cocina] if cocina else []
     st.session_state["ml_idos"] = solo_idos
-    st.session_state["buscar_modo"] = "Restaurantes"
+    st.session_state["buscar_modo"] = MODO_MIOS
     ir_a("mi_lista")
 
 
 def buscar_personas():
     """A Buscar -> Personas (p. ej. desde "Buscar amigos" de Inicio)."""
-    st.session_state["buscar_modo"] = "Personas"
+    st.session_state["buscar_modo"] = MODO_PERSONAS
     ir_a("mi_lista")
 
 
@@ -1704,10 +1710,6 @@ barra_secciones(seccion, google.get("foto"), amigos.solicitudes_pendientes(BD, u
 # Inicio, Mi lista y Perfil trabajan siempre con la lista del usuario; "Comer hoy" es lo de debajo.
 if seccion == "inicio":
     seccion_inicio(maestro, df_platos, hay_intro, momento_portada, nombre_usuario)
-    st.stop()
-if seccion == "explorar":
-    explorar.seccion(BD, usuario, ficha=contenido_ficha, boton_ubicacion=boton_ubicacion_actual,
-                     lista=lista_de_lugares, mapa=mapa_de_lugares)
     st.stop()
 if seccion == "mi_lista":
     seccion_mi_lista(maestro, df_platos)
