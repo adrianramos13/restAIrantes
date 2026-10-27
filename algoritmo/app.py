@@ -625,7 +625,7 @@ def selector_comensales(id_restaurante, invitacion=None):
         return []
     elegidos = st.multiselect("Con quién fuiste", range(len(opciones)), key=f"comensales_elegidos_{id_restaurante}",
                               format_func=lambda i: amigos.etiqueta_amigo(amigos_ok[opciones[i]]),
-                              placeholder="Tus amigos (opcional)")
+                              placeholder="Escribe su nombre o @usuario (opcional)")   # filtra al escribir
     return [opciones[i] for i in elegidos]
 
 
