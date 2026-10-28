@@ -321,3 +321,22 @@ def test_informe_de_espacio():
                               "tabla lugares": 30 * 1024 * 1024, "tabla visitas": 1024 * 1024})
     assert lineas[0].startswith("Base de datos: 450.0 MB de 500 MB (90%)") and "AVISO" in lineas[0]
     assert "AVISO" not in lineas[1] and lineas[3] == "  lugares: 30.0 MB"
+
+
+def test_jev_abre_clientes_nuevos_tras_cerrarlos(monkeypatch):
+    import clasificar_restaurantes_jev as clasif   # el procesador lo usa varias veces en el mismo proceso
+
+    class ClienteFalso:
+        cerrado = False
+
+        def __init__(self, **kw):
+            pass
+
+        def close(self):
+            self.cerrado = True
+    monkeypatch.setattr(clasif, "TypeSafeClient", ClienteFalso)
+    primero = clasif._cliente()
+    clasif._cerrar_clientes()
+    segundo = clasif._cliente()
+    assert primero.cerrado and segundo is not primero and not segundo.cerrado
+    clasif._cerrar_clientes()

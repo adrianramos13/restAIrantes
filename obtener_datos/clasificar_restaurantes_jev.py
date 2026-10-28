@@ -569,11 +569,14 @@ def _comprobar_conexion():
 
 
 def _cerrar_clientes():
+    global _local
     for c in _clientes:
         try:
             c.close()
         except Exception:  # noqa: BLE001
             pass
+    _clientes.clear()
+    _local = threading.local()   # el procesador llama a main() muchas veces: el siguiente análisis abre clientes nuevos
 
 
 # ----------------------- CLASIFICACIÓN DE TODAS LAS RESEÑAS ----------------------- #
