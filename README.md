@@ -413,7 +413,13 @@ La sesión se guarda en una cookie del navegador durante 30 días (solo el token
   Register-ScheduledTask -TaskName "restAIrantes procesador" -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) -Action $accion -Settings $ajustes
   ```
 
-  Para pararlo: *Programador de tareas → restAIrantes procesador → Finalizar* (o *Deshabilitar* para que no arranque más).
+  Para pararlo: *Programador de tareas → restAIrantes procesador → Finalizar* (o *Deshabilitar* para que no arranque más). Finalizar la tarea no cierra el Python que lanzó: para reiniciarlo (p. ej. tras cambiar el código) hay que pararlo también, o quedarían dos procesadores a la vez:
+
+  ```powershell
+  Stop-ScheduledTask -TaskName "restAIrantes procesador"
+  Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object CommandLine -like "*procesar_solicitudes.py*" | ForEach-Object { Stop-Process -Id $_.ProcessId }
+  Start-ScheduledTask -TaskName "restAIrantes procesador"
+  ```
 - **Análisis por adelantado (`--lote`)**: cuando no hay nada pedido, el procesador analiza uno a uno los sitios de Descubrir **mejor valorados en Google** (de su ficha rápida), para que su ficha completa ya esté cuando alguien los abra. Lo pedido por los usuarios va siempre antes. Tandas de 40 con 12 min de descanso y 5–20 s entre uno y otro (para no parecer un robot ante Google); si fallan 5 seguidos se para (¿sesión perdida?). **Tope de gasto en Jev**: `--tope-usd` (10 $ por defecto, unos 5.000 sitios), acumulado entre ejecuciones en `origen/gasto_jev.json` (bórralo para empezar de cero).
 - **Espacio en Supabase**: `python obtener_datos/espacio.py` dice cuánto ocupan la base de datos y las fotos frente al plan gratuito (500 MB y 1 GB) y avisa a partir del 80 %.
 - **Los lunes a las 4:00** (5:00 en horario de verano), GitHub Actions (`.github/workflows/procesador.yml`) **comprueba durante 5 horas si los sitios de Descubrir siguen abiertos** (`obtener_datos/verificar_lugares.py`: abre su ficha de Google Maps y, si dice *Cerrado permanentemente* y es el mismo sitio, lo oculta). No necesita sesión de Google ni tu ordenador. Unos 6.000 sitios por semana: primero los nunca comprobados y después los comprobados hace más de 30 días. De paso guarda su **ficha rápida** (nota, cocina y una foto pequeña de Google). Para la primera carga de todos los sitios, lánzalo a mano (*Actions → Comprobar sitios abiertos → Run workflow*): mientras queden sitios sin ficha se vuelve a lanzar solo al terminar cada tanda de 5 horas. Necesita los secretos del repositorio `SUPABASE_URL` y `SUPABASE_CLAVE_SERVICIO` (*Settings → Secrets and variables → Actions*).
