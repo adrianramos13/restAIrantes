@@ -715,10 +715,10 @@ def _al_abrir_desde_lista(key):
 
 
 def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes", extra=None,
-                  carrusel=False, estatica=False):
+                  carrusel=False, estatica=False, poster=False):
     """Tarjetas de `top`. Con `modo_transporte` (resultados de una búsqueda) enseñan el tiempo de viaje;
     `extra(fila)` añade datos a la tarjeta (amigo, cuando, nota, cita: ver componentes/lista.js). Las de
-    sitios a los que ya has ido llevan "✓ Has ido"."""
+    sitios a los que ya has ido llevan "✓ Has ido". `poster`: tarjetas altas con la foto de fondo (con carrusel)."""
     visitados = set(mis_visitas())
     items = []
     for n, (_, fila) in enumerate(top.iterrows(), start=1):
@@ -733,7 +733,8 @@ def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_re
         })
     _LISTA_RESTAURANTES(
         # carrusel: fila que se desliza; estatica: solo para mirar (no abre la ficha)
-        data={"items": items, "seleccionado": seleccionado_id, "carrusel": carrusel, "estatica": estatica},
+        data={"items": items, "seleccionado": seleccionado_id, "carrusel": carrusel, "estatica": estatica,
+              "poster": poster},
         key=key, on_abrir_change=lambda: _al_abrir_desde_lista(key),
     )
 
@@ -1188,7 +1189,7 @@ def destacados_semana():
         return
     st.subheader("Lo mejor de la semana" if de_la_semana else "Lo último que se ha valorado")
     ahora = datetime.now(timezone.utc)
-    mostrar_lista(df, key="lista_destacados", carrusel=True, extra=lambda f: {
+    mostrar_lista(df, key="lista_destacados", carrusel=True, poster=True, extra=lambda f: {
         "amigo": str(f["Amigo"]), "cuando": hace_cuanto(f["Fecha visita"], ahora),
         "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
     coincide = df[df["ID"] == st.session_state.pop("ficha_abrir", None)]

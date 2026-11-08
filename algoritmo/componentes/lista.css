@@ -80,6 +80,30 @@
 .lr-carrusel .lr-foto img, .lr-carrusel .lr-inicial { width: 100%; height: 100px; }
 .lr-carrusel .lr-num, .lr-carrusel .lr-flecha { display: none; }
 .lr-carrusel .lr-nombre { font-size: 15px; }
+/* Póster ("Lo mejor de la semana"): tarjeta alta con la foto de fondo y barras alargadas abajo, encima de la
+   foto. Las barras llevan el fondo del tema casi opaco: se leen igual en claro y en oscuro sobre cualquier foto. */
+.lr-posters > li { flex: 0 0 min(260px, 78%); width: min(260px, 78%); }
+.lr-posters .lr-card {
+  position: relative; display: block; height: 340px; padding: 0; overflow: hidden; border-radius: 22px;
+}
+.lr-posters .lr-foto, .lr-posters .lr-foto img, .lr-posters .lr-inicial {
+  position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0;
+}
+.lr-posters .lr-inicial { font-size: 64px; }
+.lr-barras {
+  position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.lr-barra {
+  display: flex; flex-direction: column; gap: 1px; padding: 6px 12px; border-radius: 14px;
+  background: color-mix(in srgb, var(--st-background-color) 90%, transparent);
+  border: 1px solid var(--st-border-color); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.lr-posters .lr-nombre { font-size: 15px; -webkit-line-clamp: 1; }
+/* quién fue en una línea entera (el nombre no se corta) y debajo, cuándo a la izquierda y sus estrellas a la derecha */
+.lr-barra-quien { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 8px; }
+.lr-barra-quien .lr-quien { display: contents; }
+.lr-barra-quien .lr-amigo { grid-column: 1 / -1; }
+.lr-posters .lr-cita { -webkit-line-clamp: 2; opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .lr-card { transition: none; } .lr-card:active { transform: none; } }
 
 /* Tarjetas solo para mirar: sin cursor de enlace ni efecto al pulsar */
