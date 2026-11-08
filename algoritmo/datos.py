@@ -320,6 +320,21 @@ def _lotes(elementos, tamano=FILAS_POR_PETICION):
         yield elementos[i:i + tamano]
 
 
+# Trozos de categorías de Google que no son sitios de comer (tiendas, empresas, salones de eventos...): el análisis por
+# adelantado se los salta. "tienda" va aparte porque "Tienda de kebabs" sí es de comer.
+NO_COMIDA = ("poller", "pescader", "carnicer", "charcuter", "jamoner", "fiambre", "comercio", "oficina", "fábrica",
+             "fabricante", "productor", "supermercado", "hipermercado", "mayorista", "proveedor", "distribuidor",
+             "frutería", "quesería", "farmacia", "gimnasio", "eventos", "bodas", "banquetes", "catering",
+             "centro comercial", "inmobiliaria", "médico", "peluquer", "barbería", "taller", "almacén", "locutorio",
+             "estanco", "museo", "iglesia", "agencia", "empresa", "zapater", "muebles")
+
+
+def _filtro_comida():
+    """Filtro `or` de PostgREST: sin categoría (no se sabe: se analiza) o con una que no esté en NO_COMIDA."""
+    no = ",".join(f"cocina_google.not.ilike.*{trozo}*" for trozo in NO_COMIDA)
+    return f"(cocina_google.is.null,and(or(cocina_google.not.ilike.*tienda*,cocina_google.ilike.*kebab*),{no}))"
+
+
 class Supabase:
     def __init__(self, url, clave_servicio):
         self.url = url.rstrip("/")
@@ -730,10 +745,11 @@ class Supabase:
         self._rest("PATCH", "lugares", params={"id": f"eq.{lugar_id}"}, json=cambios)
 
     def lugares_para_analizar(self, limite=1):
-        """Los siguientes a analizar por adelantado: sin analizar y con ficha rápida, los mejor valorados primero."""
+        """Los siguientes a analizar por adelantado: sin analizar y con ficha rápida, los mejor valorados primero,
+        saltándose los que Google no da por sitio de comer (NO_COMIDA; Descubrir los sigue enseñando)."""
         return self._rest("GET", "lugares", params={
             "select": COLUMNAS_LUGAR, "estado_analisis": "eq.sin_analizar", "restaurante_id": "is.null",
-            "nota_google": "not.is.null", "order": "nota_google.desc", "limit": limite})
+            "nota_google": "not.is.null", "or": _filtro_comida(), "order": "nota_google.desc", "limit": limite})
 
     # ---------------- "Todos los restaurantes" por zona y espacio (supabase/012_ficha_rapida.sql) ----------------
 
@@ -844,3 +860,18 @@ class Supabase:
 
     def url_foto(self, archivo):
         return url_foto(self.url, archivo)
+
+    def fotos_en_storage(self, carpeta=""):
+        """[{name, size}] de las fotos de esa carpeta del almacenamiento (sin entrar en subcarpetas)."""
+        fotos, desde = [], 0
+        while True:
+            r = requests.post(f"{self.url}/storage/v1/object/list/{BUCKET_FOTOS}", headers=self._cabeceras,
+                              json={"prefix": carpeta, "limit": 1000, "offset": desde}, timeout=TIMEOUT_S)
+            if not r.ok:
+                raise ErrorSupabase(f"listar fotos: {r.status_code} {r.text[:200]}")
+            filas = r.json()
+            fotos += [{"name": carpeta + f["name"], "size": (f.get("metadata") or {}).get("size", 0)}
+                      for f in filas if f.get("id")]   # sin id = subcarpeta
+            if len(filas) < 1000:
+                return fotos
+            desde += 1000

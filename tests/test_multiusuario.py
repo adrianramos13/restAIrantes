@@ -1285,6 +1285,7 @@ def test_ficha_rapida_con_la_012(monkeypatch):
     params = llamadas[-1][2]
     assert params["order"] == "nota_google.desc" and params["estado_analisis"] == "eq.sin_analizar"   # mejor nota primero
     assert params["restaurante_id"] == "is.null" and params["nota_google"] == "not.is.null"
+    assert params["or"].startswith("(cocina_google.is.null,and(") and "not.ilike.*poller*" in params["or"]   # no comida
     assert "nota_google" in bd_._columnas_lugar()
 
 

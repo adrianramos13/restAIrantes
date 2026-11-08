@@ -93,6 +93,15 @@ def test_verificar_marca_todos_y_oculta_solo_los_cerrados(monkeypatch):
     assert bd.fotos == {"lugares/b.jpg": b"jpg"} and bd.fichas["a"] is None and bd.fichas["c"] is None
 
 
+def test_reducir_foto():
+    import io
+    from PIL import Image
+    grande = io.BytesIO()
+    Image.new("RGB", (900, 600), "orange").save(grande, "JPEG")
+    reducida = Image.open(io.BytesIO(vl.reducir_foto(grande.getvalue(), vl.LADO_FOTO_RESTAURANTE)))
+    assert reducida.size == (320, 213) and vl.reducir_foto(b"no es una imagen") is None
+
+
 def test_foto_pequena(monkeypatch):
     import io
     from PIL import Image

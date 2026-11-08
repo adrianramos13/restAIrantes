@@ -258,7 +258,8 @@ def lote(monkeypatch, tmp_path):
 
     class BD:
         def lugares_para_analizar(self, limite):
-            return [estado["cola"].pop(0)] if estado["cola"] else []
+            sacados, estado["cola"] = estado["cola"][:limite], estado["cola"][limite:]
+            return sacados
 
         def lugar_por_id(self, i):
             return {"estado_analisis": estado["resultado"]}
@@ -267,16 +268,16 @@ def lote(monkeypatch, tmp_path):
 
 def test_lote_para_al_llegar_al_tope(lote):
     estado, bd = lote
-    l = ps.Lote(tope_usd=0.005)                 # ~2 análisis
+    l = ps.Lote(tope_usd=0.005, por_lote=1)     # ~2 análisis
     while l.uno(bd):
         pass
     assert estado["analizados"] == ["l0", "l1", "l2"] and ps.gastado_en_lote() >= 0.005
-    assert ps.Lote(tope_usd=0.005).uno(bd) is False                    # el gasto se recuerda entre ejecuciones
+    assert ps.Lote(tope_usd=0.005, por_lote=1).uno(bd) is False                    # el gasto se recuerda entre ejecuciones
 
 
 def test_lote_descansa_tras_cada_tanda(lote):
     estado, bd = lote
-    l = ps.Lote(tope_usd=10, por_tanda=3, pausa_min=12)
+    l = ps.Lote(tope_usd=10, por_tanda=3, pausa_min=12, por_lote=1)
     while l.uno(bd):
         pass
     assert estado["analizados"] == ["l0", "l1", "l2"] and not l.toca()   # 3 y a descansar
@@ -287,10 +288,26 @@ def test_lote_descansa_tras_cada_tanda(lote):
 def test_lote_se_frena_si_falla_seguido(lote):
     estado, bd = lote
     estado["resultado"] = "error"
-    l = ps.Lote(tope_usd=10)
+    l = ps.Lote(tope_usd=10, por_lote=1)
     while l.uno(bd):
         pass
     assert len(estado["analizados"]) == ps.MAX_ERRORES_SEGUIDOS and l.parado   # para y no sigue gastando
+
+
+def test_lote_analiza_varios_a_la_vez(lote):
+    estado, bd = lote
+    llamadas = []
+    procesar = ps.procesar_lugares
+    ps.procesar_lugares = lambda b, lugares: llamadas.append(len(lugares)) or procesar(b, lugares)
+    try:
+        l = ps.Lote(tope_usd=10, por_tanda=8, por_lote=4)
+        while l.uno(bd):
+            pass
+    finally:
+        ps.procesar_lugares = procesar
+    assert llamadas == [4, 4] and estado["analizados"] == [f"l{i}" for i in range(8)]   # 2 lotes de 4 y a descansar
+    estado["resultado"], l.pausa_hasta = "error", 0
+    assert l.uno(bd) and l.parado is False                                # 2 errores (quedan 2): aún no frena
 
 
 def test_vigilar_atiende_antes_a_los_usuarios(monkeypatch, lote):
@@ -301,6 +318,7 @@ def test_vigilar_atiende_antes_a_los_usuarios(monkeypatch, lote):
     bd.lugar_por_id = bd_lote.lugar_por_id
     monkeypatch.setattr(ps, "cliente", lambda: bd)
     monkeypatch.setattr(ps, "procesar_explorar", lambda b: orden.append("usuarios"))
+    monkeypatch.setattr(ps, "POR_LOTE", 1)
     procesar = ps.procesar_lugares
 
     def procesar_y_parar(b, lugares):
@@ -340,3 +358,49 @@ def test_jev_abre_clientes_nuevos_tras_cerrarlos(monkeypatch):
     segundo = clasif._cliente()
     assert primero.cerrado and segundo is not primero and not segundo.cerrado
     clasif._cerrar_clientes()
+
+
+
+def test_subir_fotos_las_reduce(monkeypatch, tmp_path):
+    import io
+    from PIL import Image
+    Image.new("RGB", (900, 600), "orange").save(tmp_path / "casa-pepe.jpg", "JPEG")
+    monkeypatch.setattr(ps.extraer_html, "IMAGENES_DIR", tmp_path)
+    subidas = {}
+
+    class BD:
+        def subir_foto(self, archivo, contenido):
+            subidas[archivo] = contenido
+    filas = [{"imagen": "casa-pepe.jpg"}, {"imagen": "no-existe.jpg"}]
+    ps.subir_fotos(BD(), filas)
+    assert Image.open(io.BytesIO(subidas["casa-pepe.jpg"])).size == (320, 213)
+    assert filas[1]["imagen"] is None
+
+
+def test_reducir_fotos_del_almacenamiento(monkeypatch):
+    import io
+    from PIL import Image
+    import espacio
+    grande = io.BytesIO()
+    Image.effect_noise((1200, 900), 100).convert("RGB").save(grande, "PNG")   # ruido en PNG: ocupa mucho
+    subidas = {}
+
+    class Respuesta:
+        content = grande.getvalue()
+
+        def raise_for_status(self):
+            pass
+
+    class BD:
+        def fotos_en_storage(self):
+            return [{"name": "grande.jpg", "size": len(Respuesta.content)}, {"name": "pequena.jpg", "size": 9000}]
+
+        def url_foto(self, archivo):
+            return "https://x/" + archivo
+
+        def subir_foto(self, archivo, contenido):
+            subidas[archivo] = contenido
+    monkeypatch.setattr(espacio.requests, "get", lambda url, timeout: Respuesta())
+    cuantas, mb = espacio.reducir_fotos(BD())
+    assert cuantas == 1 and list(subidas) == ["grande.jpg"] and mb > 0   # la pequeña ni se descarga
+    assert max(Image.open(io.BytesIO(subidas["grande.jpg"])).size) == 320

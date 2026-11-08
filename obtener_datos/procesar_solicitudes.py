@@ -40,6 +40,7 @@ from bs4 import BeautifulSoup
 
 import extraer_html
 import extraer_resenas
+import verificar_lugares
 from conexion_supabase import cliente, datos
 
 # Datos que enseña la propia lista y pueden cambiar con el tiempo: se refrescan en los
@@ -133,7 +134,9 @@ def subir_fotos(bd, filas_catalogo):
     for fila in filas_catalogo:
         ruta = extraer_html.IMAGENES_DIR / (fila["imagen"] or "")
         if fila["imagen"] and ruta.is_file():
-            bd.subir_foto(fila["imagen"], ruta.read_bytes())
+            contenido = ruta.read_bytes()   # reducida, para que quepan miles en el almacenamiento gratuito
+            bd.subir_foto(fila["imagen"],
+                          verificar_lugares.reducir_foto(contenido, verificar_lugares.LADO_FOTO_RESTAURANTE) or contenido)
         else:
             fila["imagen"] = None
 
@@ -288,9 +291,11 @@ def procesar_explorar(bd):
 # ----------------------------- Análisis por adelantado (--lote) -----------------------------
 
 GASTO_JEV = Path(__file__).resolve().parent.parent / "origen" / "gasto_jev.json"   # lo gastado en el lote (en .gitignore)
+POR_LOTE = 10                  # sitios que se analizan juntos (un Chrome, reseñas en paralelo): mucho más rápido que de 1 en 1
 POR_TANDA = 40                 # sitios seguidos antes de descansar
 PAUSA_MIN = 12                 # descanso entre tandas, para no parecer un robot ante Google
 ESPERA_ENTRE_S = (5, 20)       # espera al azar entre uno y otro
+RESCATE_CADA_S = 600          # cada cuánto se rescata lo que se quedó en "procesando" (p. ej. se cortó la red al guardarlo)
 MAX_ERRORES_SEGUIDOS = 5       # más seguidos: Google pone pegas o se ha perdido la sesión -> se para el lote
 
 
@@ -302,13 +307,14 @@ def gastado_en_lote():
 
 
 class Lote:
-    """Analiza por adelantado, de uno en uno, los sitios de Descubrir mejor valorados en Google (su ficha rápida),
-    para que su ficha completa esté ya cuando alguien los abra. Con tope de gasto en Jev (se acumula entre
-    ejecuciones), tandas con descanso y freno si empiezan a fallar. Entre uno y otro, el bucle de --vigilar atiende
+    """Analiza por adelantado, de POR_LOTE en POR_LOTE, los sitios de Descubrir mejor valorados en Google (su ficha
+    rápida), para que su ficha completa esté ya cuando alguien los abra. Con tope de gasto en Jev (se acumula entre
+    ejecuciones), tandas con descanso y freno si empiezan a fallar. Entre lote y lote, el bucle de --vigilar atiende
     antes lo que piden los usuarios."""
 
-    def __init__(self, tope_usd, por_tanda=POR_TANDA, pausa_min=PAUSA_MIN):
+    def __init__(self, tope_usd, por_tanda=POR_TANDA, pausa_min=PAUSA_MIN, por_lote=None):
         self.tope_usd, self.por_tanda, self.pausa_min = tope_usd, por_tanda, pausa_min
+        self.por_lote = por_lote or POR_LOTE
         self.en_tanda, self.pausa_hasta, self.errores_seguidos, self.parado = 0, 0.0, 0, False
 
     def toca(self):
@@ -318,27 +324,28 @@ class Lote:
         """Analiza el siguiente. Devuelve si ha hecho algo (si no, toca esperar: descanso, tope o nada que hacer)."""
         if not self.toca():
             return False
-        siguientes = bd.lugares_para_analizar(1)
+        siguientes = bd.lugares_para_analizar(self.por_lote)
         if not siguientes:
             print("Por adelantado: no queda ninguno con ficha rápida por analizar. Se vuelve a mirar en 1 h.")
             self.pausa_hasta = time.monotonic() + 3600   # el comprobador de GitHub va añadiendo fichas rápidas
             return False
         import clasificar_restaurantes_jev as clasif   # para contar los tokens de Jev
-        lugar, antes = siguientes[0], clasif._tokens_entrada
-        procesar_lugares(bd, siguientes)
+        antes = clasif._tokens_entrada
+        procesar_lugares(bd, siguientes)   # todos juntos: un solo Chrome y las reseñas en varias pestañas a la vez
         gasto = gastado_en_lote() + (clasif._tokens_entrada - antes) / 1_000_000 * clasif.PRECIO_USD_POR_MILLON_TOKENS
         GASTO_JEV.parent.mkdir(parents=True, exist_ok=True)
         GASTO_JEV.write_text(json.dumps({"usd": round(gasto, 6)}), encoding="utf-8")
-        estado = (bd.lugar_por_id(lugar["id"]) or {}).get("estado_analisis")
-        self.errores_seguidos = self.errores_seguidos + 1 if estado == "error" else 0
-        print(f"Por adelantado: {lugar['nombre']} -> {estado} · gastado {gasto:.2f} de {self.tope_usd:g} $")
+        for lugar in siguientes:
+            estado = (bd.lugar_por_id(lugar["id"]) or {}).get("estado_analisis")
+            self.errores_seguidos = self.errores_seguidos + 1 if estado == "error" else 0
+            print(f"Por adelantado: {lugar['nombre']} -> {estado} · gastado {gasto:.2f} de {self.tope_usd:g} $")
         if self.errores_seguidos >= MAX_ERRORES_SEGUIDOS:
             print(f"Por adelantado: PARADO tras {MAX_ERRORES_SEGUIDOS} errores seguidos (¿Google pone pegas o se ha "
                   "perdido la sesión?). Revisa la sesión y reinicia la tarea.")
             self.parado = True
         elif gasto >= self.tope_usd:
             print(f"Por adelantado: alcanzado el tope de {self.tope_usd:g} $ de Jev. Se para.")
-        self.en_tanda += 1
+        self.en_tanda += len(siguientes)
         if self.en_tanda >= self.por_tanda:
             self.en_tanda, self.pausa_hasta = 0, time.monotonic() + self.pausa_min * 60
             print(f"Por adelantado: descanso de {self.pausa_min:g} min.")
@@ -370,12 +377,17 @@ def main(argv=None):
         print(f"Vigilando lo pendiente cada {args.vigilar:g} min (Ctrl+C para parar)...")
         # ponytail: supone un solo procesador; si lanzas otro --vigilar a la vez, repetiría lo que el primero tiene a medias
         print(f"Rescatados {bd.rescatar_interrumpidos()} análisis que se quedaron a medias.")
-        lote =Lote(args.tope_usd) if args.lote else None
+        lote = Lote(args.tope_usd) if args.lote else None
         if lote:
             print(f"Por adelantado: activado, con tope de {args.tope_usd:g} $ (gastado hasta ahora: {gastado_en_lote():.2f} $).")
+        rescate = time.monotonic()
         while True:
             hecho = False
             try:   # lo que piden los usuarios va siempre antes que el análisis por adelantado
+                if time.monotonic() - rescate > RESCATE_CADA_S:   # entre análisis, nada debería estar "procesando"
+                    rescate = time.monotonic()
+                    if rescatados := bd.rescatar_interrumpidos():
+                        print(f"Rescatados {rescatados} análisis que se quedaron a medias.")
                 pendientes = bd.listas_pendientes()
                 if pendientes:
                     procesar_varias(bd, pendientes)

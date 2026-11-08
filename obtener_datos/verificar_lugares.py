@@ -34,6 +34,7 @@ PESTANAS = 3       # sitios a la vez
 POR_LOTE = 60      # sitios que se piden a la base de datos de una vez
 PARECIDO = 0.75    # de los nombres (0-1) para dar por hecho que Google ha encontrado el mismo sitio
 LADO_FOTO = 240    # px: la foto de la ficha rápida, pequeña (~10 KB) para que quepan todas en el almacenamiento
+LADO_FOTO_RESTAURANTE = 320   # px: la de un restaurante analizado, algo mayor porque la ficha la enseña grande
 
 
 def mismo_sitio(nombre, nombre_google):
@@ -66,14 +67,22 @@ async def leer_ficha(page, lugar):
 
 def foto_pequena(url):
     """La foto de Google en JPEG de LADO_FOTO px como mucho (bytes), o None si no se puede."""
-    from PIL import Image
     try:
         r = requests.get(re.sub(r"=w\d+-h\d+[^/]*$", "=w400-h400-k-no", url), timeout=15)
         r.raise_for_status()
-        imagen = Image.open(io.BytesIO(r.content)).convert("RGB")
     except Exception:
         return None
-    imagen.thumbnail((LADO_FOTO, LADO_FOTO))
+    return reducir_foto(r.content)
+
+
+def reducir_foto(contenido, lado=LADO_FOTO):
+    """La imagen en JPEG de `lado` px como mucho (bytes), o None si no es una imagen."""
+    from PIL import Image
+    try:
+        imagen = Image.open(io.BytesIO(contenido)).convert("RGB")
+    except Exception:
+        return None
+    imagen.thumbnail((lado, lado))
     salida = io.BytesIO()
     imagen.save(salida, "JPEG", quality=72, optimize=True)
     return salida.getvalue()
