@@ -596,6 +596,15 @@ class Supabase:
             params["creado_en"] = f"gte.{desde.isoformat()}"
         return self._rest("GET", "visitas", params=params)
 
+    def visitas_valoradas(self, desde=None, limite=200):
+        """Visitas con nota de todos los usuarios, con su restaurante embebido: con `desde` (datetime con zona),
+        las de ese momento en adelante de mejor a peor nota; sin él, las últimas."""
+        params = {"nota": "not.is.null", "limit": limite, "order": "nota.desc,creado_en.desc" if desde else "creado_en.desc",
+                  "select": "usuario,nota,comentario,creado_en,restaurantes(id,datos,imagen)"}
+        if desde is not None:
+            params["creado_en"] = f"gte.{desde.isoformat()}"
+        return self._rest("GET", "visitas", params=params)
+
     # ---------------- eatlist (los que quieres probar, en orden) ----------------
 
     def eatlist_de(self, usuario):
@@ -684,11 +693,6 @@ class Supabase:
             a, b, c, d = caja_alrededor(cerca[0], cerca[1], radio_km)
             params["and"] = f"(lat.gte.{a:.6f},lat.lte.{b:.6f},lon.gte.{c:.6f},lon.lte.{d:.6f})"
         return self._paginado("lugares", {**params, "order": "confianza.desc.nullslast,id"}, limite)
-
-    def lugares_analizados(self, limite=5000):
-        """Los sitios de Descubrir que ya tienen ficha completa (para el mapa de Descubrir sin buscar nada)."""
-        return self._paginado("lugares", {"select": self._columnas_lugar(), "estado_analisis": "eq.analizado",
-                                          "order": "id"}, limite)
 
     def _paginado(self, tabla, params, limite):
         """GET de hasta `limite` filas, de 1000 en 1000 (lo máximo que da Supabase por petición)."""

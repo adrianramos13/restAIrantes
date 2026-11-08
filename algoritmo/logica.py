@@ -311,6 +311,21 @@ def hace_cuanto(fecha_iso, ahora):
     return datetime.fromisoformat(fecha_iso).astimezone(ahora.tzinfo).strftime("%d/%m")
 
 
+def mejores_visitas(visitas, n=5, rng=None, solo_ultimos=False):
+    """Descubrir: los `n` restaurantes mejor valorados por los usuarios ("Nota visita", la de "He ido", no la de
+    Google), cada uno una sola vez y con su mejor valoración; los empates, al azar (`rng`: semilla o Generator).
+    `solo_ultimos`: antes de ordenar, se queda con los `n` últimos restaurantes a los que se ha ido."""
+    df = visitas.dropna(subset=["Nota visita"]) if not visitas.empty else visitas
+    if df.empty:
+        return df
+    if solo_ultimos:
+        fechas = pd.to_datetime(df["Fecha visita"], utc=True, format="ISO8601")
+        ultimos = df.assign(_f=fechas).sort_values("_f", ascending=False)["ID"].drop_duplicates().head(n)
+        df = df[df["ID"].isin(ultimos)]
+    df = df.sample(frac=1, random_state=rng)   # barajar antes de un orden estable = empates al azar
+    return df.sort_values("Nota visita", ascending=False, kind="stable").drop_duplicates("ID").head(n)
+
+
 def _columna_cocina(maestro):
     return COL_CATEGORIA if tiene_categorias_jev(maestro) else "Tipo de cocina"
 

@@ -1177,6 +1177,25 @@ def visitas_de_amigos(abrir):
         mostrar_ficha(coincide.iloc[0], pd.DataFrame(columns=bd.COLUMNAS_PLATOS))
 
 
+def destacados_semana():
+    """Descubrir sin buscar nada: los 5 restaurantes mejor valorados ("He ido") por todos en la última semana o,
+    si no hay, los últimos a los que se ha ido. Tira horizontal como la de los amigos."""
+    try:
+        df, de_la_semana = amigos.cargar_destacados(BD)
+    except bd.ErrorSupabase:
+        return
+    if df.empty:
+        return
+    st.subheader("Lo mejor de la semana" if de_la_semana else "Lo último que se ha valorado")
+    ahora = datetime.now(timezone.utc)
+    mostrar_lista(df, key="lista_destacados", carrusel=True, extra=lambda f: {
+        "amigo": str(f["Amigo"]), "cuando": hace_cuanto(f["Fecha visita"], ahora),
+        "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
+    coincide = df[df["ID"] == st.session_state.pop("ficha_abrir", None)]
+    if not coincide.empty:
+        mostrar_ficha(coincide.iloc[0], pd.DataFrame(columns=bd.COLUMNAS_PLATOS))
+
+
 # ----------------------- MI LISTA ----------------------- #
 # Todos los restaurantes de la lista del usuario, con buscador por nombre y filtros.
 
@@ -1208,7 +1227,7 @@ def seccion_mi_lista(maestro, df_platos):
                                     width="stretch") or MODO_MIOS
         if modo == MODO_DESCUBRIR:
             explorar.seccion(BD, usuario, ficha=contenido_ficha, boton_ubicacion=boton_ubicacion_actual,
-                             caja_zona=caja_direccion_con_sugerencias,
+                             caja_zona=caja_direccion_con_sugerencias, destacados=destacados_semana,
                              lista=lista_de_lugares, mapa=mapa_de_lugares)
             return
         if modo == MODO_PERSONAS:

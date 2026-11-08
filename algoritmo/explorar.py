@@ -55,11 +55,6 @@ def _en_zona(_cliente, texto, zona):
     return _cliente.buscar_lugares(texto, zona, radio_km=RADIO_ZONA_KM, limite=MAX_EN_ZONA)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def _analizados(_cliente):
-    return _cliente.lugares_analizados()
-
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def _geocodificar(texto):
     lugar = geocodificar_direccion(texto)
@@ -330,8 +325,9 @@ def _mapa(cliente, lugares, tu, mapa):
                   else "Con borde verde, los analizados."))
 
 
-def seccion(cliente, usuario, *, ficha, boton_ubicacion, caja_zona, lista, mapa):
+def seccion(cliente, usuario, *, ficha, boton_ubicacion, caja_zona, lista, mapa, destacados):
     """`ficha(fila, df_platos)`: la ficha completa de un restaurante del catálogo (la de siempre).
+    `destacados()`: lo que se ve sin buscar nada (la tira de lo mejor valorado de la semana).
     `boton_ubicacion(key)`: el botón "Usar mi ubicación" (comparte la ubicación con "Comer hoy").
     `caja_zona(key, disabled, placeholder)`: la caja de direcciones con sugerencias de Comer hoy.
     `lista(items, key, al_abrir)` y `mapa(puntos, centro, key, al_tocar, agrupar)`: los componentes de Comer hoy."""
@@ -359,12 +355,8 @@ def seccion(cliente, usuario, *, ficha, boton_ubicacion, caja_zona, lista, mapa)
             lugares = _en_zona(cliente, texto, cerca)
         elif bd.texto_busqueda(texto) or tu:
             lugares = _buscar(cliente, texto, tuple(tu) if tu else None)
-        else:   # sin buscar nada: el mapa de los ya analizados
-            lugares = _filtros(cliente, _visibles(_analizados(cliente)))
-            st.caption("Escribe un nombre, una zona o usa tu ubicación para ver todos los sitios. En el mapa, los "
-                       f"**{len(lugares)} ya analizados** (con ficha completa); los demás puedes pedir que se analicen.")
-            if lugares:
-                _mapa(cliente, lugares, None, mapa)
+        else:   # sin buscar nada: lo mejor valorado por los usuarios esta semana
+            destacados()
             return
     except bd.ErrorSupabase:
         st.warning(FALTA_TABLA)

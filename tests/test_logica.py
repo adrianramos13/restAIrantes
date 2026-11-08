@@ -12,7 +12,7 @@ from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_1, COL_VOTOS_2, OR
                     SCORE_COCINA_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, parsear_rango_precio, puntuacion_cocina, solapamiento,
                     sugerencia_plato, hace_cuanto, compatibilidad, cocina_favorita, en_comun,
-                    insertar_en_orden, insights_perfil, vista_previa_posicion)
+                    insertar_en_orden, insights_perfil, mejores_visitas, vista_previa_posicion)
 
 
 @pytest.mark.parametrize("texto, esperado", [
@@ -233,3 +233,27 @@ def test_insights_perfil():
     assert i["favorito"] == ("Japonés", 5.0)
     vacio = insights_perfil(pd.DataFrame(), pd.DataFrame(), datetime(2026, 10, 20, tzinfo=timezone.utc))
     assert vacio["cocina_favorita"] is None and vacio["probado"] is None and vacio["favorito"] is None
+
+
+def _visitas(*filas):
+    return pd.DataFrame([{"ID": i, "Nombre": f"R{i}", "Nota visita": nota, "Fecha visita": fecha} for i, nota, fecha in filas])
+
+
+def test_mejores_visitas_sin_repetir_y_con_su_mejor_nota():
+    df = _visitas((1, 3, "2026-11-01T10:00:00+00:00"), (2, 5, "2026-11-02T10:00:00+00:00"),
+                  (1, 4, "2026-11-03T10:00:00+00:00"), (3, None, "2026-11-04T10:00:00+00:00"))
+    top = mejores_visitas(df, n=5, rng=1)
+    assert top["ID"].tolist() == [2, 1] and top["Nota visita"].tolist() == [5, 4]   # sin nota no cuenta
+
+
+def test_mejores_visitas_empates_al_azar_y_tope():
+    df = _visitas(*[(i, 5, "2026-11-01T10:00:00+00:00") for i in range(10)])
+    vistos = {tuple(mejores_visitas(df, n=5, rng=s)["ID"]) for s in range(20)}
+    assert all(len(v) == 5 for v in vistos) and len(vistos) > 1
+
+
+def test_mejores_visitas_solo_los_ultimos_restaurantes():
+    df = _visitas((1, 5, "2026-10-01T10:00:00+00:00"), (2, 2, "2026-10-20T10:00:00+02:00"),
+                  (3, 4, "2026-10-21T10:00:00+00:00"))
+    assert mejores_visitas(df, n=2, rng=0, solo_ultimos=True)["ID"].tolist() == [3, 2]   # el 1 es más antiguo
+    assert mejores_visitas(pd.DataFrame(), n=5).empty

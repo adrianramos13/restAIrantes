@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 import datos as bd
-from logica import cocina_favorita, compatibilidad, en_comun, hace_cuanto
+from logica import cocina_favorita, compatibilidad, en_comun, hace_cuanto, mejores_visitas
 
 _COMPONENTES = Path(__file__).resolve().parent / "componentes"
 _BUSCADOR = {n: (_COMPONENTES / f"buscador_amigos.{n}").read_text(encoding="utf-8") for n in ("html", "css", "js")}
@@ -85,6 +85,24 @@ def cargar_visitas_amigos(_bd, usuario, limite=50):
     nombres = {a["usuario"]: a["nombre"] or a["alias"] or "Un amigo" for a in amigos}
     desde = datetime.now(timezone.utc) - timedelta(days=DIAS_VISITAS_AMIGOS)
     return bd.visitas_a_dataframe(_bd.visitas_de(list(nombres), limite, desde=desde), nombres)
+
+
+DIAS_DESTACADOS = 7       # Descubrir: lo mejor valorado por todos en la última semana
+EN_DESTACADOS = 5
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_destacados(_bd):
+    """(DataFrame de las mejores visitas de todos los usuarios en los últimos 7 días, True) o, si no hay ninguna,
+    (las de los últimos restaurantes a los que se ha ido, False). En caché: los empates no cambian a cada recarga."""
+    semana = _bd.visitas_valoradas(desde=datetime.now(timezone.utc) - timedelta(days=DIAS_DESTACADOS))
+    filas = semana or _bd.visitas_valoradas(limite=50)
+    usuarios = {v["usuario"] for v in filas}
+    perfiles = _bd.perfiles_de(usuarios)
+    nombres = {u: (perfiles.get(u) or {}).get("nombre") or (perfiles.get(u) or {}).get("alias") or "Alguien"
+               for u in usuarios}
+    df = bd.visitas_a_dataframe(filas, nombres)
+    return mejores_visitas(df, EN_DESTACADOS, solo_ultimos=not semana), bool(semana)
 
 
 @st.cache_data(ttl=60, show_spinner=False)

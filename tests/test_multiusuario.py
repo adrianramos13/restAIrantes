@@ -1173,12 +1173,14 @@ def explorar(multiusuario, monkeypatch):
     monkeypatch.setattr(datos.Supabase, "buscar_lugares", lambda self, texto="", cerca=None, radio_km=2.0, limite=200:
                         estado["busquedas"].append((texto, cerca)) or [dict(l) for l in estado["lugares"]])
     monkeypatch.setattr(datos.Supabase, "pedir_analisis", lambda self, u, i: estado["pedidos"].append((u, i)))
-    monkeypatch.setattr(datos.Supabase, "lugares_analizados", lambda self, limite=5000: [
-        dict(l) for l in estado["lugares"] if l["estado_analisis"] == "analizado"])
     monkeypatch.setattr(datos.Supabase, "restaurantes_por_ids", lambda self, ids: (
         maestro[maestro["ID"].isin(ids)].copy(), pd.DataFrame(columns=datos.COLUMNAS_PLATOS)))
     monkeypatch.setattr(datos.Supabase, "lugar_por_id", lambda self, i: next(
         dict(l) for l in estado["lugares"] if l["id"] == i))
+    estado.update(semana=[], ultimas=[])                                 # "He ido" de todos: de la semana / las últimas
+    monkeypatch.setattr(datos.Supabase, "visitas_valoradas", lambda self, desde=None, limite=200:
+                        estado["semana" if desde else "ultimas"])
+    monkeypatch.setattr(datos.Supabase, "perfiles_de", lambda self, usuarios: {"bea@ejemplo.com": {"nombre": "Bea"}})
     return estado
 
 
@@ -1197,9 +1199,8 @@ def componente(at, contiene):
 
 def test_explorar_busca_cerca_y_pide_analizar(explorar):
     at = descubrir()
-    assert not componente(at, "estado_texto")                           # sin texto ni ubicación: el mapa
-    mapa = componente(at, "mapa_explorar")                              # de los ya analizados
-    assert "Ya Analizado" in mapa and "Taberna Nueva" not in mapa
+    assert not componente(at, "estado_texto") and not componente(at, "mapa_explorar")   # sin buscar: nada
+    assert explorar["busquedas"] == []
     assert "Has pedido analizar" not in [s.value for s in at.subheader]
     at.session_state["ubicacion_actual"] = CHUECA
     at.text_input(key="ex_texto").input("taberna").run()
@@ -1216,6 +1217,34 @@ def test_explorar_busca_cerca_y_pide_analizar(explorar):
     at.button(key="analizar_lugar").click().run()
     assert explorar["pedidos"] == [("ana@ejemplo.com", "l1")]
     assert "lisis en camino" in componente(at, "estado_texto")           # se ve al momento
+
+
+def _visita(usuario, rid, nombre, nota, comentario=None, fecha="2026-11-07T14:00:00+00:00"):
+    return {"usuario": usuario, "nota": nota, "comentario": comentario, "creado_en": fecha,
+            "restaurantes": {"id": rid, "datos": {"Nombre": nombre, "Puntuación": 4.4, "Rango de precios": "20-30 €"},
+                             "imagen": None}}
+
+
+def test_descubrir_sin_buscar_ensena_lo_mejor_de_la_semana(explorar):
+    explorar["semana"] = [_visita("bea@ejemplo.com", 1, "Casa Bea", 5, "Croquetas top"),
+                          _visita("otro@ejemplo.com", 1, "Casa Bea", 3),
+                          _visita("otro@ejemplo.com", 2, "Bar Otro", 4)]
+    at = descubrir()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "Lo mejor de la semana" in [s.value for s in at.subheader]
+    tira = componente(at, "lista_destacados")
+    assert tira.count("Casa Bea") == 1 and "Bar Otro" in tira                 # sin repetir restaurante
+    assert tira.index("Casa Bea") < tira.index("Bar Otro")                    # mejor nota de usuario primero
+    assert "Bea" in tira and "Croquetas top" in tira and "Alguien" in tira    # quién, su comentario
+    assert "20-30" in tira and "4,4" in tira                                  # precio y nota de Google
+    assert "ejemplo.com" not in tira                                          # nunca los correos
+
+
+def test_descubrir_sin_valoraciones_de_la_semana_ensena_las_ultimas(explorar):
+    explorar["ultimas"] = [_visita("bea@ejemplo.com", 2, "Bar Viejo", 4, fecha="2026-09-01T14:00:00+00:00")]
+    at = descubrir()
+    assert "Lo último que se ha valorado" in [s.value for s in at.subheader]
+    assert "Bar Viejo" in componente(at, "lista_destacados")
 
 
 def test_explorar_en_mapa(explorar):
@@ -1278,8 +1307,6 @@ def test_buscar_lugares_pide_de_1000_en_1000(monkeypatch):
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [{"id": "x"}] * (p["limit"] if p.get("offset", 0) < 2000 else 3))
     assert len(bd_.buscar_lugares("", (40.4, -3.7), radio_km=1, limite=3000)) == 2003
     assert [(p["offset"], p["limit"]) for _, _, p, _ in llamadas if "offset" in p] == [(0, 1000), (1000, 1000), (2000, 1000)]
-    bd_.lugares_analizados()
-    assert llamadas[-1][2]["estado_analisis"] == "eq.analizado"
 
 
 def test_explorar_un_sitio_analizado_abre_su_ficha_completa(explorar):
