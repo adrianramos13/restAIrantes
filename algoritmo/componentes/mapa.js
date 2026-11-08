@@ -4,6 +4,11 @@ const LEAFLET_JS = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
 const MAPLIBRE_CSS = 'https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css';
 const MAPLIBRE_JS = 'https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js';
 const PLUGIN_JS = 'https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js';
+const CLUSTER_JS = 'https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js';
+const CLUSTER_CSS = [
+  'https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css',
+  'https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css',
+];
 const TIEMPO_MAX_VECTORIAL_MS = 12000;
 
 function cargarCss(href) {
@@ -42,6 +47,23 @@ function cargarMapLibre() {
     ]).then(() => undefined).catch((e) => { window.__fmMapLibre = null; throw e; });
   }
   return window.__fmMapLibre;
+}
+
+// Agrupador de marcadores (Descubrir con miles de sitios). Necesita Leaflet ya cargado; solo se pide si hace falta.
+function cargarAgrupador() {
+  if (window.L && window.L.markerClusterGroup) return Promise.resolve();
+  if (!window.__fmAgrupador) {
+    window.__fmAgrupador = Promise.all([...CLUSTER_CSS.map(cargarCss), cargarScript(CLUSTER_JS)])
+      .then(() => undefined)
+      .catch((e) => { window.__fmAgrupador = null; throw e; });
+  }
+  return window.__fmAgrupador;
+}
+
+function crearPunto(r) {
+  const punto = document.createElement('div');
+  punto.className = 'fm-punto' + (r.estado ? ` fm-${r.estado}` : '');
+  return punto;
 }
 
 function crearPin(r, seleccionado) {
@@ -126,7 +148,8 @@ function pintar(L, estado) {
   const { usuario, restaurantes, seleccionado } = estado.datos;
 
   if (!estado.mapa) {
-    estado.mapa = L.map(estado.contenedor, { scrollWheelZoom: false });
+    // Con vista y zoom máximo desde el principio: el agrupador falla sin ellos (la capa base llega más tarde).
+    estado.mapa = L.map(estado.contenedor, { scrollWheelZoom: false, maxZoom: 19 }).setView([40.4168, -3.7038], 12);
     estado.capa = L.layerGroup().addTo(estado.mapa);
     // La rueda del ratón solo hace zoom tras pinchar dentro del mapa (así no secuestra el scroll de la página).
     estado.mapa.on('mousedown', () => estado.mapa.scrollWheelZoom.enable());
@@ -139,6 +162,12 @@ function pintar(L, estado) {
 
   estado.seleccionado = seleccionado;
   estado.capa.clearLayers();
+  if (estado.grupo) estado.grupo.clearLayers();
+  const agrupar = Boolean(estado.datos.agrupar && L.markerClusterGroup);   // sin el plugin: pines normales
+  if (agrupar && !estado.grupo) {
+    estado.grupo = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 45, showCoverageOnHover: false })
+      .addTo(estado.mapa);
+  }
 
   if (usuario) {   // en Explorar se puede buscar sin dar la ubicación
     L.marker([usuario.lat, usuario.lon], {
@@ -147,17 +176,21 @@ function pintar(L, estado) {
     }).addTo(estado.capa);
   }
 
-  restaurantes.forEach((r) => {
-    const marcador = L.marker([r.lat, r.lon], {
-      icon: L.divIcon({ className: 'fm-icono', html: crearPin(r, r.id === seleccionado), iconSize: [46, 56], iconAnchor: [23, 56] }),
-      zIndexOffset: r.id === seleccionado ? 1000 : 100 - r.n,
-    });
+  const marcadores = restaurantes.map((r) => {
+    const marcador = L.marker([r.lat, r.lon], agrupar
+      ? { icon: L.divIcon({ className: 'fm-icono', html: crearPunto(r), iconSize: [16, 16], iconAnchor: [8, 8] }) }
+      : {
+        icon: L.divIcon({ className: 'fm-icono', html: crearPin(r, r.id === seleccionado), iconSize: [46, 56], iconAnchor: [23, 56] }),
+        zIndexOffset: r.id === seleccionado ? 1000 : 100 - r.n,
+      });
     const nombre = document.createElement('span');
     nombre.textContent = r.nombre;
-    marcador.bindTooltip(nombre, { direction: 'top', offset: [0, -50], opacity: 0.95 });
+    marcador.bindTooltip(nombre, { direction: 'top', offset: agrupar ? [0, -8] : [0, -50], opacity: 0.95 });
     marcador.on('click', () => estado.setTrigger('seleccion', r.id));
-    marcador.addTo(estado.capa);
+    return marcador;
   });
+  if (agrupar) estado.grupo.addLayers(marcadores);
+  else marcadores.forEach((m) => m.addTo(estado.capa));
 
   // Encuadre: solo cuando cambia el conjunto de restaurantes (no al seleccionar uno),
   // para no perder el zoom/posición que haya puesto la persona.
@@ -190,8 +223,10 @@ export default function (component) {
   estado.datos = data;
 
   cargarLeaflet()
+    .then((L) => (data.agrupar ? cargarAgrupador().catch(() => undefined) : Promise.resolve()).then(() => L))
     .then((L) => pintar(L, estado))
-    .catch(() => {
+    .catch((e) => {
+      console.error('Mapa:', e);   // el usuario solo ve el aviso; el detalle, en la consola
       contenedor.textContent = '';
       const aviso = document.createElement('div');
       aviso.className = 'fm-mensaje';

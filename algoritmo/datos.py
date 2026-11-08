@@ -683,7 +683,23 @@ class Supabase:
         if cerca:
             a, b, c, d = caja_alrededor(cerca[0], cerca[1], radio_km)
             params["and"] = f"(lat.gte.{a:.6f},lat.lte.{b:.6f},lon.gte.{c:.6f},lon.lte.{d:.6f})"
-        return self._rest("GET", "lugares", params=params)
+        return self._paginado("lugares", {**params, "order": "confianza.desc.nullslast,id"}, limite)
+
+    def lugares_analizados(self, limite=5000):
+        """Los sitios de Descubrir que ya tienen ficha completa (para el mapa de Descubrir sin buscar nada)."""
+        return self._paginado("lugares", {"select": self._columnas_lugar(), "estado_analisis": "eq.analizado",
+                                          "order": "id"}, limite)
+
+    def _paginado(self, tabla, params, limite):
+        """GET de hasta `limite` filas, de 1000 en 1000 (lo máximo que da Supabase por petición)."""
+        filas = []
+        while len(filas) < limite:
+            pagina = min(1000, limite - len(filas))
+            nuevas = self._rest("GET", tabla, params={**params, "limit": pagina, "offset": len(filas)})
+            filas += nuevas
+            if len(nuevas) < pagina:
+                break
+        return filas
 
     def guardar_lugares(self, filas, tamano=1000):
         """Crea o actualiza lugares por id. Todas las filas de una llamada con las mismas columnas."""
@@ -697,12 +713,6 @@ class Supabase:
                    prefer="resolution=ignore-duplicates", json={"lugar_id": lugar_id, "usuario": usuario})
         self._rest("PATCH", "lugares", params={"id": f"eq.{lugar_id}", "estado_analisis": "in.(sin_analizar,error)"},
                    json={"estado_analisis": "pendiente", "mensaje": None, "actualizado_en": _ahora()})
-
-    def solicitudes_de(self, usuario, limite=20):
-        """Los sitios que ha pedido analizar el usuario (los últimos primero), con su lugar embebido."""
-        return self._rest("GET", "solicitudes_analisis", params={
-            "usuario": f"eq.{usuario}", "order": "creado_en.desc", "limit": limite,
-            "select": f"creado_en,lugares({COLUMNAS_LUGAR})"})
 
     def lugares_pendientes(self, limite=50):
         """Los que hay que analizar: primero los que más gente ha pedido y, a igualdad, los más antiguos."""

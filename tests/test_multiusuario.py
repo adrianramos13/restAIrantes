@@ -1173,7 +1173,8 @@ def explorar(multiusuario, monkeypatch):
     monkeypatch.setattr(datos.Supabase, "buscar_lugares", lambda self, texto="", cerca=None, radio_km=2.0, limite=200:
                         estado["busquedas"].append((texto, cerca)) or [dict(l) for l in estado["lugares"]])
     monkeypatch.setattr(datos.Supabase, "pedir_analisis", lambda self, u, i: estado["pedidos"].append((u, i)))
-    monkeypatch.setattr(datos.Supabase, "solicitudes_de", lambda self, u, limite=20: [])
+    monkeypatch.setattr(datos.Supabase, "lugares_analizados", lambda self, limite=5000: [
+        dict(l) for l in estado["lugares"] if l["estado_analisis"] == "analizado"])
     monkeypatch.setattr(datos.Supabase, "restaurantes_por_ids", lambda self, ids: (
         maestro[maestro["ID"].isin(ids)].copy(), pd.DataFrame(columns=datos.COLUMNAS_PLATOS)))
     monkeypatch.setattr(datos.Supabase, "lugar_por_id", lambda self, i: next(
@@ -1196,7 +1197,10 @@ def componente(at, contiene):
 
 def test_explorar_busca_cerca_y_pide_analizar(explorar):
     at = descubrir()
-    assert not componente(at, "estado_texto")                           # sin texto ni ubicación: nada aún
+    assert not componente(at, "estado_texto")                           # sin texto ni ubicación: el mapa
+    mapa = componente(at, "mapa_explorar")                              # de los ya analizados
+    assert "Ya Analizado" in mapa and "Taberna Nueva" not in mapa
+    assert "Has pedido analizar" not in [s.value for s in at.subheader]
     at.session_state["ubicacion_actual"] = CHUECA
     at.text_input(key="ex_texto").input("taberna").run()
     assert not at.exception, [e.value for e in at.exception]
@@ -1223,6 +1227,32 @@ def test_explorar_en_mapa(explorar):
     assert "Taberna Nueva" in mapa and "Ya Analizado" in mapa and "analizado" in mapa   # pin verde
     assert not componente(at, "estado_texto")                           # en vez de la lista
     assert any("borde verde" in c.value for c in at.caption)
+
+
+def test_descubrir_por_zona_ensena_todo_lo_de_alrededor(explorar, monkeypatch):
+    pedidas = []
+    monkeypatch.setattr(datos.Supabase, "buscar_lugares", lambda self, texto="", cerca=None, radio_km=2.0, limite=200:
+                        pedidas.append((texto, cerca, radio_km, limite)) or [dict(l) for l in explorar["lugares"]])
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["ex_zona_elegida"] = (CHUECA[0], CHUECA[1], "Chueca")     # lo que deja elegir una zona en la caja
+    at.session_state["ex_vista"] = "Mapa"
+    at = descubrir(at)
+    assert not at.exception, [e.value for e in at.exception]
+    assert pedidas == [("", CHUECA, 1.0, 3000)]                         # todos los de ~1 km, no solo 50
+    assert any("En Chueca" in c.value for c in at.caption)
+    mapa = componente(at, "mapa_explorar")
+    assert "Taberna Nueva" in mapa and "Ya Analizado" in mapa
+    at.toggle(key="ex_solo_analizados").set_value(True).run()
+    mapa = componente(at, "mapa_explorar")
+    assert "Ya Analizado" in mapa and "Taberna Nueva" not in mapa
+
+
+def test_buscar_lugares_pide_de_1000_en_1000(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [{"id": "x"}] * (p["limit"] if p.get("offset", 0) < 2000 else 3))
+    assert len(bd_.buscar_lugares("", (40.4, -3.7), radio_km=1, limite=3000)) == 2003
+    assert [(p["offset"], p["limit"]) for _, _, p, _ in llamadas if "offset" in p] == [(0, 1000), (1000, 1000), (2000, 1000)]
+    bd_.lugares_analizados()
+    assert llamadas[-1][2]["estado_analisis"] == "eq.analizado"
 
 
 def test_explorar_un_sitio_analizado_abre_su_ficha_completa(explorar):

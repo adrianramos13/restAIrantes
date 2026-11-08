@@ -36,3 +36,10 @@
 .fm-yo-punto { position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border: 3px solid #fff; border-radius: 50%; background: #1a73e8; box-shadow: 0 0 3px rgba(0, 0, 0, 0.45); }
 @keyframes fm-pulso { 0% { transform: scale(0.6); opacity: 0.55; } 100% { transform: scale(2.3); opacity: 0; } }
 .fm-mensaje { padding: 1rem; color: var(--st-text-color); }
+/* Descubrir con muchos sitios: puntos (agrupados en burbujas por Leaflet.markercluster) */
+.fm-punto {
+  width: 16px; height: 16px; box-sizing: border-box; border-radius: 50%; cursor: pointer;
+  border: 2px solid #fff; background: #9CA3AF; box-shadow: 0 0 3px rgba(0, 0, 0, 0.45);
+}
+.fm-punto.fm-analizado { background: #16A34A; }
+.fm-punto.fm-pendiente, .fm-punto.fm-procesando { background: #F59E0B; }

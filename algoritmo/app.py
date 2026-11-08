@@ -800,10 +800,11 @@ def lista_de_lugares(items, key, al_abrir):
                         key=key, on_abrir_change=al_abrir)
 
 
-def mapa_de_lugares(puntos, centro, key, al_tocar):
-    """Explorar: el mapa de siempre con sitios de Overture; sin `centro` (sin ubicación) encuadra los sitios."""
+def mapa_de_lugares(puntos, centro, key, al_tocar, agrupar=False):
+    """Descubrir: el mapa de siempre con sitios de Overture; sin `centro` (sin ubicación) encuadra los sitios.
+    Con `agrupar`, puntos agrupados en burbujas (para miles de sitios) en vez de pines con foto."""
     _MAPA_FOTOS(data={"usuario": {"lat": centro[0], "lon": centro[1]} if centro else None, "restaurantes": puntos,
-                      "seleccionado": None, "base": configuracion_mapa_base()},
+                      "seleccionado": None, "agrupar": agrupar, "base": configuracion_mapa_base()},
                 key=key, on_seleccion_change=al_tocar)
 
 
@@ -855,11 +856,11 @@ _CAJA_DIRECCION = st.components.v2.component(
 )
 
 
-def caja_direccion_con_sugerencias(key, disabled, placeholder):
+def caja_direccion_con_sugerencias(key, disabled, placeholder, etiqueta=None):
     """Devuelve (texto escrito, sugerencia elegida o None). La sugerencia solo vale si el
-    texto no se ha cambiado después de elegirla."""
+    texto no se ha cambiado después de elegirla. `etiqueta`: "" para no ponerla (por defecto, la de Comer hoy)."""
     res = _CAJA_DIRECCION(
-        key=key, data={"disabled": disabled, "placeholder": placeholder,
+        key=key, data={"disabled": disabled, "placeholder": placeholder, "etiqueta": etiqueta,
                        "texto": st.session_state.get("_texto_" + key, "")},
         default={"texto": "", "seleccion": None},
         on_texto_change=lambda: None, on_seleccion_change=lambda: None,
@@ -1021,7 +1022,7 @@ _BARRA = st.components.v2.component(
 CLAVES_FORMULARIOS = {
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
     # sin "ml_idos" (solo los que he ido): lo activa "Ver en formato lista" y se olvida al salir de Mi lista
-    "mi_lista": ("ex_texto", "ex_vista", "ex_orden", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
+    "mi_lista": ("ex_texto", "ex_vista", "ex_orden", "ex_solo_analizados", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
 }
 
 
@@ -1208,6 +1209,7 @@ def seccion_mi_lista(maestro, df_platos):
                                     width="stretch") or MODO_MIOS
         if modo == MODO_DESCUBRIR:
             explorar.seccion(BD, usuario, ficha=contenido_ficha, boton_ubicacion=boton_ubicacion_actual,
+                             caja_zona=caja_direccion_con_sugerencias,
                              lista=lista_de_lugares, mapa=mapa_de_lugares)
             return
         if modo == MODO_PERSONAS:

@@ -14,7 +14,7 @@ import streamlit as st
 
 import datos as bd
 from amigos import texto_seguro
-from servicios import haversine_km
+from servicios import geocodificar_direccion, haversine_km
 
 # Sin texto: lo que hay alrededor, ampliando si hay pocos. En el centro de Madrid caben ~400 sitios en 250 m y
 # más de 1.000 (el tope de una consulta) en 500 m: si se pasa del tope llegan unos cualesquiera, no los más cercanos.
@@ -23,7 +23,9 @@ RADIO_TEXTO_KM = 40      # con texto y ubicación: por nombre, en tu zona
 POR_PAGINA = 15
 CANDIDATOS = 1000        # se piden de sobra y luego se ordenan por distancia: si no, se cuelan sitios lejanos
 MAX_RESULTADOS = 200
-MAX_EN_MAPA = 50         # más pines se amontonan y no se distingue ninguno
+MAX_EN_MAPA = 50         # pines con foto; con más, el mapa los agrupa en burbujas con un número
+RADIO_ZONA_KM = 1.0      # una zona (barrio, calle, pueblo): todo lo que hay en ~1 km alrededor
+MAX_EN_ZONA = 3000       # en el centro de Madrid hay ~2.800 sitios en ese cuadrado
 ESTADOS = {   # estado_analisis -> (texto, color, icono)
     "analizado": ("Analizado", "green", ":material/verified:"),
     "pendiente": ("Análisis en camino", "orange", ":material/hourglass_top:"),
@@ -45,6 +47,46 @@ def _buscar(_cliente, texto, cerca):
         if len(lugares) >= MAX_EN_MAPA:
             break
     return lugares
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _en_zona(_cliente, texto, zona):
+    return _cliente.buscar_lugares(texto, zona, radio_km=RADIO_ZONA_KM, limite=MAX_EN_ZONA)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _analizados(_cliente):
+    return _cliente.lugares_analizados()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _geocodificar(texto):
+    lugar = geocodificar_direccion(texto)
+    return (lugar.latitude, lugar.longitude) if lugar else None
+
+
+def _elegir_zona(caja_zona):
+    """La caja de zona (la de direcciones de Comer hoy). La zona elegida queda en session_state["ex_zona_elegida"] =
+    (lat, lon, texto) y solo se recalcula cuando cambia lo escrito (eligiendo una sugerencia o pulsando Intro)."""
+    antes = st.session_state.get("_texto_ex_zona", "")
+    texto, sugerencia = caja_zona(key="ex_zona", disabled=False, placeholder="Zona: barrio, calle o pueblo", etiqueta="")
+    if texto == antes:
+        return st.session_state.get("ex_zona_elegida")
+    st.session_state.pop("ex_visibles", None)
+    st.session_state.pop("ex_zona_elegida", None)
+    if sugerencia:
+        st.session_state["ex_zona_elegida"] = (sugerencia["lat"], sugerencia["lon"], texto)
+    elif texto.strip():
+        try:
+            punto = _geocodificar(texto.strip())
+        except Exception:   # el servicio de direcciones no responde: no es lo mismo que "no existe"
+            st.warning("No se ha podido buscar esa zona ahora mismo. Prueba en un momento.")
+            return None
+        if punto:
+            st.session_state["ex_zona_elegida"] = (*punto, texto)
+        else:
+            st.warning("No encontramos esa zona. Prueba a elegir una de las sugerencias.")
+    return st.session_state.get("ex_zona_elegida")
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -219,31 +261,25 @@ def _lista(cliente, lugares, cerca, key, lista):
     lista(items, key=key, al_abrir=lambda: _al_tocar(key, "abrir"))
 
 
-def _mapa(cliente, lugares, cerca, mapa):
+def _mapa(cliente, lugares, tu, mapa):
+    """Todos los sitios: con pocos, pines con foto; con muchos, puntos agrupados (verdes los analizados).
+    `tu`: tu ubicación (punto azul), o None."""
     st.session_state.setdefault("ex_por_id", {}).update({l["id"]: l for l in lugares})
-    puntos = [{"id": l["id"], "n": n, "nombre": l["nombre"], "lat": l["lat"], "lon": l["lon"], "foto": _foto(cliente, l),
-               "icono": _icono(l), "estado": _estado(l)} for n, l in enumerate(lugares, start=1)]
-    mapa(puntos, cerca, key="mapa_explorar", al_tocar=lambda: _al_tocar("mapa_explorar", "seleccion"))
-    st.caption(("🔵 Tú · " if cerca else "") + (f"Los {len(lugares)} " + ("más cercanos" if cerca else "primeros")
-                                                + ". " if len(lugares) == MAX_EN_MAPA else "")
-               + "Toca un sitio para ver su ficha. Con borde verde, los analizados.")
+    agrupar = len(lugares) > MAX_EN_MAPA
+    puntos = [{"id": l["id"], "n": n, "nombre": l["nombre"], "lat": l["lat"], "lon": l["lon"],
+               "foto": None if agrupar else _foto(cliente, l), "icono": _icono(l), "estado": _estado(l)}
+              for n, l in enumerate(lugares, start=1)]
+    mapa(puntos, tu, key="mapa_explorar", al_tocar=lambda: _al_tocar("mapa_explorar", "seleccion"), agrupar=agrupar)
+    st.caption(("🔵 Tú · " if tu else "") + "Toca un sitio para ver su ficha. "
+               + ("En verde, los analizados; acércate para separar los grupos." if agrupar
+                  else "Con borde verde, los analizados."))
 
 
-def _tus_peticiones(cliente, usuario, cerca, lista):
-    try:
-        pedidas = cliente.solicitudes_de(usuario)
-    except bd.ErrorSupabase:
-        return
-    lugares = _visibles([p["lugares"] for p in pedidas if p.get("lugares")])
-    if lugares:
-        st.subheader("Has pedido analizar")
-        _lista(cliente, lugares, cerca, "lista_pedidos", lista)
-
-
-def seccion(cliente, usuario, *, ficha, boton_ubicacion, lista, mapa):
+def seccion(cliente, usuario, *, ficha, boton_ubicacion, caja_zona, lista, mapa):
     """`ficha(fila, df_platos)`: la ficha completa de un restaurante del catálogo (la de siempre).
     `boton_ubicacion(key)`: el botón "Usar mi ubicación" (comparte la ubicación con "Comer hoy").
-    `lista(items, key, al_abrir)` y `mapa(puntos, centro, key, al_tocar)`: los componentes de Comer hoy."""
+    `caja_zona(key, disabled, placeholder)`: la caja de direcciones con sugerencias de Comer hoy.
+    `lista(items, key, al_abrir)` y `mapa(puntos, centro, key, al_tocar, agrupar)`: los componentes de Comer hoy."""
     if cliente is None:   # solo hay "Descubrir" con cuentas de usuario
         return
     if (lugar := st.session_state.pop("lugar_abrir", None)) is not None:
@@ -252,37 +288,53 @@ def seccion(cliente, usuario, *, ficha, boton_ubicacion, lista, mapa):
     texto = st.text_input("Buscar un restaurante", placeholder="Cualquier restaurante, bar o cafetería",
                           key="ex_texto", label_visibility="collapsed", icon=":material/search:",
                           on_change=st.session_state.pop, args=("ex_visibles", None))   # otra búsqueda: desde arriba
+    zona = _elegir_zona(caja_zona)
     lectura = boton_ubicacion(key="ubicacion_explorar")
     if lectura.ubicacion:
         st.session_state["ubicacion_actual"] = (lectura.ubicacion["lat"], lectura.ubicacion["lon"])
-    cerca = st.session_state.get("ubicacion_actual")
-    if cerca:
+    tu = st.session_state.get("ubicacion_actual")
+    cerca = tuple(zona[:2]) if zona else tu   # desde dónde se mide la distancia: la zona, si hay, o tú
+    if zona:
+        st.caption(f"✓ En {texto_seguro(zona[2])} (lo que hay en ~1 km)")
+    elif tu:
         st.caption("✓ Cerca de tu ubicación" + ("" if bd.texto_busqueda(texto) else " (lo que hay alrededor)"))
 
-    if not bd.texto_busqueda(texto) and not cerca:
-        st.caption("Escribe un nombre o usa tu ubicación para ver lo que hay cerca. Los sitios **analizados** "
-                   "tienen ficha completa; los demás puedes pedir que se analicen.")
-        _tus_peticiones(cliente, usuario, cerca, lista)
-        return
     try:
-        lugares = _visibles(_ordenar(_buscar(cliente, texto, tuple(cerca) if cerca else None), cerca))[:MAX_RESULTADOS]
+        if zona:
+            lugares = _en_zona(cliente, texto, cerca)
+        elif bd.texto_busqueda(texto) or tu:
+            lugares = _buscar(cliente, texto, tuple(tu) if tu else None)
+        else:   # sin buscar nada: el mapa de los ya analizados
+            lugares = _visibles(_analizados(cliente))
+            st.caption("Escribe un nombre, una zona o usa tu ubicación para ver todos los sitios. En el mapa, los "
+                       f"**{len(lugares)} ya analizados** (con ficha completa); los demás puedes pedir que se analicen.")
+            if lugares:
+                _mapa(cliente, lugares, None, mapa)
+            return
     except bd.ErrorSupabase:
         st.warning(FALTA_TABLA)
         return
+    lugares = _visibles(_ordenar(lugares, cerca))
     if not lugares:
         st.info("No hemos encontrado nada así" + (" por aquí." if cerca else ". Prueba con otro nombre o usa tu ubicación."))
         return
     with st.container(horizontal=True, vertical_alignment="center"):
-        st.caption(f"{len(lugares)}{'+' if len(lugares) >= MAX_RESULTADOS else ''} sitio{'s' if len(lugares) != 1 else ''}")
         vista = st.segmented_control("Vista", VISTAS, default="Lista", key="ex_vista", label_visibility="collapsed")
+        if st.toggle("Solo analizados", key="ex_solo_analizados", on_change=st.session_state.pop, args=("ex_visibles", None)):
+            lugares = [l for l in lugares if _estado(l) == "analizado"]
+        st.caption(f"{len(lugares)} sitio{'s' if len(lugares) != 1 else ''}")
+    if not lugares:
+        st.info("Aún no hay ninguno analizado por aquí.")
+        return
     if any(l.get("nota_google") for l in lugares):   # con la ficha rápida se puede ordenar por la nota de Google
         orden = st.segmented_control("Orden", ORDENES, default=ORDENES[0], key="ex_orden", label_visibility="collapsed",
                                      on_change=st.session_state.pop, args=("ex_visibles", None))
         if orden == "Mejor nota" or not cerca:
             lugares = _por_nota(lugares)
     if vista == "Mapa":
-        _mapa(cliente, lugares[:MAX_EN_MAPA], cerca, mapa)
+        _mapa(cliente, lugares, tu, mapa)
         return
+    lugares = lugares[:MAX_RESULTADOS]
     visibles = st.session_state.get("ex_visibles", POR_PAGINA)
     _lista(cliente, lugares[:visibles], cerca, "lista_explorar", lista)
     if len(lugares) > visibles:

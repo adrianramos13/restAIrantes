@@ -17,6 +17,10 @@ export default function (component) {
 
   input.disabled = !!data.disabled;
   input.placeholder = data.placeholder || '';
+  const etiqueta = parentElement.querySelector('label[for="dir"]');
+  if (data.etiqueta != null) etiqueta.textContent = data.etiqueta;   // sin etiqueta (""), el texto de ayuda la sustituye
+  etiqueta.hidden = !etiqueta.textContent;
+  if (etiqueta.hidden) input.setAttribute('aria-label', input.placeholder);
   if (!input.value && data.texto) input.value = data.texto;   // si la caja se ha vuelto a montar vacía
 
   const cerrar = () => { lista.hidden = true; input.setAttribute('aria-expanded', 'false'); activa = -1; };
