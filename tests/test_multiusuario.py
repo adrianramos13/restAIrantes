@@ -1247,6 +1247,33 @@ def test_descubrir_por_zona_ensena_todo_lo_de_alrededor(explorar, monkeypatch):
     assert "Ya Analizado" in mapa and "Taberna Nueva" not in mapa
 
 
+def test_filtrar_lugares_como_mi_lista():
+    import explorar as ex
+    lugares = [{"id": "a", "nombre": "Barato", "cocina_google": "Bar", "restaurante_id": 1},
+               {"id": "b", "nombre": "Caro", "categoria": "Japonesa", "restaurante_id": 2},
+               {"id": "c", "nombre": "Sin analizar", "categoria": "Bar", "nota_google": 4.6},
+               {"id": "d", "nombre": "Sin nota", "categoria": "Bar"}]
+    maestro = pd.DataFrame([{"ID": 1, "Nombre": "Barato", "Puntuación": 4.0, "Nº Reseñas": 10, "Rango de precios": "10-20 €"},
+                            {"ID": 2, "Nombre": "Caro", "Puntuación": 4.8, "Nº Reseñas": 10, "Rango de precios": "60-80 €"}])
+    catalogo = (maestro, pd.DataFrame(columns=datos.COLUMNAS_PLATOS))
+    nombres = lambda **f: [l["nombre"] for l in ex.filtrar_lugares(lugares, catalogo, **f)]
+    assert nombres() == ["Barato", "Caro", "Sin analizar", "Sin nota"]
+    assert nombres(cocinas=["Bar"]) == ["Barato", "Sin analizar", "Sin nota"]       # la cocina de la tarjeta
+    assert nombres(presupuesto=(0, 30)) == ["Barato"]                                # precio: solo analizados
+    assert nombres(nota_min=4.5) == ["Caro", "Sin analizar"]                         # nota: también la de Google
+    assert ex.filtrar_lugares(lugares, None, nota_min=4.5) == [lugares[2]]           # sin analizados en la zona
+
+
+def test_descubrir_con_filtros(explorar):
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["ubicacion_actual"] = CHUECA
+    at.session_state["ex_plato"] = "plato que no existe"                 # solo los analizados... y este no lo tiene
+    at = descubrir(at)
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.text_input(key="ex_plato").value == "plato que no existe"   # dentro de "Filtros"
+    assert any("Ninguno cumple" in i.value for i in at.info)
+
+
 def test_buscar_lugares_pide_de_1000_en_1000(monkeypatch):
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [{"id": "x"}] * (p["limit"] if p.get("offset", 0) < 2000 else 3))
     assert len(bd_.buscar_lugares("", (40.4, -3.7), radio_km=1, limite=3000)) == 2003

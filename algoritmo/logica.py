@@ -18,6 +18,7 @@ ORDEN_PUNTUACION = "Mejor valorados"
 ORDEN_CERCANOS = "Más cerca"
 ORDEN_RESENAS = "Más reseñas"   # solo en "Mi lista"
 ORDEN_NOMBRE = "Nombre"
+PRESUPUESTO_SIN_LIMITE = 100   # el máximo del slider de presupuesto significa "sin tope"
 # Categoría de cocina calculada con Jev (columnas que trae clasificacion_jev.xlsx).
 COL_CATEGORIA = "Categoría (Jev)"
 COL_CATEGORIA_2 = "Categoría 2ª (Jev)"

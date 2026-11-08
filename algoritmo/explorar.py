@@ -14,6 +14,7 @@ import streamlit as st
 
 import datos as bd
 from amigos import texto_seguro
+from logica import PRESUPUESTO_SIN_LIMITE, filtrar_lista
 from servicios import geocodificar_direccion, haversine_km
 
 # Sin texto: lo que hay alrededor, ampliando si hay pocos. En el centro de Madrid caben ~400 sitios en 250 m y
@@ -243,6 +244,60 @@ def _visibles(lugares):
     return [l for l in lugares if l["id"] not in ocultos]
 
 
+def _cocina(lugar):
+    return lugar.get("cocina_google") or lugar.get("categoria") or ""
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _catalogo(_cliente, ids):
+    return _cliente.restaurantes_por_ids(ids)
+
+
+def filtrar_lugares(lugares, catalogo=None, cocinas=(), presupuesto=(0, PRESUPUESTO_SIN_LIMITE), nota_min=0.0, plato=""):
+    """Los filtros de Mi lista sobre los sitios de Descubrir. La cocina es la que se ve en la tarjeta. Precio y
+    platos solo se saben de los analizados (`catalogo` = (maestro, df_platos) de sus restaurantes): con esos
+    filtros puestos, los demás no salen; la nota, de su restaurante o, si no está analizado, de su ficha rápida."""
+    if cocinas:
+        lugares = [l for l in lugares if _cocina(l) in cocinas]
+    solo_analizados = tuple(presupuesto) != (0, PRESUPUESTO_SIN_LIMITE) or bool(plato.strip())
+    if not (solo_analizados or nota_min):
+        return lugares
+    buenos = set()
+    if catalogo is not None and not catalogo[0].empty:
+        tope = None if presupuesto[1] == PRESUPUESTO_SIN_LIMITE else presupuesto[1]
+        buenos = set(filtrar_lista(catalogo[0], catalogo[1], "", (), presupuesto[0], tope, nota_min, plato)["ID"])
+
+    def pasa(lugar):
+        if lugar.get("restaurante_id"):
+            return int(lugar["restaurante_id"]) in buenos
+        return not solo_analizados and (lugar.get("nota_google") or 0) >= nota_min
+
+    return [l for l in lugares if pasa(l)]
+
+
+def _filtros(cliente, lugares):
+    """El desplegable "Filtros" (como en Mi lista) y los sitios que lo cumplen."""
+    estado, otra = st.session_state, {"on_change": st.session_state.pop, "args": ("ex_visibles", None)}
+    sin_tope = (0, PRESUPUESTO_SIN_LIMITE)
+    activos = sum([bool(estado.get("ex_cocinas")), bool(estado.get("ex_nota")), bool(estado.get("ex_plato", "").strip()),
+                   tuple(estado.get("ex_presupuesto", sin_tope)) != sin_tope])
+    with st.expander(f"Filtros ({activos})" if activos else "Filtros", icon=":material/tune:"):
+        # las elegidas siguen en la lista aunque aquí no haya ninguna (si no, Streamlit las borraría)
+        opciones = sorted({_cocina(l) for l in lugares} - {""} | set(estado.get("ex_cocinas", ())))
+        cocinas = st.multiselect("Cocina", opciones, key="ex_cocinas", placeholder="Cualquiera", **otra)
+        presupuesto = st.slider("Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, sin_tope, step=5,
+                                format="%d €", key="ex_presupuesto", **otra)
+        nota_min = st.slider("Nota mínima en Google", 0.0, 5.0, 0.0, step=0.5, format="%.1f ⭐", key="ex_nota", **otra)
+        plato = st.text_input("Plato que destaquen", placeholder="ej. croquetas", key="ex_plato", **otra)
+        st.caption("El precio y los platos solo se saben de los analizados.")
+    catalogo = None
+    if tuple(presupuesto) != sin_tope or plato.strip() or nota_min:
+        ids = tuple(sorted({int(l["restaurante_id"]) for l in lugares if l.get("restaurante_id")}))
+        if ids:
+            catalogo = _catalogo(cliente, ids)
+    return filtrar_lugares(lugares, catalogo, cocinas, presupuesto, nota_min, plato)
+
+
 def _al_tocar(key, campo):
     """Al tocar un sitio en la lista (`abrir`) o en el mapa (`seleccion`): se abre su ventana."""
     lugar = st.session_state.get("ex_por_id", {}).get(getattr(st.session_state[key], campo, None))
@@ -253,7 +308,7 @@ def _al_tocar(key, campo):
 def _lista(cliente, lugares, cerca, key, lista):
     """Tarjetas (las mismas de Comer hoy): icono de su cocina, categoría, ciudad, distancia y estado."""
     st.session_state.setdefault("ex_por_id", {}).update({l["id"]: l for l in lugares})
-    items = [{"id": l["id"], "n": n, "nombre": l["nombre"], "cocina": l.get("cocina_google") or l.get("categoria") or "",
+    items = [{"id": l["id"], "n": n, "nombre": l["nombre"], "cocina": _cocina(l),
               "meta": " · ".join(t for t in (_nota(l), l.get("ciudad"), _distancia(l, cerca)) if t),
               "foto": _foto(cliente, l),
               "icono": _icono(l), "estado": _estado(l), "estado_texto": ESTADOS[_estado(l)][0]}
@@ -305,7 +360,7 @@ def seccion(cliente, usuario, *, ficha, boton_ubicacion, caja_zona, lista, mapa)
         elif bd.texto_busqueda(texto) or tu:
             lugares = _buscar(cliente, texto, tuple(tu) if tu else None)
         else:   # sin buscar nada: el mapa de los ya analizados
-            lugares = _visibles(_analizados(cliente))
+            lugares = _filtros(cliente, _visibles(_analizados(cliente)))
             st.caption("Escribe un nombre, una zona o usa tu ubicación para ver todos los sitios. En el mapa, los "
                        f"**{len(lugares)} ya analizados** (con ficha completa); los demás puedes pedir que se analicen.")
             if lugares:
@@ -317,6 +372,10 @@ def seccion(cliente, usuario, *, ficha, boton_ubicacion, caja_zona, lista, mapa)
     lugares = _visibles(_ordenar(lugares, cerca))
     if not lugares:
         st.info("No hemos encontrado nada así" + (" por aquí." if cerca else ". Prueba con otro nombre o usa tu ubicación."))
+        return
+    lugares = _filtros(cliente, lugares)
+    if not lugares:
+        st.info("Ninguno cumple esos filtros.")
         return
     with st.container(horizontal=True, vertical_alignment="center"):
         vista = st.segmented_control("Vista", VISTAS, default="Lista", key="ex_vista", label_visibility="collapsed")

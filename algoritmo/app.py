@@ -59,7 +59,7 @@ if "PYTEST_CURRENT_TEST" not in os.environ:
             importlib.reload(_modulo)
 
 from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
-                    ORDEN_RESENAS, VOTOS_MIN_SECUNDARIA, filtrar_lista, filtrar_y_puntuar,
+                    ORDEN_RESENAS, PRESUPUESTO_SIN_LIMITE, VOTOS_MIN_SECUNDARIA, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, sugerencia_plato, tiene_categorias_jev, insights_perfil,
                     insertar_en_orden, vista_previa_posicion)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
@@ -95,7 +95,6 @@ def recurso(nombre):
 TOP_N = 5
 TOP_N_MAX = 10
 
-PRESUPUESTO_SIN_LIMITE = 100   # el máximo del slider de presupuesto significa "sin tope"
 
 
 
@@ -1022,7 +1021,7 @@ _BARRA = st.components.v2.component(
 CLAVES_FORMULARIOS = {
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
     # sin "ml_idos" (solo los que he ido): lo activa "Ver en formato lista" y se olvida al salir de Mi lista
-    "mi_lista": ("ex_texto", "ex_vista", "ex_orden", "ex_solo_analizados", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
+    "mi_lista": ("ex_texto", "ex_vista", "ex_orden", "ex_solo_analizados", "ex_cocinas", "ex_presupuesto", "ex_nota", "ex_plato","ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
 }
 
 

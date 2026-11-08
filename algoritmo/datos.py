@@ -650,7 +650,7 @@ class Supabase:
     def restaurantes_por_ids(self, ids):
         """(maestro, df_platos) de esos restaurantes del catálogo."""
         filas = []
-        for lote in _lotes(sorted({int(i) for i in ids})):
+        for lote in _lotes(sorted({int(i) for i in ids}), 500):   # ids cortos: caben 500 por URL (los filtros de Descubrir piden ~2.000)
             filas += self._rest("GET", "restaurantes", params={"id": f"in.({','.join(map(str, lote))})",
                                                                "select": "id,datos,platos,imagen"})
         return filas_a_dataframes([{"posicion": i, "restaurantes": f} for i, f in enumerate(filas)])
