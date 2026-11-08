@@ -12,7 +12,7 @@ from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_1, COL_VOTOS_2, OR
                     SCORE_COCINA_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, parsear_rango_precio, puntuacion_cocina, solapamiento,
                     sugerencia_plato, hace_cuanto, compatibilidad, cocina_favorita, en_comun,
-                    insertar_en_orden, insights_perfil, mejores_visitas, vista_previa_posicion)
+                    insertar_en_orden, insights_perfil, mejores_visitas, semana_cerrada, vista_previa_posicion)
 
 
 @pytest.mark.parametrize("texto, esperado", [
@@ -257,3 +257,16 @@ def test_mejores_visitas_solo_los_ultimos_restaurantes():
                   (3, 4, "2026-10-21T10:00:00+00:00"))
     assert mejores_visitas(df, n=2, rng=0, solo_ultimos=True)["ID"].tolist() == [3, 2]   # el 1 es más antiguo
     assert mejores_visitas(pd.DataFrame(), n=5).empty
+
+
+def test_semana_cerrada_de_lunes_a_lunes_a_las_3():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    madrid = ZoneInfo("Europe/Madrid")
+    lunes_3 = datetime(2026, 11, 9, 3, tzinfo=madrid)                       # el 9/11/2026 es lunes
+    assert semana_cerrada(datetime(2026, 11, 8, 20, tzinfo=madrid)) == (datetime(2026, 10, 26, 3, tzinfo=madrid),
+                                                                        datetime(2026, 11, 2, 3, tzinfo=madrid))
+    assert semana_cerrada(datetime(2026, 11, 9, 2, 59, tzinfo=madrid))[1] == datetime(2026, 11, 2, 3, tzinfo=madrid)
+    assert semana_cerrada(lunes_3) == (datetime(2026, 11, 2, 3, tzinfo=madrid), lunes_3)          # justo a las 3: cambia
+    desde, hasta = semana_cerrada(datetime(2026, 3, 31, 12, tzinfo=madrid))   # cruza el cambio de hora del 29/3
+    assert (desde.hour, hasta.hour) == (3, 3)

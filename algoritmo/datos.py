@@ -596,13 +596,12 @@ class Supabase:
             params["creado_en"] = f"gte.{desde.isoformat()}"
         return self._rest("GET", "visitas", params=params)
 
-    def visitas_valoradas(self, desde=None, limite=200):
-        """Visitas con nota de todos los usuarios, con su restaurante embebido: con `desde` (datetime con zona),
-        las de ese momento en adelante de mejor a peor nota; sin él, las últimas."""
+    def visitas_valoradas(self, hasta, desde=None, limite=200):
+        """Visitas con nota de todos los usuarios anteriores a `hasta` (datetime con zona), con su restaurante
+        embebido: con `desde`, las de ese intervalo de mejor a peor nota; sin él, las últimas."""
         params = {"nota": "not.is.null", "limit": limite, "order": "nota.desc,creado_en.desc" if desde else "creado_en.desc",
                   "select": "usuario,nota,comentario,creado_en,restaurantes(id,datos,imagen)"}
-        if desde is not None:
-            params["creado_en"] = f"gte.{desde.isoformat()}"
+        params["and"] = f"(creado_en.lt.{hasta.isoformat()}" + (f",creado_en.gte.{desde.isoformat()})" if desde else ")")
         return self._rest("GET", "visitas", params=params)
 
     # ---------------- eatlist (los que quieres probar, en orden) ----------------

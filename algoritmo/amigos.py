@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 import datos as bd
-from logica import cocina_favorita, compatibilidad, en_comun, hace_cuanto, mejores_visitas
+from logica import cocina_favorita, compatibilidad, en_comun, hace_cuanto, mejores_visitas, semana_cerrada
 
 _COMPONENTES = Path(__file__).resolve().parent / "componentes"
 _BUSCADOR = {n: (_COMPONENTES / f"buscador_amigos.{n}").read_text(encoding="utf-8") for n in ("html", "css", "js")}
@@ -87,22 +87,31 @@ def cargar_visitas_amigos(_bd, usuario, limite=50):
     return bd.visitas_a_dataframe(_bd.visitas_de(list(nombres), limite, desde=desde), nombres)
 
 
-DIAS_DESTACADOS = 7       # Descubrir: lo mejor valorado por todos en la última semana
-EN_DESTACADOS = 5
+EN_DESTACADOS = 5   # Descubrir: lo mejor valorado por todos la semana pasada
 
 
-@st.cache_data(ttl=300, show_spinner=False)
 def cargar_destacados(_bd):
-    """(DataFrame de las mejores visitas de todos los usuarios en los últimos 7 días, True) o, si no hay ninguna,
-    (las de los últimos restaurantes a los que se ha ido, False). En caché: los empates no cambian a cada recarga."""
-    semana = _bd.visitas_valoradas(desde=datetime.now(timezone.utc) - timedelta(days=DIAS_DESTACADOS))
-    filas = semana or _bd.visitas_valoradas(limite=50)
+    """(DataFrame de las mejores visitas de todos los usuarios de la última semana cerrada, True) o, si no hay
+    ninguna, (las de los últimos restaurantes a los que se había ido, False). Cambia los lunes a las 3:00 (Madrid)."""
+    try:
+        from zoneinfo import ZoneInfo
+        zona = ZoneInfo("Europe/Madrid")
+    except Exception:   # sistema sin base de zonas horarias
+        zona = timezone.utc
+    return _destacados(_bd, *semana_cerrada(datetime.now(zona)))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _destacados(_bd, desde, hasta):
+    semana = _bd.visitas_valoradas(hasta, desde=desde)
+    filas = semana or _bd.visitas_valoradas(hasta, limite=50)
     usuarios = {v["usuario"] for v in filas}
     perfiles = _bd.perfiles_de(usuarios)
     nombres = {u: (perfiles.get(u) or {}).get("nombre") or (perfiles.get(u) or {}).get("alias") or "Alguien"
                for u in usuarios}
     df = bd.visitas_a_dataframe(filas, nombres)
-    return mejores_visitas(df, EN_DESTACADOS, solo_ultimos=not semana), bool(semana)
+    # empates sorteados con la semana como semilla: toda la semana salen los mismos
+    return mejores_visitas(df, EN_DESTACADOS, rng=int(hasta.timestamp()), solo_ultimos=not semana), bool(semana)
 
 
 @st.cache_data(ttl=60, show_spinner=False)

@@ -5,7 +5,7 @@ Se puede importar y probar sola (tests/test_logica.py).
 
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -324,6 +324,18 @@ def mejores_visitas(visitas, n=5, rng=None, solo_ultimos=False):
         df = df[df["ID"].isin(ultimos)]
     df = df.sample(frac=1, random_state=rng)   # barajar antes de un orden estable = empates al azar
     return df.sort_values("Nota visita", ascending=False, kind="stable").drop_duplicates("ID").head(n)
+
+
+HORA_CAMBIO_SEMANA = 3   # "Lo mejor de la semana" cambia los lunes a las 3:00
+
+
+def semana_cerrada(ahora):
+    """(desde, hasta) de la última semana completa: del lunes a las 3:00 al lunes siguiente a la misma hora
+    (en la zona horaria de `ahora`). Durante toda la semana siguiente devuelve lo mismo."""
+    hasta = (ahora - timedelta(days=ahora.weekday())).replace(hour=HORA_CAMBIO_SEMANA, minute=0, second=0, microsecond=0)
+    if hasta > ahora:   # lunes antes de las 3:00: aún vale la semana anterior
+        hasta -= timedelta(days=7)
+    return hasta - timedelta(days=7), hasta
 
 
 def _columna_cocina(maestro):

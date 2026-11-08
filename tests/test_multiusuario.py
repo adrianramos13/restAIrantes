@@ -1178,7 +1178,7 @@ def explorar(multiusuario, monkeypatch):
     monkeypatch.setattr(datos.Supabase, "lugar_por_id", lambda self, i: next(
         dict(l) for l in estado["lugares"] if l["id"] == i))
     estado.update(semana=[], ultimas=[])                                 # "He ido" de todos: de la semana / las últimas
-    monkeypatch.setattr(datos.Supabase, "visitas_valoradas", lambda self, desde=None, limite=200:
+    monkeypatch.setattr(datos.Supabase, "visitas_valoradas", lambda self, hasta, desde=None, limite=200:
                         estado["semana" if desde else "ultimas"])
     monkeypatch.setattr(datos.Supabase, "perfiles_de", lambda self, usuarios: {"bea@ejemplo.com": {"nombre": "Bea"}})
     return estado
