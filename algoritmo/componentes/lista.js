@@ -1,4 +1,7 @@
 
+// "hoy", "hace 3 días" (logica.hace_cuanto) van en minúscula para frases; solos, con mayúscula
+const mayuscula = (t) => (t ? t[0].toUpperCase() + t.slice(1) : '');
+
 function span(clase, texto) {
   const s = document.createElement('span'); s.className = clase; s.textContent = texto;
   return s;
@@ -12,7 +15,7 @@ function barrasPoster(r) {
   sitio.append(span('lr-nombre', r.nombre), span('lr-meta', r.meta));
   const quien = document.createElement('div'); quien.className = 'lr-barra lr-barra-quien';
   const persona = span('lr-quien', '');
-  persona.append(span('lr-amigo', r.amigo || ''), span('lr-cuando', r.cuando || ''));
+  persona.append(span('lr-amigo', r.amigo || ''), span('lr-cuando', mayuscula(r.cuando)));
   quien.append(persona);
   if (r.nota != null) {
     const estrellas = span('lr-estrellas', ''); estrellas.setAttribute('aria-hidden', 'true');
@@ -44,7 +47,7 @@ export default function (component) {
     boton.type = 'button';
     boton.className = 'lr-card' + (r.id === data.seleccionado ? ' lr-sel' : '') + (r.cerrado ? ' lr-cerrado' : '')
       + (r.visitado ? ' lr-visitado' : '');
-    const partes = [r.amigo ? `${r.amigo} fue ${r.cuando}` : r.cuando, `${r.n}. ${r.nombre}`, r.cocina, r.meta,
+    const partes = [r.amigo ? `${r.amigo} fue ${r.cuando}` : mayuscula(r.cuando), `${r.n}. ${r.nombre}`, r.cocina, r.meta,
       r.nota != null && `${String(r.nota).replace('.', ',')} de 5 estrellas`, r.cita && `«${r.cita}»`,
       r.estado_texto, r.cerrado, r.visitado && 'Has ido', 'Ver ficha'];
     boton.setAttribute('aria-label', partes.filter(Boolean).join('. '));
@@ -84,7 +87,7 @@ export default function (component) {
         const amigo = document.createElement('strong'); amigo.className = 'lr-amigo'; amigo.textContent = r.amigo;
         quien.appendChild(amigo);
       }
-      const cuando = document.createElement('span'); cuando.className = 'lr-cuando'; cuando.textContent = r.cuando || '';
+      const cuando = document.createElement('span'); cuando.className = 'lr-cuando'; cuando.textContent = mayuscula(r.cuando);
       quien.appendChild(cuando);
       info.appendChild(quien);
     }

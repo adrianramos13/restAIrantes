@@ -75,7 +75,7 @@ def cerrar_sesion(cuentas):
 def formulario_cuentas(cuentas):
     """Entrar / Crear cuenta / Recuperar contraseña, debajo del botón de Google."""
     modo = st.segmented_control("Cuenta", ["Entrar", "Crear cuenta"], default="Entrar", key="modo_acceso",
-                                label_visibility="collapsed", width="stretch") or "Entrar"
+                                label_visibility="collapsed", width="stretch", required=True)
     if modo == "Entrar":
         _formulario_entrar(cuentas)
         _recuperar_contrasena(cuentas)

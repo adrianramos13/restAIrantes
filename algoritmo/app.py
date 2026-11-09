@@ -234,13 +234,13 @@ def mejorar_resolucion_imagen(url, ancho=600, alto=400):
 
 def resumen_mencion_plato(id_restaurante, plato_deseado, df_platos):
     if df_platos.empty or "ID_Restaurante" not in df_platos.columns:
-        return "(sin datos de reseñas analizadas)"
+        return "(Sin datos de reseñas analizadas)"
     menciones = df_platos[
         (df_platos["ID_Restaurante"] == id_restaurante) &
         (df_platos["Plato"].astype(str).str.contains(plato_deseado, case=False, na=False))
     ]
     if menciones.empty:
-        return "no se menciona explícitamente en las reseñas analizadas"
+        return "No se menciona explícitamente en las reseñas analizadas"
     buenas = (menciones["Sentimiento"] == "Buena").sum()
     malas = (menciones["Sentimiento"] == "Mala").sum()
     neutras = (menciones["Sentimiento"] == "Neutra").sum()
@@ -251,7 +251,7 @@ def resumen_mencion_plato(id_restaurante, plato_deseado, df_platos):
         partes.append(f"{malas} mal")
     if neutras:
         partes.append(f"{neutras} neutra")
-    return f"mencionado {len(menciones)} veces en reseñas ({', '.join(partes)})"
+    return f"Mencionado {len(menciones)} veces en reseñas ({', '.join(partes)})"
 
 
 @st.cache_data(show_spinner=False)
@@ -752,10 +752,11 @@ def _al_abrir_desde_lista(key):
 
 
 def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes", extra=None,
-                  carrusel=False, estatica=False, poster=False):
+                  carrusel=False, estatica=False, poster=False, en_ventana=False):
     """Tarjetas de `top`. Con `modo_transporte` (resultados de una búsqueda) enseñan el tiempo de viaje;
     `extra(fila)` añade datos a la tarjeta (amigo, cuando, nota, cita: ver componentes/lista.js). Las de
-    sitios a los que ya has ido llevan "✓ Has ido". `poster`: tarjetas altas con la foto de fondo (con carrusel)."""
+    sitios a los que ya has ido llevan "✓ Has ido". `poster`: tarjetas altas con la foto de fondo (con carrusel).
+    `en_ventana`: la lista está dentro de un st.dialog; al tocar una tarjeta, su ficha sale ahí (ficha_en_ventana)."""
     visitados = set(mis_visitas())
     items = []
     for n, (_, fila) in enumerate(top.iterrows(), start=1):
@@ -772,8 +773,33 @@ def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_re
         # carrusel: fila que se desliza; estatica: solo para mirar (no abre la ficha)
         data={"items": items, "seleccionado": seleccionado_id, "carrusel": carrusel, "estatica": estatica,
               "poster": poster},
-        key=key, on_abrir_change=lambda: _al_abrir_desde_lista(key),
+        key=key, on_abrir_change=lambda: (_al_abrir_en_ventana if en_ventana else _al_abrir_desde_lista)(key),
     )
+
+
+# Dentro de una ventana (st.dialog) no se puede abrir otra: la ficha del restaurante tocado sale en la misma
+# ventana, en lugar de la lista. Se olvida en cada recarga completa (las de la ventana no pasan por arriba).
+VENTANA_FICHA = "ventana_ficha"
+
+
+def _al_abrir_en_ventana(key):
+    valor = st.session_state[key].abrir
+    if valor is not None:
+        st.session_state[VENTANA_FICHA] = int(valor)
+
+
+def ficha_en_ventana(df, df_platos=None, plato=None):
+    """Si se ha tocado un restaurante de `df` dentro de esta ventana, dibuja «Volver» y su ficha y devuelve True."""
+    abierto = st.session_state.get(VENTANA_FICHA)
+    coincide = df[df["ID"] == abierto] if abierto is not None and not df.empty else df.iloc[0:0]
+    if coincide.empty:
+        return False
+    st.button("Volver", type="tertiary", icon=":material/arrow_back:", key="ventana_volver",
+              on_click=lambda: st.session_state.pop(VENTANA_FICHA, None))
+    st.subheader(str(coincide.iloc[0]["Nombre"]))   # el título de la ventana es el de la lista
+    contenido_ficha(coincide.iloc[0], df_platos if df_platos is not None else pd.DataFrame(columns=bd.COLUMNAS_PLATOS),
+                    plato)
+    return True
 
 
 # ----------------------- MAPA CON FOTOS REDONDAS ----------------------- #
@@ -950,7 +976,7 @@ def buscar_con(**cambios):
 
 def texto_presupuesto(minimo, maximo):
     if maximo is None:
-        return f"desde {minimo} €" if minimo else "cualquier precio"
+        return f"Desde {minimo} €" if minimo else "Cualquier precio"
     return f"{minimo}–{maximo} €"
 
 
@@ -1058,7 +1084,6 @@ _BARRA = st.components.v2.component(
 # Widgets de cada sección cuyo valor tiene que sobrevivir mientras se está en otra.
 CLAVES_FORMULARIOS = {
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
-    # sin "ml_idos" (solo los que he ido): lo activa "Ver en formato lista" y se olvida al salir de Mi lista
     "mi_lista": ("ex_texto", "ex_vista", "ex_orden", "ex_solo_analizados", "ex_cocinas", "ex_presupuesto", "ex_nota", "ex_plato","ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
 }
 
@@ -1075,7 +1100,7 @@ def abrir_tus_listas():
 
 # Filtros de "Mi lista": entrar desde la barra (o volver a tocarla) los quita todos. Los atajos que llevan a
 # Mi lista con un filtro puesto ("Ver en formato lista", una cocina de la gráfica) no pasan por aquí.
-FILTROS_MI_LISTA = ("ml_idos", "ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados",
+FILTROS_MI_LISTA = ("ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados",
                     "ml_orden", "buscar_modo")
 
 
@@ -1252,32 +1277,36 @@ def restaurantes_a_los_que_has_ido():
     return df.drop(columns=["Amigo", "Nota visita", "Comentario visita", "Fecha visita"]).drop_duplicates("ID")
 
 
-MODO_MIOS, MODO_DESCUBRIR, MODO_PERSONAS = "Mis restaurantes", "Descubrir", "Personas"
-MODOS_BUSCAR = (MODO_MIOS, MODO_DESCUBRIR, MODO_PERSONAS)
+MODO_DESCUBRIR, MODO_PERSONAS = "Descubrir", "Personas"
+MODOS_BUSCAR = (MODO_DESCUBRIR, MODO_PERSONAS)
 
 
 def seccion_mi_lista(maestro, df_platos):
-    """Buscar: tus restaurantes (con filtros); en "Descubrir", cualquier restaurante, bar o cafetería (explorar.py);
-    en "Personas", gente registrada para hacerte su amigo."""
+    """Buscar: en "Descubrir", cualquier restaurante, bar o cafetería (explorar.py); en "Personas", gente registrada
+    para hacerte su amigo. Sin cuentas (modo local), tu lista con filtros; con cuenta, eso está en el Perfil."""
     st.header("Buscar")
-    if CONFIG_MULTIUSUARIO:
-        st.session_state.setdefault("buscar_modo", MODO_MIOS)
-        modo = st.segmented_control("Qué buscar", MODOS_BUSCAR, key="buscar_modo", label_visibility="collapsed",
-                                    width="stretch") or MODO_MIOS
-        if modo == MODO_DESCUBRIR:
-            explorar.seccion(BD, usuario, ficha=contenido_ficha, boton_ubicacion=boton_ubicacion_actual,
-                             caja_zona=caja_direccion_con_sugerencias, destacados=destacados_semana,
-                             lista=lista_de_lugares, mapa=mapa_de_lugares)
-            return
-        if modo == MODO_PERSONAS:
-            amigos.buscador_de_personas(BD, usuario, nombre_usuario, perfil, al_guardar_alias=cargar_perfil.clear)
-            return
-    # "Solo a los que he ido": lo mismo que Mi lista pero con tus "He ido" (aunque no estén en tu lista).
-    if BD is not None and usuario and st.toggle("Solo los restaurantes a los que he ido", key="ml_idos"):
-        maestro = restaurantes_a_los_que_has_ido()
-        if maestro.empty:
-            st.info("Todavía no has marcado ningún restaurante con «He ido» (está arriba en la ficha de cada uno).")
-            return
+    if not CONFIG_MULTIUSUARIO:
+        lista_filtrable(maestro, df_platos)
+        return
+    st.session_state.setdefault("buscar_modo", MODO_DESCUBRIR)
+    modo = st.segmented_control("Qué buscar", MODOS_BUSCAR, key="buscar_modo", label_visibility="collapsed",
+                                width="stretch", required=True)
+    if modo == MODO_PERSONAS:
+        amigos.buscador_de_personas(BD, usuario, nombre_usuario, perfil, al_guardar_alias=cargar_perfil.clear)
+        return
+    explorar.seccion(BD, usuario, ficha=contenido_ficha, boton_ubicacion=boton_ubicacion_actual,
+                     caja_zona=caja_direccion_con_sugerencias, destacados=destacados_semana,
+                     lista=lista_de_lugares, mapa=mapa_de_lugares)
+
+
+def lista_filtrable(maestro, df_platos, en_ventana=False):
+    """Restaurantes con buscador por nombre, filtros y orden: en Buscar (modo local) o, con `en_ventana`, en las
+    ventanas «en tu lista» e «idos» del Perfil, donde la ficha del que se toque sale en la misma ventana."""
+    if en_ventana and ficha_en_ventana(maestro, df_platos, st.session_state.get("ml_plato", "").strip() or None):
+        for clave in CLAVES_FORMULARIOS["mi_lista"]:   # los filtros no se dibujan: que no se pierdan al volver
+            if clave in st.session_state:
+                st.session_state[clave] = st.session_state[clave]
+        return
     if maestro.empty:
         st.info("Todavía no tienes restaurantes en tu lista. Añádela en tus **ajustes** (toca tu foto en el Perfil).")
         st.button("Añadir tu lista", on_click=abrir_tus_listas, icon=":material/add_location_alt:")
@@ -1297,10 +1326,10 @@ def seccion_mi_lista(maestro, df_platos):
             "Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, (0, PRESUPUESTO_SIN_LIMITE), step=5,
             format="%d €", key="ml_presupuesto")
         nota_min = st.slider("Nota mínima en Google", 0.0, 5.0, 0.0, step=0.5, format="%.1f ⭐", key="ml_nota")
-        plato = st.text_input("Plato que destaquen", placeholder="ej. croquetas", key="ml_plato")
+        plato = st.text_input("Plato que destaquen", placeholder="Ej. croquetas", key="ml_plato")
         ocultar_cerrados = st.toggle("Ocultar los cerrados", key="ml_cerrados")
     orden = st.segmented_control("Ordenar", [ORDEN_PUNTUACION, ORDEN_RESENAS, ORDEN_NOMBRE], default=ORDEN_PUNTUACION,
-                                 key="ml_orden", label_visibility="collapsed") or ORDEN_PUNTUACION
+                                 key="ml_orden", label_visibility="collapsed", required=True)
 
     df = filtrar_lista(maestro, df_platos, texto, cocinas, presupuesto_min,
                        None if presupuesto_max == PRESUPUESTO_SIN_LIMITE else presupuesto_max,
@@ -1315,12 +1344,14 @@ def seccion_mi_lista(maestro, df_platos):
     if st.session_state.get("ml_filtros") != filtros:
         st.session_state["ml_filtros"], st.session_state["ml_mostrados"] = filtros, MI_LISTA_POR_PAGINA
     top = df.head(st.session_state["ml_mostrados"])
-    mostrar_lista(top, key="lista_mi_lista")
+    mostrar_lista(top, key="lista_mi_lista", en_ventana=en_ventana)
     if len(df) > len(top):
         if st.button(f"Ver más ({len(df) - len(top)} restantes)", width="stretch", key="ml_ver_mas"):
             st.session_state["ml_mostrados"] += MI_LISTA_POR_PAGINA
-            st.rerun()
+            st.rerun(scope="fragment" if en_ventana else "app")
 
+    if en_ventana:
+        return
     abrir = st.session_state.pop("ficha_abrir", None)
     if abrir in set(top["ID"]):
         mostrar_ficha(top[top["ID"] == abrir].iloc[0], df_platos, plato.strip() or None)
@@ -1547,17 +1578,17 @@ def bloque_insights(maestro, visitas=None):
     coma = lambda x: f"{x:.1f}".replace(".", ",")
     tarjetas = []
     if i["cocina_favorita"]:
-        tarjetas.append(("🍽️", i["cocina_favorita"], f"tu cocina favorita · {i['sitios_cocina_favorita']} sitios"))
+        tarjetas.append(("🍽️", i["cocina_favorita"], f"Tu cocina favorita · {i['sitios_cocina_favorita']} sitios"))
     if visitas is not None:
         if i["probado"] is not None:
-            tarjetas.append(("✅", f"{round(100 * i['probado'])} %", "de tu lista ya probado"))
-        tarjetas.append(("📅", str(i["este_mes"]), "sitios este mes"))
+            tarjetas.append(("✅", f"{round(100 * i['probado'])} %", "De tu lista ya probado"))
+        tarjetas.append(("📅", str(i["este_mes"]), "Sitios este mes"))
         if i["nota_media"] is not None:
-            tarjetas.append(("⭐", coma(i["nota_media"]), "tu nota media"))
+            tarjetas.append(("⭐", coma(i["nota_media"]), "Tu nota media"))
         if i["favorito"]:
-            tarjetas.append(("🏆", i["favorito"][0], f"tu favorito · {coma(i['favorito'][1])} ★"))
+            tarjetas.append(("🏆", i["favorito"][0], f"Tu favorito · {coma(i['favorito'][1])} ★"))
     if i["precio_medio"] is not None:
-        tarjetas.append(("💶", f"{i['precio_medio']:.0f} €", "precio medio de tu lista"))
+        tarjetas.append(("💶", f"{i['precio_medio']:.0f} €", "Precio medio de tu lista"))
     if not tarjetas:
         st.caption("Aparecerán cuando tengas restaurantes en tu lista.")
         return
@@ -1567,13 +1598,29 @@ def bloque_insights(maestro, visitas=None):
         f'<span class="insight-texto">{html.escape(texto)}</span></div>' for icono, valor, texto in tarjetas) + "</div>")
 
 
-def ver_en_mi_lista(cocina=None, solo_idos=False):
-    """A "Mi lista": con solo esa cocina filtrada, o sin filtro de cocina; con `solo_idos`, solo los
-    restaurantes a los que has ido."""
-    st.session_state["ml_cocinas"] = [cocina] if cocina else []
-    st.session_state["ml_idos"] = solo_idos
-    st.session_state["buscar_modo"] = MODO_MIOS
-    ir_a("mi_lista")
+LISTA_IDOS, LISTA_TUYA = "idos", "tu_lista"
+
+
+def abrir_lista_del_perfil(cual):
+    """«idos» / «en tu lista» del Perfil: esa lista, con sus filtros quitados, en una ventana (ventana_lista)."""
+    for clave in FILTROS_MI_LISTA:
+        if clave.startswith("ml_"):
+            st.session_state.pop(clave, None)
+    st.session_state["abrir_lista"] = cual
+
+
+def ventana_lista(cual, maestro, df_platos):
+    idos = cual == LISTA_IDOS
+
+    @st.dialog("Restaurantes a los que has ido" if idos else "Tu lista", width="medium")
+    def _ventana():
+        datos = restaurantes_a_los_que_has_ido() if idos else maestro
+        if idos and datos.empty:
+            st.info("Todavía no has marcado ningún restaurante con «He ido» (está arriba en la ficha de cada uno).")
+            return
+        lista_filtrable(datos, df_platos, en_ventana=True)
+
+    _ventana()
 
 
 def buscar_personas():
@@ -1587,7 +1634,7 @@ def bloque_preferencias(usuario, nombre, preferencias):
     st.caption("Lo que viene ya puesto al buscar en **Comer hoy**.")
     transporte = st.segmented_control(
         "¿Cómo soléis ir?", list(ETIQUETAS_TRANSPORTE), format_func=ETIQUETAS_TRANSPORTE.get,
-        default=preferencias["transporte"], key="pref_transporte", width="stretch") or "En coche"
+        default=preferencias["transporte"], key="pref_transporte", width="stretch", required=True)
     tiempo = st.slider("Tiempo máximo", 5, 60, preferencias["tiempo"], step=5, format="%d min", key="pref_tiempo")
     presupuesto = st.slider("Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, tuple(preferencias["presupuesto"]),
                             step=5, format="%d €", key="pref_presupuesto")
@@ -1644,7 +1691,7 @@ def pestana_diario(visitas):
     with st.container(horizontal=True, vertical_alignment="center"):
         st.caption(f"{len(visitas)} restaurante{'s' if len(visitas) != 1 else ''}")
         st.button("Ver en formato lista", type="tertiary", icon=":material/format_list_bulleted:",
-                  key="mis_visitas_en_lista", on_click=ver_en_mi_lista, kwargs={"solo_idos": True})
+                  key="mis_visitas_en_lista", on_click=abrir_lista_del_perfil, args=(LISTA_IDOS,))
     grupos = []
     for _, fila in visitas.iterrows():   # ya vienen de la más reciente a la más antigua
         fecha = _hora_local(fila["Fecha visita"])
@@ -1673,14 +1720,20 @@ def pestana_eatlist(eatlist):
 PESTANAS_PERFIL = ("Perfil", "Diario", "Eatlist")
 
 
-def ir_a_pestana(pestana):
-    st.session_state["perfil_pestana"] = pestana
+# La pestaña elegida se guarda aparte y es el valor por defecto del control: cuando este deja de dibujarse (otra
+# sección, el listado de amigos) y vuelve, Streamlit lo pinta con su valor por defecto, no con el que tenía, y se
+# veía el contenido de una pestaña sin ninguna marcada en naranja.
+PESTANA_ELEGIDA = "pestana_elegida"
+
+
+def _al_cambiar_pestana():
+    st.session_state[PESTANA_ELEGIDA] = st.session_state["perfil_pestana"]
     st.session_state.pop("perfil_vista", None)
 
 
-def cabecera_perfil(usuario, nombre, perfil, foto, maestro, visitas):
-    """Arriba, estilo Instagram: tu foto (se toca para abrir tus ajustes), nombre, @usuario y tres cifras que llevan a su
-    sitio: restaurantes a los que has ido y en tu lista (en Buscar -> Restaurantes) y amigos (su listado)."""
+def cabecera_perfil(usuario, nombre, perfil, foto, maestro, visitas, df_platos):
+    """Arriba, estilo Instagram: tu foto (se toca para abrir tus ajustes), nombre, @usuario y tres cifras: restaurantes
+    a los que has ido y en tu lista (cada una abre esa lista en una ventana) y amigos (su listado)."""
     alias = (perfil or {}).get("alias")
     try:
         n_amigos = sum(1 for r in amigos.cargar_relaciones(BD, usuario) if r["estado"] == "aceptada")
@@ -1697,17 +1750,20 @@ def cabecera_perfil(usuario, nombre, perfil, foto, maestro, visitas):
                     + (f'<div class="perfil-alias">@{html.escape(alias)}</div>' if alias else ""))
             with st.container(horizontal=True, gap="medium"):
                 st.button(f"**{len(visitas)}** idos", type="tertiary", key="contador_idos",
-                          on_click=ver_en_mi_lista, kwargs={"solo_idos": True},
-                          help="Verlos en Buscar (solo los restaurantes a los que has ido)")
+                          on_click=abrir_lista_del_perfil, args=(LISTA_IDOS,), help="Ver a cuáles has ido")
                 st.button(f"**{len(maestro)}** en tu lista", type="tertiary", key="contador_lista",
-                          on_click=ver_en_mi_lista, help="Verlos en Buscar")
+                          on_click=abrir_lista_del_perfil, args=(LISTA_TUYA,), help="Ver tu lista")
                 st.button(f"**{n_amigos}** amigos", type="tertiary", key="contador_amigos",
                           on_click=lambda: st.session_state.update(perfil_vista="amigos"), help="Ver tus amigos")
     if st.session_state.pop("abrir_ajustes", False):
         ajustes_de_usuario(usuario)
+    cual = st.session_state.pop("abrir_lista", None)
+    if cual:
+        ventana_lista(cual, maestro, df_platos)
 
 
-def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, preferencias=None, perfil=None):
+def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, preferencias=None, perfil=None,
+                   df_platos=None):
     if not CONFIG_MULTIUSUARIO:   # modo local: no hay cuenta, solo los datos de la lista
         st.header("Perfil")
         bloque_insights(maestro)
@@ -1716,18 +1772,17 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
         visitas = amigos.cargar_mis_visitas(BD, usuario)
     except bd.ErrorSupabase:
         visitas = pd.DataFrame()
-    cabecera_perfil(usuario, nombre, perfil, google.get("foto"), maestro, visitas)
+    cabecera_perfil(usuario, nombre, perfil, google.get("foto"), maestro, visitas, df_platos)
     if st.session_state.get("perfil_vista") == "amigos":   # "amigos" de la cabecera: su listado
         st.button("Volver", type="tertiary", icon=":material/arrow_back:", key="volver_del_listado",
                   on_click=lambda: st.session_state.pop("perfil_vista", None))
         amigos.bloque_amigos(BD, usuario, nombre, perfil, al_guardar_alias=cargar_perfil.clear,
-                             mi_lista=maestro, mostrar_lista=mostrar_lista)
+                             mi_lista=maestro, mostrar_lista=mostrar_lista, ficha=ficha_en_ventana)
         return
 
-    st.session_state.setdefault("perfil_pestana", "Perfil")
-    pestana = st.segmented_control("Pestañas del perfil", PESTANAS_PERFIL, key="perfil_pestana",
-                                   label_visibility="collapsed", width="stretch",
-                                   on_change=lambda: st.session_state.pop("perfil_vista", None)) or "Perfil"
+    pestana = st.segmented_control("Pestañas del perfil", PESTANAS_PERFIL, key="perfil_pestana", required=True,
+                                   default=st.session_state.get(PESTANA_ELEGIDA, "Perfil"),
+                                   label_visibility="collapsed", width="stretch", on_change=_al_cambiar_pestana)
     if pestana == "Diario":
         pestana_diario(visitas)
         return
@@ -1803,6 +1858,7 @@ else:
     maestro, df_platos = cargar_datos()
 
 seccion = st.session_state.setdefault("seccion", "inicio")
+st.session_state.pop(VENTANA_FICHA, None)   # recarga completa: las ventanas abiertas se cierran
 limpiar_filtros_mi_lista()
 conservar_formularios(seccion)
 
@@ -1831,7 +1887,7 @@ if seccion == "mi_lista":
     seccion_mi_lista(maestro, df_platos)
     st.stop()
 if seccion == "perfil":
-    seccion_perfil(maestro, usuario, nombre_usuario, google, mi_lista, preferencias, perfil)
+    seccion_perfil(maestro, usuario, nombre_usuario, google, mi_lista, preferencias, perfil, df_platos)
     st.stop()
 
 # ----------------------- COMER HOY: EL BUSCADOR ----------------------- #
@@ -1859,7 +1915,7 @@ with st.container(key="buscador"):
     mostrar_portada(len(maestro), tras_intro=hay_intro, maestro=maestro, momento=momento_portada)
     if CONFIG_MULTIUSUARIO:
         st.segmented_control("Buscar en", [FUENTE_MI_LISTA, FUENTE_TODOS], default=FUENTE_MI_LISTA,
-                             key="fuente", width="stretch")
+                             key="fuente", width="stretch", required=True)
         if maestro.empty and not todos_por_zona:
             st.info("Todavía no tienes restaurantes en tu lista. Añádela en tus **ajustes** (toca tu foto en el Perfil) "
                     "o busca en **Todos los restaurantes**.")
@@ -1905,8 +1961,8 @@ with st.container(key="buscador"):
 
     modo_transporte = st.segmented_control(
         "¿Cómo vais?", list(ETIQUETAS_TRANSPORTE), format_func=ETIQUETAS_TRANSPORTE.get,
-        default=preferencias["transporte"], key="transporte", width="stretch",
-    ) or "En coche"   # si se desmarca la opción elegida, vuelve a coche
+        default=preferencias["transporte"], key="transporte", width="stretch", required=True,
+    )
     tiempo_maximo_min = st.slider("Tiempo máximo", 5, 60, preferencias["tiempo"], step=5, format="%d min",
                                   key="tiempo")
 
@@ -1922,7 +1978,7 @@ with st.container(key="buscador"):
         presupuesto_max = None   # solapamiento() trata None como "sin tope"
 
     with st.expander("Más opciones"):
-        plato_deseado = st.text_input("¿Algún plato concreto?", placeholder="ej. sushi", key="plato")
+        plato_deseado = st.text_input("¿Algún plato concreto?", placeholder="Ej. sushi", key="plato")
 
     enviado = st.button("Buscar restaurantes", type="primary", icon=":material/search:",
                         width="stretch", key="boton_buscar")
@@ -2007,8 +2063,8 @@ if vista == "resultados" and resultado is not None:
     with st.container(horizontal=True, vertical_alignment="center"):
         st.button("Cambiar", icon=":material/arrow_back:", type="tertiary", on_click=ir_a_buscador)
         modo_vista = st.segmented_control(
-            "Vista", ["Lista", "Mapa"], default="Lista", key="modo_vista", label_visibility="collapsed",
-        ) or "Lista"
+            "Vista", ["Lista", "Mapa"], default="Lista", key="modo_vista", label_visibility="collapsed", required=True,
+        )
     st.caption(resumen_busqueda(respuestas))
     if respuestas.get("aviso_tiempos"):
         st.warning(respuestas["aviso_tiempos"])
@@ -2033,8 +2089,8 @@ if vista == "resultados" and resultado is not None:
 
     orden = st.segmented_control(
         "Ordenar", [ORDEN_PUNTUACION, ORDEN_CERCANOS], default=ORDEN_PUNTUACION, key="orden",
-        label_visibility="collapsed",
-    ) or ORDEN_PUNTUACION
+        label_visibility="collapsed", required=True,
+    )
     df_puntuado = ordenar_resultados(df_puntuado, orden)
 
     num_mostrados = min(st.session_state.get("num_mostrados", TOP_N), TOP_N_MAX, len(df_puntuado))

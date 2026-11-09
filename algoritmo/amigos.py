@@ -1,6 +1,6 @@
 """
-Amigos: el bloque "Amigos" del Perfil (cifras, solicitudes, tus amigos en una fila de círculos con su
-mini perfil, tu @usuario y el buscador) y los datos de "Tus amigos han ido a" de Inicio. Los correos de
+Amigos: el bloque "Amigos" del Perfil (solicitudes, tus amigos con su mini perfil y el buscador) y los
+datos de "Tus amigos han ido a" de Inicio. Los correos de
 los demás nunca se enseñan: solo nombre, @usuario y la foto de Google si la tienen.
 """
 
@@ -24,7 +24,6 @@ _LISTA = {n: (_COMPONENTES / f"lista_amigos.{n}").read_text(encoding="utf-8") fo
 
 # Colores de los avatares sin foto (siempre el mismo para cada persona); todos con texto blanco legible.
 PALETA = ["#C2410C", "#0F766E", "#7C3AED", "#BE185D", "#1D4ED8", "#15803D", "#B45309", "#475569"]
-DIAS_ACTIVIDAD = 30              # "visitas de tus amigos en los últimos 30 días"
 EN_MINI_PERFIL = 10              # tarjetas de cada carrusel del mini perfil de un amigo
 
 
@@ -138,13 +137,6 @@ def cargar_valoraciones_de(_bd, usuario, nombre):
     return bd.visitas_a_dataframe(_bd.visitas_de([usuario], limite=1000), {usuario: nombre})
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def cargar_actividad(_bd, usuarios):
-    """Nº de visitas de esos usuarios en los últimos DIAS_ACTIVIDAD días."""
-    desde = datetime.now(timezone.utc) - timedelta(days=DIAS_ACTIVIDAD)
-    return len(_bd.visitas_de(list(usuarios), limite=1000, desde=desde))
-
-
 RADIO_PERSONAS_KM = 3   # "gente de tu zona": su "De dónde eres" está a menos de 3 km del tuyo
 EN_CENAR_CON = 6
 
@@ -157,7 +149,7 @@ def _motivo(sugerida, nombres):
         return "Vive cerca de ti"
     texto = "Amigo de " + (comunes[0] if len(comunes) == 1 else f"{comunes[0]} y "
                            + (comunes[1] if len(comunes) == 2 else f"{len(comunes) - 1} más"))
-    return texto + (" · vive cerca" if sugerida["cerca"] else "")
+    return texto + (" · Vive cerca" if sugerida["cerca"] else "")
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -184,7 +176,7 @@ def cargar_sugerencias(_bd, usuario, zona):
 
 def limpiar_cache():
     for funcion in (cargar_relaciones, cargar_visitas_amigos, cargar_mis_visitas, cargar_valoraciones_de,
-                    cargar_actividad, cargar_sugerencias):
+                    cargar_sugerencias):
         funcion.clear()
 
 
@@ -251,10 +243,11 @@ def bloque_cenar_con(cliente, usuario, zona, abrir_ajustes):
 
 # ---------------------------------------------------------------- el bloque del Perfil
 
-def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, mostrar_lista):
-    """La página de tus amigos (al tocar "amigos" en la cabecera del Perfil): solicitudes, cifras y el listado; al
+def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, mostrar_lista, ficha):
+    """La página de tus amigos (al tocar "amigos" en la cabecera del Perfil): solicitudes y el listado; al
     tocar uno, su mini perfil. `mi_lista`: tu lista (DataFrame), para comparar. `mostrar_lista`: la función de
-    app.py que dibuja tarjetas de restaurantes (en el mini perfil). Buscar gente está en Buscar -> Personas."""
+    app.py que dibuja tarjetas de restaurantes (en el mini perfil) y `ficha`, la que dibuja la ficha del que se toque
+    dentro de la ventana (app.ficha_en_ventana). Buscar gente está en Buscar -> Personas."""
     st.subheader("Amigos")
     alias = (perfil or {}).get("alias")
     if not alias:
@@ -274,24 +267,16 @@ def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, 
     try:
         listas = {a["usuario"]: cargar_lista_de(cliente, a["usuario"]) for a in amigos}
         mis_valoraciones = cargar_mis_visitas(cliente, usuario)
+        _enviadas(cliente, usuario, [r for r in relaciones if r["estado"] == "pendiente" and r["enviada"]])
         _lista_de_amigos(amigos)
-        _cifras(cliente, amigos, mi_lista, listas)
     except bd.ErrorSupabase:
         st.caption("No se pueden ver los datos de tus amigos ahora mismo.")
-
-    for r in [r for r in relaciones if r["estado"] == "pendiente" and r["enviada"]]:
-        with st.container(horizontal=True, vertical_alignment="center"):
-            st.caption(f"Solicitud enviada a {quien(r)}")
-            st.button("Cancelar", type="tertiary", key=f"cancelar_{r['alias'] or r['usuario']}",
-                      on_click=_accion, args=(cliente.quitar_amistad, usuario, r["usuario"]))
-
-    st.caption(f"Tu nombre de usuario es **@{alias}**: dáselo a tus amigos para que te encuentren. Para añadir "
-               "a alguien, búscalo en **Buscar → Personas**.")
 
     abierto = st.session_state.pop("amigo_abierto", None)
     elegido = next((a for a in amigos if (a["alias"] or a["usuario"]) == abierto), None)
     if elegido is not None and elegido["usuario"] in listas:
-        _mini_perfil(cliente, usuario, elegido, mi_lista, listas[elegido["usuario"]], mis_valoraciones, mostrar_lista)
+        _mini_perfil(cliente, usuario, elegido, mi_lista, listas[elegido["usuario"]], mis_valoraciones, mostrar_lista,
+                     ficha)
 
 
 def _solicitudes(cliente, usuario, recibidas):
@@ -309,13 +294,16 @@ def _solicitudes(cliente, usuario, recibidas):
                           on_click=_accion, args=(cliente.responder_solicitud, usuario, r["usuario"], False))
 
 
-def _cifras(cliente, amigos, mi_lista, listas):
-    """Visitas de tus amigos en los últimos 30 días · sitios de tu lista que también tiene algún amigo."""
-    comunes = set().union(*(en_comun(mi_lista, lista) for lista in listas.values()))
-    visitas = cargar_actividad(cliente, tuple(sorted(a["usuario"] for a in amigos))) if amigos else 0
-    if amigos:   # el nº de amigos ya está arriba, en la cabecera del Perfil
-        st.caption(f"Tus amigos han ido a {visitas} sitio{'s' if visitas != 1 else ''} en los últimos {DIAS_ACTIVIDAD} "
-                   f"días · {len(comunes)} sitio{'s' if len(comunes) != 1 else ''} de tu lista los tiene también algún amigo")
+def _enviadas(cliente, usuario, enviadas):
+    """Encima del listado, un botón que despliega las solicitudes que has enviado y aún no han aceptado."""
+    if not enviadas:
+        return
+    with st.popover(f"Solicitudes enviadas ({len(enviadas)})", icon=":material/schedule_send:"):
+        for r in enviadas:
+            with st.container(horizontal=True, vertical_alignment="center"):
+                st.markdown(quien(r))
+                st.button("Cancelar", type="tertiary", key=f"cancelar_{r['alias'] or r['usuario']}",
+                          on_click=_accion, args=(cliente.quitar_amistad, usuario, r["usuario"]))
 
 
 def _al_tocar_amigo():
@@ -336,13 +324,17 @@ def _lista_de_amigos(amigos):
         key="lista_amigos", data={"personas": personas}, on_abrir_change=_al_tocar_amigo)
 
 
-def _mini_perfil(cliente, usuario, amigo, mi_lista, su_lista, mis_valoraciones, mostrar_lista):
-    """Ventana con lo que hace un amigo: compatibilidad, cifras, sus últimas valoraciones y lo que tenéis en común."""
+def _mini_perfil(cliente, usuario, amigo, mi_lista, su_lista, mis_valoraciones, mostrar_lista, ficha):
+    """Ventana con lo que hace un amigo: compatibilidad, cifras, sus últimas valoraciones y lo que tenéis en común.
+    Al tocar un restaurante, su ficha sale en la misma ventana (con «Volver»)."""
     nombre = _nombre(amigo)
 
     @st.dialog(nombre, width="medium")
     def _ventana():
         valoraciones = cargar_valoraciones_de(cliente, amigo["usuario"], nombre)
+        comunes = en_comun(mi_lista, su_lista)
+        if ficha(valoraciones.head(EN_MINI_PERFIL)) or ficha(mi_lista[mi_lista["ID"].isin(comunes)]):
+            return
         sus_notas = _notas(valoraciones)
         afinidad = compatibilidad(mi_lista, su_lista, _notas(mis_valoraciones), sus_notas)
         with st.container(horizontal=True, vertical_alignment="center"):
@@ -364,20 +356,19 @@ def _mini_perfil(cliente, usuario, amigo, mi_lista, su_lista, mis_valoraciones, 
             st.caption("Todavía no ha marcado ningún sitio con «He ido».")
         else:
             mostrar_lista(valoraciones.head(EN_MINI_PERFIL), key="lista_amigo_valoraciones",
-                          carrusel=True, estatica=True, extra=lambda f: {
+                          carrusel=True, en_ventana=True, extra=lambda f: {
                               "cuando": hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
                               "nota": None if pd.isna(f["Nota visita"]) else float(f["Nota visita"]),
                               "cita": None if pd.isna(f["Comentario visita"]) else f["Comentario visita"]})
 
-        comunes = en_comun(mi_lista, su_lista)
         idos_los_dos = _ids(mis_valoraciones) & _ids(valoraciones)
         st.markdown(f"**En común** · {len(comunes)} restaurante{'s' if len(comunes) != 1 else ''} en vuestras listas"
                     + (f" · habéis ido los dos a {len(idos_los_dos)}" if idos_los_dos else ""))
         if comunes:
             mostrar_lista(mi_lista[mi_lista["ID"].isin(comunes)].head(EN_MINI_PERFIL),
-                          key="lista_amigo_comunes", carrusel=True, estatica=True)
+                          key="lista_amigo_comunes", carrusel=True, en_ventana=True)
 
-        if st.button("Quitar de amigos", type="tertiary", icon=":material/person_remove:", key="quitar_amigo"):
+        if st.button("Quitar de amigos", icon=":material/person_remove:", width="stretch", key="quitar_amigo"):
             _accion(cliente.quitar_amistad, usuario, amigo["usuario"])
             st.rerun()   # cierra la ventana
 
@@ -386,7 +377,7 @@ def _mini_perfil(cliente, usuario, amigo, mi_lista, su_lista, mis_valoraciones, 
 
 def _elegir_alias(cliente, usuario, nombre, al_guardar_alias):
     st.caption("Elige un nombre de usuario para que tus amigos te encuentren. Tu correo no lo ve nadie.")
-    nuevo = st.text_input("Nombre de usuario", placeholder="ej. ana_g", max_chars=21, key="alias_nuevo")
+    nuevo = st.text_input("Nombre de usuario", placeholder="Ej. ana_g", max_chars=21, key="alias_nuevo")
     if st.button("Guardar nombre de usuario", width="stretch", key="guardar_alias"):
         try:
             cliente.guardar_alias(usuario, nombre, bd.validar_alias(nuevo))

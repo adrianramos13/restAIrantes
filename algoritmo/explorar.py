@@ -283,7 +283,7 @@ def _filtros(cliente, lugares):
         presupuesto = st.slider("Presupuesto por persona", 0, PRESUPUESTO_SIN_LIMITE, sin_tope, step=5,
                                 format="%d €", key="ex_presupuesto", **otra)
         nota_min = st.slider("Nota mínima en Google", 0.0, 5.0, 0.0, step=0.5, format="%.1f ⭐", key="ex_nota", **otra)
-        plato = st.text_input("Plato que destaquen", placeholder="ej. croquetas", key="ex_plato", **otra)
+        plato = st.text_input("Plato que destaquen", placeholder="Ej. croquetas", key="ex_plato", **otra)
         st.caption("El precio y los platos solo se saben de los analizados.")
     catalogo = None
     if tuple(presupuesto) != sin_tope or plato.strip() or nota_min:
@@ -370,7 +370,8 @@ def seccion(cliente, usuario, *, ficha, boton_ubicacion, caja_zona, lista, mapa,
         st.info("Ninguno cumple esos filtros.")
         return
     with st.container(horizontal=True, vertical_alignment="center"):
-        vista = st.segmented_control("Vista", VISTAS, default="Lista", key="ex_vista", label_visibility="collapsed")
+        vista = st.segmented_control("Vista", VISTAS, default="Lista", key="ex_vista", label_visibility="collapsed",
+                                     required=True)
         if st.toggle("Solo analizados", key="ex_solo_analizados", on_change=st.session_state.pop, args=("ex_visibles", None)):
             lugares = [l for l in lugares if _estado(l) == "analizado"]
         st.caption(f"{len(lugares)} sitio{'s' if len(lugares) != 1 else ''}")
@@ -378,7 +379,7 @@ def seccion(cliente, usuario, *, ficha, boton_ubicacion, caja_zona, lista, mapa,
         st.info("Aún no hay ninguno analizado por aquí.")
         return
     if any(l.get("nota_google") for l in lugares):   # con la ficha rápida se puede ordenar por la nota de Google
-        orden = st.segmented_control("Orden", ORDENES, default=ORDENES[0], key="ex_orden", label_visibility="collapsed",
+        orden = st.segmented_control("Orden", ORDENES, default=ORDENES[0], key="ex_orden", label_visibility="collapsed", required=True,
                                      on_change=st.session_state.pop, args=("ex_visibles", None))
         if orden == "Mejor nota" or not cerca:
             lugares = _por_nota(lugares)

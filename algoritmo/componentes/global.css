@@ -20,6 +20,10 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
 [class*="st-key-visitado_"] button { background: rgba(22, 163, 74, 0.10); border-color: #16A34A; color: #15803D; }
 @media (prefers-color-scheme: dark) { [class*="st-key-visitado_"] button { color: #4ADE80; } }
 
+/* Mini perfil de un amigo: "Quitar de amigos" en rojo, que se vea que es una acción seria */
+.st-key-quitar_amigo button { background: rgba(220, 38, 38, 0.08); border-color: #DC2626; color: #B91C1C; }
+@media (prefers-color-scheme: dark) { .st-key-quitar_amigo button { color: #F87171; } }
+
 /* Perfil, "Tus estadísticas": el nº de restaurantes es un botón (lleva a Mi lista) con pinta de cifra grande. */
 /* Como st.metric: la palabra pequeña arriba y la cifra grande debajo (column-reverse: en el texto va primero
    la cifra), con la flecha al lado para que se vea que se puede tocar. */

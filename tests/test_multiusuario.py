@@ -825,17 +825,19 @@ def test_se_guarda_la_foto_de_google_una_vez(multiusuario):
     assert multiusuario["fotos_guardadas"] == [("ana@ejemplo.com", "https://lh3.googleusercontent.com/a/foto")]
 
 
-def test_amigos_cifras_solicitudes_y_fila(multiusuario):
+def test_amigos_solicitudes_y_fila(multiusuario):
     multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
-    multiusuario["relaciones"] = [LUIS, EVA]
+    multiusuario["relaciones"] = [LUIS, EVA, {**EVA, "usuario": "pepe@x.com", "nombre": "Pepe", "alias": "pepe",
+                                               "enviada": True}]
     at = correr(seccion="perfil")
     assert not any(h.value == "Amigos" for h in at.subheader)           # en la pestaña Perfil ya no están
     at.button(key="contador_amigos").click().run()                     # tocar "amigos" arriba abre su listado
     assert not at.exception, [e.value for e in at.exception]
     assert any(h.value == "Amigos" for h in at.subheader)
     assert at.button(key="contador_amigos").label == "**1** amigos"
-    total = len(pd.read_excel(EXCEL, sheet_name="Restaurantes"))   # el amigo falso tiene la misma lista
-    assert any(f"· {total} sitios de tu lista" in c.value for c in at.caption)
+    assert not at.caption                                              # solo la lista, sin textos
+    assert "Solicitudes enviadas (1)" in str(at.get("popover")[0].proto)   # las enviadas, en un desplegable
+    assert at.button(key="cancelar_pepe").label == "Cancelar"
     assert any("Eva" in m.value and "quiere ser tu amigo" in m.value for m in at.markdown)
     assert at.button(key="aceptar_eva").label == "Aceptar"
     lista = [c for c in at.get("bidi_component") if "lista_amigos" in str(c.proto)]
@@ -879,28 +881,12 @@ def test_ver_mis_visitas_en_formato_lista(multiusuario):
                                     "Nombre": f"Sitio {i}", "Puntuación": 4.0 + i / 10, "Nº Reseñas": 100,
                                     "Rango de precios": "20-30 €", "Tipo de cocina": "Bar"}}} for i in range(3)]
     at = AppTest.from_file(APP, default_timeout=180)
-    at.session_state["perfil_pestana"] = "Diario"                       # el botón está en la pestaña Diario
+    at.session_state["pestana_elegida"] = "Diario"                       # el botón está en la pestaña Diario
     at = correr(at, seccion="perfil")
     at.button(key="mis_visitas_en_lista").click().run()
     assert not at.exception, [e.value for e in at.exception]
-    assert at.session_state["seccion"] == "mi_lista" and at.toggle(key="ml_idos").value
+    assert at.session_state["seccion"] == "perfil"                     # en una ventana, sin salir del Perfil
     assert any(c.value == "3 de 3 restaurantes" for c in at.caption)    # solo los 3 a los que has ido
-    at.toggle(key="ml_idos").set_value(False).run()                     # y se puede volver a la lista entera
-    assert not any(c.value == "3 de 3 restaurantes" for c in at.caption)
-
-
-def test_solo_los_que_he_ido_se_olvida_al_cambiar_de_pestana(multiusuario):
-    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com"}]
-    at = AppTest.from_file(APP, default_timeout=180)
-    at.session_state["perfil_pestana"] = "Diario"                       # el botón está en la pestaña Diario
-    at = correr(at, seccion="perfil")
-    at.button(key="mis_visitas_en_lista").click().run()
-    assert at.toggle(key="ml_idos").value
-    at.session_state["seccion"] = "inicio"
-    at.run()
-    at.session_state["seccion"] = "mi_lista"                            # volver a Mi lista desde la barra
-    at.run()
-    assert not at.exception and at.toggle(key="ml_idos").value is False
 
 
 
@@ -1026,7 +1012,9 @@ def cabecera(at):
 def test_cabecera_estilo_instagram(multiusuario):
     multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
     multiusuario["relaciones"] = [LUIS]
-    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com"}]
+    multiusuario["visitas"] = [{**VISITA_LUIS, "usuario": "ana@ejemplo.com", "restaurantes": {   # como en el catálogo
+        "id": 7, "imagen": None, "datos": {"Nombre": "Casa Pepe", "Puntuación": 4.5, "Nº Reseñas": 100,
+                                           "Rango de precios": "20-30 €", "Tipo de cocina": "Bar"}}}]
     at = correr(seccion="perfil")
     assert not at.exception, [e.value for e in at.exception]
     assert "Ana" in cabecera(at) and "@ana_g" in cabecera(at) and "ana@ejemplo.com" not in cabecera(at)
@@ -1035,13 +1023,13 @@ def test_cabecera_estilo_instagram(multiusuario):
         "**1** idos", f"**{total}** en tu lista", "**1** amigos"]
     assert [o for o in at.button_group if "Eatlist" in str(o.proto)], "faltan las pestañas Perfil / Diario / Eatlist"
     assert any(h.value == "Tus datos" for h in at.subheader)
-    at.button(key="contador_idos").click().run()                       # "idos": Buscar con "solo los que he ido"
-    assert at.session_state["seccion"] == "mi_lista" and at.toggle(key="ml_idos").value
-    assert at.session_state["buscar_modo"] == "Mis restaurantes"
-    at.session_state["seccion"] = "perfil"
-    at.run()
-    at.button(key="contador_lista").click().run()                      # "en tu lista": Buscar, sin ese filtro
-    assert at.session_state["seccion"] == "mi_lista" and at.toggle(key="ml_idos").value is False
+    at.button(key="contador_idos").click().run()                       # "idos": ventana con los que has ido
+    assert not at.exception and at.session_state["seccion"] == "perfil"
+    assert any(c.value == "1 de 1 restaurantes" for c in at.caption)
+    at.session_state["ml_texto"] = "zzzz"                               # un filtro de antes...
+    at.button(key="contador_lista").click().run()                      # "en tu lista": ventana con tu lista
+    assert not at.exception and at.session_state["seccion"] == "perfil"
+    assert any(c.value == f"{total} de {total} restaurantes" for c in at.caption)   # ...se quita al abrirla
 
 
 def test_diario_por_meses(multiusuario):
@@ -1050,7 +1038,7 @@ def test_diario_por_meses(multiusuario):
         {**VISITA_LUIS, "usuario": "ana@ejemplo.com", "creado_en": "2026-08-23T20:00:00+00:00",
          "restaurantes": {**VISITA_LUIS["restaurantes"], "id": 8}}]
     at = AppTest.from_file(APP, default_timeout=180)
-    at.session_state["perfil_pestana"] = "Diario"
+    at.session_state["pestana_elegida"] = "Diario"
     at = correr(at, seccion="perfil")
     assert not at.exception, [e.value for e in at.exception]
     diario = [c for c in at.get("bidi_component") if "grupos" in str(c.proto) and "octubre 2026" in str(c.proto)]
@@ -1107,7 +1095,7 @@ def test_he_ido_lo_quita_de_la_eatlist(multiusuario):
 def test_pestana_eatlist_en_orden(multiusuario):
     multiusuario["eatlist"] = EATLIST
     at = AppTest.from_file(APP, default_timeout=180)
-    at.session_state["perfil_pestana"] = "Eatlist"
+    at.session_state["pestana_elegida"] = "Eatlist"
     at = correr(at, seccion="perfil")
     assert not at.exception, [e.value for e in at.exception]
     lista = [c for c in at.get("bidi_component") if "Sitio A" in str(c.proto) and "puestos" in str(c.proto)]
@@ -1362,11 +1350,13 @@ def test_explorar_sin_la_tabla_avisa(multiusuario, monkeypatch):
     assert any("009_lugares.sql" in w.value for w in at.warning)
 
 
-def test_buscar_tiene_mis_restaurantes_descubrir_y_personas(multiusuario):
+def test_buscar_tiene_descubrir_y_personas(multiusuario):
     at = correr(seccion="mi_lista")
+    assert not at.exception, [e.value for e in at.exception]
     modos = at.get("button_group")[0]
-    assert "Mis restaurantes" in str(modos.proto) and "Descubrir" in str(modos.proto) and "Personas" in str(modos.proto)
-    assert at.session_state["buscar_modo"] == "Mis restaurantes"
+    assert "Mis restaurantes" not in str(modos.proto)                   # tu lista está en el Perfil
+    assert "Descubrir" in str(modos.proto) and "Personas" in str(modos.proto)
+    assert at.session_state["buscar_modo"] == "Descubrir"
 
 
 def test_buscar_lugares_no_ensena_los_cerrados(monkeypatch):

@@ -17,7 +17,7 @@ export default function (component) {
       const li = document.createElement('li');
       const fila = document.createElement('button'); fila.type = 'button'; fila.className = 'fila';
       const partes = [data.puestos ? `Puesto ${r.caja}` : `Día ${r.caja}`, r.nombre, r.detalle,
-        r.nota != null && `${String(r.nota).replace('.', ',')} de 5 estrellas`, r.comentario && 'con comentario', 'Ver ficha'];
+        r.nota != null && `${String(r.nota).replace('.', ',')} de 5 estrellas`, r.comentario && 'Con comentario', 'Ver ficha'];
       fila.setAttribute('aria-label', partes.filter(Boolean).join('. '));
 
       const caja = document.createElement('span'); caja.className = 'caja' + (data.puestos ? ' puesto' : '');
