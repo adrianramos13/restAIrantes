@@ -82,10 +82,14 @@
 .lr-carrusel .lr-nombre { font-size: 15px; }
 /* Póster ("Lo mejor de la semana"): tarjeta alta con la foto de fondo y barras alargadas abajo, encima de la
    foto. Las barras llevan el fondo del tema casi opaco: se leen igual en claro y en oscuro sobre cualquier foto. */
-.lr-posters > li { flex: 0 0 min(260px, 78%); width: min(260px, 78%); }
+.lr-posters.lr-carrusel > li { flex: 0 0 min(260px, 78%); width: min(260px, 78%); }
 .lr-posters .lr-card {
   position: relative; display: block; height: 340px; padding: 0; overflow: hidden; border-radius: 22px;
 }
+/* Sin carrusel: tiras a todo el ancho, una encima de otra, con el puesto (1, 2...) arriba a la izquierda */
+.lr-posters:not(.lr-carrusel) { gap: 12px; }
+.lr-posters:not(.lr-carrusel) .lr-card { height: 230px; }
+.lr-posters .lr-num { left: 10px; top: 10px; z-index: 1; }
 .lr-posters .lr-foto, .lr-posters .lr-foto img, .lr-posters .lr-inicial {
   position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0;
 }

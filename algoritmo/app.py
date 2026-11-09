@@ -806,7 +806,8 @@ def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_re
                   carrusel=False, estatica=False, poster=False, en_ventana=False):
     """Tarjetas de `top`. Con `modo_transporte` (resultados de una búsqueda) enseñan el tiempo de viaje;
     `extra(fila)` añade datos a la tarjeta (amigo, cuando, nota, cita: ver componentes/lista.js). Las de
-    sitios a los que ya has ido llevan "✓ Has ido". `poster`: tarjetas altas con la foto de fondo (con carrusel).
+    sitios a los que ya has ido llevan "✓ Has ido". `poster`: la foto de fondo y los datos en barras encima
+    (en columna, una tira debajo de otra; con `carrusel`, tarjetas altas en fila).
     `en_ventana`: la lista está dentro de un st.dialog; al tocar una tarjeta, su ficha sale ahí (ficha_en_ventana)."""
     visitados = set(mis_visitas())
     items = []
@@ -1297,7 +1298,7 @@ def visitas_de_amigos(abrir):
 
 def destacados_semana():
     """Descubrir sin buscar nada: los 5 restaurantes mejor valorados ("He ido") por todos en la última semana o,
-    si no hay, los últimos a los que se ha ido. Tira horizontal como la de los amigos."""
+    si no hay, los últimos a los que se ha ido. En tiras, una debajo de otra."""
     try:
         df, de_la_semana = amigos.cargar_destacados(BD)
     except bd.ErrorSupabase:
@@ -1306,7 +1307,7 @@ def destacados_semana():
         return
     st.subheader("Lo mejor de la semana" if de_la_semana else "Lo último que se ha valorado")
     ahora = datetime.now(timezone.utc)
-    mostrar_lista(df, key="lista_destacados", carrusel=True, poster=True, extra=lambda f: {
+    mostrar_lista(df, key="lista_destacados", poster=True, extra=lambda f: {
         "amigo": str(f["Amigo"]), "cuando": hace_cuanto(f["Fecha visita"], ahora),
         "nota": _o_none(f["Nota visita"]), "cita": _o_none(f["Comentario visita"])})
     coincide = df[df["ID"] == st.session_state.pop("ficha_abrir", None)]
