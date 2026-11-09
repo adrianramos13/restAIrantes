@@ -14,7 +14,9 @@ import pandas as pd
 import streamlit as st
 
 import datos as bd
-from logica import cocina_favorita, compatibilidad, en_comun, hace_cuanto, mejores_visitas, semana_cerrada
+from logica import (cocina_favorita, compatibilidad, en_comun, hace_cuanto, mejores_visitas, semana_cerrada,
+                    sugerir_personas)
+from servicios import haversine_km
 
 _COMPONENTES = Path(__file__).resolve().parent / "componentes"
 _BUSCADOR = {n: (_COMPONENTES / f"buscador_amigos.{n}").read_text(encoding="utf-8") for n in ("html", "css", "js")}
@@ -143,9 +145,46 @@ def cargar_actividad(_bd, usuarios):
     return len(_bd.visitas_de(list(usuarios), limite=1000, desde=desde))
 
 
+RADIO_PERSONAS_KM = 3   # "gente de tu zona": su "De dónde eres" está a menos de 3 km del tuyo
+EN_CENAR_CON = 6
+
+
+def _motivo(sugerida, nombres):
+    """Por qué se sugiere a alguien: "Amigo de Bea", "Amigo de Bea y Luis", "Amigo de Bea y 2 más" o
+    "Vive cerca de ti" (sin decir dónde: la zona de otros no se enseña)."""
+    comunes = [nombres.get(u, "un amigo") for u in sugerida["comunes"]]
+    if not comunes:
+        return "Vive cerca de ti"
+    texto = "Amigo de " + (comunes[0] if len(comunes) == 1 else f"{comunes[0]} y "
+                           + (comunes[1] if len(comunes) == 2 else f"{len(comunes) - 1} más"))
+    return texto + (" · vive cerca" if sugerida["cerca"] else "")
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cargar_sugerencias(_bd, usuario, zona):
+    """"Te recomendamos ir a cenar con" (logica.sugerir_personas): [{perfil..., motivo}]. `zona`: (lat, lon) de tu
+    "De dónde eres" o None. Sin 013_zona_perfil.sql (o sin zona) solo salen amigos de amigos."""
+    relaciones = cargar_relaciones(_bd, usuario)
+    amigos = {r["usuario"] for r in relaciones if r["estado"] == "aceptada"}
+    cercanos = []
+    if zona:
+        try:
+            gente = _bd.gente_cerca(*zona, RADIO_PERSONAS_KM, excepto=usuario)
+        except bd.ErrorSupabase:
+            gente = []
+        distancia = {p["usuario"]: haversine_km(*zona, p["zona_lat"], p["zona_lon"]) for p in gente}
+        cercanos = sorted((u for u, d in distancia.items() if d <= RADIO_PERSONAS_KM), key=distancia.get)
+    sugeridas = sugerir_personas(usuario, amigos, {r["usuario"] for r in relaciones},
+                                 _bd.amistades_aceptadas_de(amigos), cercanos, EN_CENAR_CON)
+    perfiles = _bd.perfiles_de({s["usuario"] for s in sugeridas})
+    nombres = {r["usuario"]: _nombre(r) for r in relaciones}
+    return [{**perfiles.get(s["usuario"], {}), "usuario": s["usuario"], "motivo": _motivo(s, nombres)}
+            for s in sugeridas]
+
+
 def limpiar_cache():
     for funcion in (cargar_relaciones, cargar_visitas_amigos, cargar_mis_visitas, cargar_valoraciones_de,
-                    cargar_actividad):
+                    cargar_actividad, cargar_sugerencias):
         funcion.clear()
 
 
@@ -175,6 +214,39 @@ def solicitudes_pendientes(cliente, usuario):
         return sum(1 for r in cargar_relaciones(cliente, usuario) if r["estado"] == "pendiente" and not r["enviada"])
     except bd.ErrorSupabase:
         return 0
+
+
+def _enviar_solicitud(cliente, usuario, otro, nombre):
+    _accion(cliente.solicitar_amistad, usuario, otro)
+    if "error_amigos" not in st.session_state:
+        st.toast(f"Solicitud enviada a {nombre}", icon=":material/person_add:")
+
+
+def bloque_cenar_con(cliente, usuario, zona, abrir_ajustes):
+    """Inicio: "Te recomendamos ir a cenar con", tarjetas con foto, nombre, por qué y "Añadir". Los botones llevan
+    el correo en el servidor (args del callback); al navegador solo le llegan nombre, @usuario y foto."""
+    try:
+        sugeridas = cargar_sugerencias(cliente, usuario, zona)
+    except bd.ErrorSupabase:
+        return
+    if not sugeridas:
+        if zona is None:
+            st.subheader("Te recomendamos ir a cenar con")
+            st.caption("Dinos de dónde eres y te propondremos gente de tu zona.")
+            st.button("Poner de dónde soy", on_click=abrir_ajustes, icon=":material/location_on:", key="poner_zona")
+        return
+    st.subheader("Te recomendamos ir a cenar con")
+    if st.session_state.get("error_amigos"):
+        st.error(st.session_state.pop("error_amigos"))
+    with st.container(horizontal=True, key="cenar_con"):
+        for i, p in enumerate(sugeridas):
+            with st.container(border=True, width=150, horizontal_alignment="center", gap="small"):
+                st.html(avatar_html(p, 56), width="content")
+                st.markdown(f"**{texto_seguro(_nombre(p))}**" + (f"  \n@{p['alias']}" if p.get("alias") else ""),
+                            text_alignment="center")
+                st.caption(texto_seguro(p["motivo"]), text_alignment="center")
+                st.button("Añadir", icon=":material/person_add:", width="stretch", key=f"cenar_con_{i}",
+                          on_click=_enviar_solicitud, args=(cliente, usuario, p["usuario"], _nombre(p)))
 
 
 # ---------------------------------------------------------------- el bloque del Perfil

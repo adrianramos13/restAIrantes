@@ -379,6 +379,24 @@ def compatibilidad(maestro_a, maestro_b, notas_a, notas_b):
     return round(100 * ((1 - PESO_NOTAS_COMPATIBILIDAD) * cocinas + PESO_NOTAS_COMPATIBILIDAD * notas))
 
 
+def sugerir_personas(usuario, amigos, conocidos, amistades_de_amigos, cercanos, limite=6):
+    """"Te recomendamos ir a cenar con": amigos de tus amigos y gente de tu zona que no conoces todavía.
+    `amigos`: tus amigos; `conocidos`: todos con los que ya tienes relación (amigos y solicitudes);
+    `amistades_de_amigos`: amistades aceptadas [{solicitante, destinatario}] de tus amigos; `cercanos`: gente de tu
+    zona, de más cerca a más lejos. Devuelve [{usuario, comunes (amigos en común), cerca}]: primero quien tiene
+    más amigos en común (y, a igualdad, quien además vive cerca); luego, la gente de tu zona por cercanía."""
+    fuera = set(conocidos) | {usuario}
+    comunes = {}
+    for f in amistades_de_amigos:
+        for amigo, otro in ((f["solicitante"], f["destinatario"]), (f["destinatario"], f["solicitante"])):
+            if amigo in amigos and otro not in fuera and otro not in amigos:
+                comunes.setdefault(otro, set()).add(amigo)
+    cerca = {u: i for i, u in enumerate(dict.fromkeys(cercanos)) if u not in fuera}
+    candidatos = set(comunes) | set(cerca)
+    orden = sorted(candidatos, key=lambda u: (-len(comunes.get(u, ())), u not in cerca, cerca.get(u, 0), u))
+    return [{"usuario": u, "comunes": sorted(comunes.get(u, ())), "cerca": u in cerca} for u in orden[:limite]]
+
+
 def insertar_en_orden(ids, nuevo, posicion):
     """`ids` en orden con `nuevo` en el puesto `posicion` (1 = el primero); si ya estaba, se mueve allí.
     Un puesto fuera de rango va al principio o al final."""

@@ -528,8 +528,6 @@ def bloque_he_ido(fila):
 
 
 def capa_visita(id_restaurante, visita, abierta):
-    # Si vienes de aceptar una invitación ("Ana dice que fuisteis juntos"): con ella y en su fecha.
-    invitacion = st.session_state.get(f"invitacion_{id_restaurante}")
     with st.container(key="capa_visita"):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.markdown("#### ¿Qué tal fue?")
@@ -538,13 +536,13 @@ def capa_visita(id_restaurante, visita, abierta):
                       on_click=lambda: st.session_state.pop(abierta, None))
         nota = estrellas(f"nota_visita_{id_restaurante}", _o_none(visita["Nota visita"]) if visita is not None else None)
         hoy = _hora_local(datetime.now(timezone.utc).isoformat()).date()
-        fecha = st.date_input("Cuándo fuiste", value=_fecha_visita(visita) or (invitacion or {}).get("fecha") or hoy,
+        fecha = st.date_input("Cuándo fuiste", value=_fecha_visita(visita) or hoy,
                               max_value=hoy, format="DD/MM/YYYY", key=f"fecha_visita_{id_restaurante}")
         comentario = st.text_area(
             "Lo que más te gustó", value=(_o_none(visita["Comentario visita"]) or "") if visita is not None else "",
             max_chars=bd.LARGO_MAX_COMENTARIO, key=f"comentario_visita_{id_restaurante}", height=68,
             placeholder="Lo que más te gustó (opcional)")
-        nuevos = selector_comensales(id_restaurante, invitacion)
+        nuevos = selector_comensales(id_restaurante)
         with st.container(horizontal=True, vertical_alignment="center"):
             guardar = st.button("Guardar", type="primary", icon=":material/check_circle:", width="stretch",
                                 key=f"visita_guardar_{id_restaurante}")
@@ -555,9 +553,6 @@ def capa_visita(id_restaurante, visita, abierta):
     try:
         if quitar:
             BD.quitar_visita(usuario, id_restaurante)
-        elif invitacion:
-            BD.aceptar_invitacion(usuario, invitacion["de"], id_restaurante, nota, comentario, fecha=fecha)
-            quitar_de_la_eatlist(id_restaurante)
         else:
             BD.registrar_visita(usuario, id_restaurante, nota, comentario, fecha=fecha)
             quitar_de_la_eatlist(id_restaurante)
@@ -575,7 +570,6 @@ def capa_visita(id_restaurante, visita, abierta):
                      "(¿falta ejecutar supabase/011_comensales.sql?).")
             return
     st.session_state.pop(abierta, None)
-    st.session_state.pop(f"invitacion_{id_restaurante}", None)
     amigos.limpiar_cache()
     st.toast("Ya no consta que hayas ido." if quitar else
              "¡Guardado!" + (" Tus acompañantes tienen que confirmarlo; cuando lo hagan, les saldrá en su perfil."
@@ -590,7 +584,7 @@ def _recargar_ventana():
         st.rerun()
 
 
-def selector_comensales(id_restaurante, invitacion=None):
+def selector_comensales(id_restaurante):
     """Con quién fuiste: los que ya lo confirmaron, los que aún no (con "Quitar") y un desplegable para invitar a
     más. Cada uno tiene que confirmarlo en su Inicio; solo entonces le sale en su perfil, con su nota. Solo amigos
     aceptados; los correos nunca llegan a la pantalla (el desplegable lleva posiciones). Devuelve los nuevos."""
@@ -598,7 +592,7 @@ def selector_comensales(id_restaurante, invitacion=None):
     try:
         con = [c for c in BD.comensales_de(usuario, id_restaurante) if c in amigos_ok]
         pendientes = [c for c in BD.invitados_de(usuario, id_restaurante) if c in amigos_ok and c not in con]
-        te_anadio = (invitacion or {}).get("de") or BD.anadido_por(usuario, id_restaurante)
+        te_anadio = BD.anadido_por(usuario, id_restaurante)
     except bd.ErrorSupabase:   # p. ej. aún sin supabase/011_comensales.sql
         con, pendientes, te_anadio = [], [], None
     if te_anadio:
@@ -629,55 +623,98 @@ def selector_comensales(id_restaurante, invitacion=None):
     return [opciones[i] for i in elegidos]
 
 
-# ----------------------- INVITACIONES DE COMENSAL ----------------------- #
-# "Ana dice que fuisteis juntos a Casa Pepe el 12/10. ¿Es correcto?" (arriba en Inicio). "Sí" abre la ficha con
-# la ventanita "¿Qué tal fue?" para poner tus estrellas y tu comentario; "No" la borra.
+# ----------------------- NOTIFICACIONES (invitaciones de comensal) ----------------------- #
+# Arriba en Inicio, un solo botón ("Ana dice que fuisteis juntos a comer" o "Tienes 3 notificaciones") que abre una
+# ventana con todas. En cada una: "Sí, fui" despliega ahí mismo tus estrellas y tu comentario, con la fecha que puso
+# quien te invitó (no se cambia) y sin "con quién fuiste"; "No" la borra. Al guardar o borrar se recarga toda la
+# página (no solo la ventana), así el botón de Inicio ya no la cuenta, y la ventana se vuelve a abrir si quedan más.
 
-def _aceptar_invitacion(invitacion):
-    rid = int(invitacion["restaurante_id"])
-    st.session_state[f"invitacion_{rid}"] = {"de": invitacion["de"],
-                                            "fecha": date.fromisoformat(str(invitacion["fecha"]))}
-    st.session_state[f"visita_capa_{rid}"] = True
-    st.session_state["ficha_invitacion"] = rid
+NOTIFICACIONES_ABIERTAS = "notificaciones_abiertas"
 
 
-def _rechazar_invitacion(invitacion):
-    try:
-        BD.borrar_invitacion(invitacion["de"], usuario, invitacion["restaurante_id"])
-    except bd.ErrorSupabase:
-        st.toast("No se ha podido ahora mismo. Inténtalo en un momento.", icon=":material/error:")
-
-
-def invitaciones_de_comensal():
+def _invitaciones_de_amigos():
+    """(invitaciones que esperan tu respuesta, solo de amigos aceptados; {correo: amigo})."""
     try:
         invitaciones = BD.invitaciones_para(usuario)
     except bd.ErrorSupabase:   # p. ej. aún sin supabase/011_comensales.sql
-        return
+        return [], {}
     amigos_ok = {r["usuario"]: r for r in amigos.cargar_relaciones(BD, usuario) if r["estado"] == "aceptada"}
-    for n, inv in enumerate(i for i in invitaciones if i["de"] in amigos_ok and i.get("restaurantes")):
+    return [i for i in invitaciones if i["de"] in amigos_ok and i.get("restaurantes")], amigos_ok
+
+
+def boton_notificaciones():
+    invitaciones, amigos_ok = _invitaciones_de_amigos()
+    abrir = st.session_state.pop(NOTIFICACIONES_ABIERTAS, False)   # pop: cerrarla con la ✕ no la vuelve a abrir
+    if not invitaciones:
+        return
+    if len(invitaciones) == 1:
+        amigo = amigos_ok[invitaciones[0]["de"]]
+        texto = f"{amigos.texto_seguro(amigo['nombre'] or amigo['alias'] or 'Un amigo')} dice que fuisteis juntos a comer"
+    else:
+        texto = f"Tienes {len(invitaciones)} notificaciones nuevas"
+    st.button(texto, icon=":material/notifications_active:", width="stretch", key="ver_notificaciones",
+              on_click=lambda: st.session_state.update({NOTIFICACIONES_ABIERTAS: True}))
+    if abrir:
+        ventana_notificaciones(invitaciones, amigos_ok)
+
+
+def _recargar_notificaciones():
+    st.session_state[NOTIFICACIONES_ABIERTAS] = True
+    st.session_state.pop("notificacion_abierta", None)
+    st.rerun()   # toda la página: el botón de Inicio se actualiza y la ventana vuelve si quedan más
+
+
+@st.dialog("Notificaciones", width="small")
+def ventana_notificaciones(invitaciones, amigos_ok):
+    for n, inv in enumerate(invitaciones):
+        rid = int(inv["restaurante_id"])
         nombre = (inv["restaurantes"].get("datos") or {}).get("Nombre") or "un restaurante"
         dia = date.fromisoformat(str(inv["fecha"]))
-        with st.container(border=True, key=f"invitacion_comensal_{n}"):
+        with st.container(border=True, key=f"notificacion_{n}"):
             st.markdown(f"{amigos.quien(amigos_ok[inv['de']])} dice que fuisteis juntos a "
-                        f"**{amigos.texto_seguro(nombre)}** el {dia:%d/%m/%Y}. ¿Es correcto?")
+                        f"**{amigos.texto_seguro(nombre)}** el {dia:%d/%m/%Y}.")
+            if st.session_state.get("notificacion_abierta") == n:
+                _aceptar_invitacion(inv, rid, dia, n)
+                continue
             with st.container(horizontal=True):
-                st.button("Sí, ponerlo en mi perfil", type="primary", icon=":material/check:",
-                          key=f"invitacion_si_{n}", on_click=_aceptar_invitacion, args=(inv,))
-                st.button("No", key=f"invitacion_no_{n}", on_click=_rechazar_invitacion, args=(inv,))
+                st.button("Sí, fui", type="primary", icon=":material/check:", key=f"invitacion_si_{n}",
+                          on_click=lambda n=n: st.session_state.update(notificacion_abierta=n))
+                no = st.button("No", key=f"invitacion_no_{n}")
+            if no:
+                try:
+                    BD.borrar_invitacion(inv["de"], usuario, rid)
+                except bd.ErrorSupabase:
+                    st.error("No se ha podido ahora mismo. Inténtalo en un momento.")
+                    return
+                _recargar_notificaciones()
 
 
-def abrir_ficha_de_invitacion():
-    """Tras "Sí": la ficha del restaurante (aunque no esté en tu lista) con la ventanita ya abierta."""
-    rid = st.session_state.pop("ficha_invitacion", None)
-    if rid is None:
+def _aceptar_invitacion(inv, rid, dia, n):
+    """"Sí, fui": tus estrellas y tu comentario. La fecha es la que puso quien te invitó y no hay "con quién fuiste"
+    (fuiste con él; si quieres apuntar a más, desde la ficha)."""
+    nota = estrellas(f"nota_invitacion_{n}_{rid}")
+    st.date_input("Cuándo fuisteis", value=dia, format="DD/MM/YYYY", disabled=True, key=f"fecha_invitacion_{n}_{rid}")
+    comentario = st.text_area("Lo que más te gustó", max_chars=bd.LARGO_MAX_COMENTARIO, height=68,
+                              key=f"comentario_invitacion_{n}_{rid}", placeholder="Lo que más te gustó (opcional)")
+    with st.container(horizontal=True):
+        guardar = st.button("Guardar", type="primary", icon=":material/check_circle:", width="stretch",
+                            key=f"invitacion_guardar_{n}")
+        st.button("Cancelar", type="tertiary", key=f"invitacion_cancelar_{n}",
+                  on_click=lambda: st.session_state.pop("notificacion_abierta", None))
+    if not guardar:
         return
     try:
-        maestro, platos = BD.restaurantes_por_ids([rid])
-    except bd.ErrorSupabase:
-        st.error("No se ha podido abrir ahora mismo. Inténtalo en un momento.")
+        BD.aceptar_invitacion(usuario, inv["de"], rid, nota, comentario, fecha=dia)
+    except ValueError as e:
+        st.error(str(e))
         return
-    if not maestro.empty:
-        mostrar_ficha(maestro.iloc[0], platos)
+    except bd.ErrorSupabase:
+        st.error("No se ha podido guardar ahora mismo. Inténtalo en un momento.")
+        return
+    quitar_de_la_eatlist(rid)
+    amigos.limpiar_cache()
+    st.toast("¡Guardado! Ya sale en tu perfil.", icon=":material/check_circle:")
+    _recargar_notificaciones()
 
 
 def mostrar_ficha(fila, df_platos, plato=None, modo_transporte=None):
@@ -1099,13 +1136,14 @@ _CSS_INICIO = "<style>\n" + recurso("inicio.css") + "</style>\n"
 
 
 def seccion_inicio(maestro, df_platos, tras_intro, momento, nombre=None):
-    if BD is not None:   # "Ana dice que fuisteis juntos a...": arriba del todo, para que se vea
-        invitaciones_de_comensal()
-        abrir_ficha_de_invitacion()
+    if BD is not None:   # "Ana dice que fuisteis juntos a comer": un botón arriba que abre las notificaciones
+        boton_notificaciones()
     abrir = st.session_state.pop("ficha_abrir", None)   # la ficha a abrir, de la idea o de los amigos
     idea_del_dia(maestro, df_platos, tras_intro, momento, nombre, abrir)
     if BD is not None:
         visitas_de_amigos(abrir)
+        zona = (perfil or {}).get("zona_lat"), (perfil or {}).get("zona_lon")
+        amigos.bloque_cenar_con(BD, usuario, zona if None not in zona else None, abrir_tus_listas)
 
 
 def idea_del_dia(maestro, df_platos, tras_intro, momento, nombre, abrir):
@@ -1353,6 +1391,44 @@ def bloque_datos_personales(usuario, nombre):
         st.rerun()   # todo saluda ya con el nombre nuevo
 
 
+def bloque_zona(usuario, nombre, perfil_actual):
+    """"De dónde eres": barrio o pueblo (con las sugerencias de direcciones de Comer hoy). Solo sirve para proponerte
+    gente de tu zona en Inicio; a los demás no se les enseña."""
+    st.markdown("**De dónde eres**")
+    actual = (perfil_actual or {}).get("zona")
+    if actual:
+        st.caption(f"Ahora: {amigos.texto_seguro(actual)}")
+    texto, sugerencia = caja_direccion_con_sugerencias(key="perfil_zona", disabled=False,
+                                                       placeholder="Tu barrio o pueblo, p. ej. Chamberí", etiqueta="")
+    st.caption("Solo la usamos para proponerte gente de tu zona en Inicio. Nadie ve dónde vives.")
+    with st.container(horizontal=True):
+        guardar = st.button("Guardar zona", width="stretch", key="guardar_zona", disabled=not texto.strip())
+        quitar = actual and st.button("Quitar", type="tertiary", key="quitar_zona")
+    if not (guardar or quitar):
+        return
+    zona, punto = None, (None, None)
+    if guardar:
+        zona = re.sub(r"\s+", " ", texto).strip()[:120]
+        try:
+            punto = (sugerencia["lat"], sugerencia["lon"]) if sugerencia else geocodificar_direccion(zona)
+        except Exception:   # el servicio de direcciones no responde
+            st.error("No se ha podido buscar esa zona ahora mismo. Prueba en un momento.")
+            return
+        if punto is None:
+            st.error("No encontramos esa zona. Prueba a elegir una de las sugerencias.")
+            return
+        if not isinstance(punto, tuple):   # geocodificar_direccion devuelve un lugar de geopy
+            punto = (punto.latitude, punto.longitude)
+    try:
+        BD.guardar_zona(usuario, nombre, zona, *punto)
+    except bd.ErrorSupabase:
+        st.error("No se ha podido guardar ahora mismo (¿falta ejecutar supabase/013_zona_perfil.sql?).")
+        return
+    cargar_perfil.clear()
+    amigos.limpiar_cache()
+    st.rerun()
+
+
 _AVATAR_PERFIL = st.components.v2.component(
     "avatar_perfil", html=recurso("avatar_perfil.html"), css=recurso("avatar_perfil.css"),
     js=recurso("avatar_perfil.js"),
@@ -1395,6 +1471,8 @@ def ajustes_de_usuario(usuario):
             st.error(st.session_state.pop("error_foto"))
         st.divider()
         bloque_datos_personales(usuario, nombre)
+        st.divider()
+        bloque_zona(usuario, nombre, perfil_actual)
         st.divider()
         bloque_tus_listas(usuario, mi_lista)
         st.divider()
@@ -1464,7 +1542,7 @@ def bloque_tus_listas(usuario, lista):
 
 def bloque_insights(maestro, visitas=None):
     """Datos directos sobre ti en tarjetas. `visitas`: tus "He ido" (None en modo local: no hay)."""
-    st.subheader("Tus datos")
+    st.subheader("Tus datos", text_alignment="center")
     i = insights_perfil(maestro, visitas if visitas is not None else pd.DataFrame(), datetime.now(timezone.utc))
     coma = lambda x: f"{x:.1f}".replace(".", ",")
     tarjetas = []

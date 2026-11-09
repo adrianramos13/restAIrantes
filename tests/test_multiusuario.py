@@ -214,6 +214,13 @@ def multiusuario(monkeypatch):
     # Amigos y "He ido": sin amigos salvo que el test diga otra cosa.
     estado.update(relaciones=[], visitas=[], visitas_guardadas=[], confirmacion=True)
     monkeypatch.setattr(datos.Supabase, "relaciones_de", lambda self, u: estado["relaciones"])
+    # "Te recomendamos ir a cenar con": amistades de tus amigos, gente de tu zona y solicitudes enviadas
+    estado.update(amistades_amigos=[], cerca=[], perfiles={}, solicitudes=[])
+    monkeypatch.setattr(datos.Supabase, "amistades_aceptadas_de", lambda self, us: estado["amistades_amigos"])
+    monkeypatch.setattr(datos.Supabase, "gente_cerca", lambda self, lat, lon, radio, excepto: estado["cerca"])
+    monkeypatch.setattr(datos.Supabase, "perfiles_de", lambda self, us: {u: estado["perfiles"][u] for u in us
+                                                                         if u in estado["perfiles"]})
+    monkeypatch.setattr(datos.Supabase, "solicitar_amistad", lambda self, de, a: estado["solicitudes"].append((de, a)))
     monkeypatch.setattr(datos.Supabase, "visitas_de", lambda self, usuarios, limite=10, desde=None: estado["visitas"])
     def registrar_visita(self, u, i, nota=None, comentario=None, fecha=None, anadido_por=None):
         estado["visitas_guardadas"].append((u, i, nota, comentario))
@@ -617,6 +624,33 @@ def test_inicio_ensena_las_visitas_de_los_amigos(multiusuario):
     at = correr(seccion="inicio")
     assert not at.exception, [e.value for e in at.exception]
     assert not any("todavía no han marcado" in c.value or "Añade amigos" in c.value for c in at.caption)
+
+
+def test_inicio_recomienda_cenar_con_amigos_de_amigos_y_gente_de_tu_zona(multiusuario):
+    multiusuario["perfil"] = {"nombre": "Ana", "alias": "ana", "zona": "Chamberí", "zona_lat": 40.43, "zona_lon": -3.70}
+    multiusuario["relaciones"] = [
+        {"usuario": "bea@x.com", "nombre": "Bea", "alias": "bea", "estado": "aceptada", "enviada": False},
+        {"usuario": "carlos@x.com", "nombre": "Carlos", "alias": "carlos", "estado": "pendiente", "enviada": True}]
+    multiusuario["amistades_amigos"] = [{"solicitante": "bea@x.com", "destinatario": "dani@x.com"},
+                                        {"solicitante": "carlos@x.com", "destinatario": "bea@x.com"},
+                                        {"solicitante": "bea@x.com", "destinatario": "ana@ejemplo.com"}]
+    multiusuario["cerca"] = [{"usuario": "eva@x.com", "zona_lat": 40.44, "zona_lon": -3.70},     # ~1 km
+                             {"usuario": "fran@x.com", "zona_lat": 40.60, "zona_lon": -3.70}]    # ~19 km: fuera
+    multiusuario["perfiles"] = {u: {"nombre": n, "alias": n.lower()} for u, n in
+                                (("dani@x.com", "Dani"), ("eva@x.com", "Eva"), ("fran@x.com", "Fran"))}
+    at = correr(seccion="inicio")
+    assert any(h.value == "Te recomendamos ir a cenar con" for h in at.subheader)
+    textos = " ".join(m.value for m in at.markdown) + " ".join(c.value for c in at.caption)
+    assert "Dani" in textos and "Amigo de Bea" in textos and "Eva" in textos and "Vive cerca de ti" in textos
+    assert "Carlos" not in textos and "Fran" not in textos and "x.com" not in textos   # ni correos
+    at.button(key="cenar_con_0").click().run()   # Dani: el que tiene amigos en común va primero
+    assert multiusuario["solicitudes"] == [("ana@ejemplo.com", "dani@x.com")]
+
+
+def test_inicio_sin_zona_ni_sugerencias_pide_de_donde_eres(multiusuario):
+    at = correr(seccion="inicio")
+    at.button(key="poner_zona").click().run()
+    assert not at.exception and at.session_state["seccion"] == "perfil"   # con los ajustes abiertos
 
 
 def test_buscar_personas_pide_elegir_nombre_de_usuario(multiusuario, monkeypatch):
@@ -1529,32 +1563,43 @@ def invitacion_de_luis(multiusuario, monkeypatch, id_restaurante):
     st.cache_data.clear()   # la lista de amigos ya estaba en caché (vacía)
 
 
-def test_aceptar_invitacion_pone_tus_estrellas_y_comentario(multiusuario, monkeypatch):
+def abrir_notificaciones(at):
+    at.session_state["notificaciones_abiertas"] = True   # (AppTest recarga todo: se vuelve a abrir la ventana)
+    return at
+
+
+def test_aceptar_invitacion_desde_las_notificaciones(multiusuario, monkeypatch):
     at = correr(seccion="inicio")
     _, id_restaurante, _ = at.session_state["sugerencia"]
     invitacion_de_luis(multiusuario, monkeypatch, id_restaurante)
     at.run()
+    assert at.button(key="ver_notificaciones").label == "Luis dice que fuisteis juntos a comer"   # no la lista entera
+    assert not any("Casa Pepe" in m.value for m in at.markdown)
+    at.button(key="ver_notificaciones").click().run()                      # la ventana con todas
     assert any("dice que fuisteis juntos a **Casa Pepe** el 12/10/2026" in m.value for m in at.markdown)
     assert multiusuario["visitas_guardadas"] == []                          # hasta que no aceptas, nada
-    at.button(key="invitacion_si_0").click().run()                          # abre la ficha con la ventanita
+    abrir_notificaciones(at).button(key="invitacion_si_0").click().run()
     assert not at.exception, [e.value for e in at.exception]
-    assert str(at.date_input(key=f"fecha_visita_{id_restaurante}").value) == "2026-10-12"
-    at.session_state["ficha_invitacion"] = id_restaurante                   # (AppTest: se vuelve a abrir)
-    at.text_area(key=f"comentario_visita_{id_restaurante}").input("Muy rico")
-    at.session_state["ficha_invitacion"] = id_restaurante
-    at.button(key=f"visita_guardar_{id_restaurante}").click().run()
+    fecha = at.date_input(key=f"fecha_invitacion_0_{id_restaurante}")
+    assert str(fecha.value) == "2026-10-12" and fecha.disabled              # la que puso Luis, sin poder cambiarla
+    assert not any(m.label == "Con quién fuiste" for m in at.multiselect)  # ni con quién fuiste
+    abrir_notificaciones(at).text_area(key=f"comentario_invitacion_0_{id_restaurante}").input("Muy rico")
+    abrir_notificaciones(at).button(key="invitacion_guardar_0").click().run()
     assert not at.exception, [e.value for e in at.exception]
     (u, de, i, nota, comentario, fecha), = multiusuario["invitaciones_aceptadas"]
     assert (u, de, i, comentario, str(fecha)) == ("ana@ejemplo.com", "luis@x.com", id_restaurante, "Muy rico", "2026-10-12")
     assert multiusuario["visitas_guardadas"] == []                          # una sola entrada: la de la invitación
+    multiusuario["invitaciones"] = []                                       # (aceptar_invitacion la borra)
+    at.run()
+    assert "ver_notificaciones" not in [b.key for b in at.button]           # y ya no sale en Inicio
 
 
 def test_rechazar_invitacion(multiusuario, monkeypatch):
     at = correr(seccion="inicio")
     _, id_restaurante, _ = at.session_state["sugerencia"]
     invitacion_de_luis(multiusuario, monkeypatch, id_restaurante)
-    at.run()
-    at.button(key="invitacion_no_0").click().run()
+    abrir_notificaciones(at).run()
+    abrir_notificaciones(at).button(key="invitacion_no_0").click().run()
     assert multiusuario["invitaciones_borradas"] == [("luis@x.com", "ana@ejemplo.com", id_restaurante)]
     assert multiusuario["visitas_guardadas"] == [] and multiusuario["invitaciones_aceptadas"] == []
 

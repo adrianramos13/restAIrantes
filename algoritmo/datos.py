@@ -484,6 +484,30 @@ class Supabase:
         self._rest("POST", "perfiles", params={"on_conflict": "usuario"}, prefer="resolution=merge-duplicates",
                    json={"usuario": usuario, "nombre": nombre, "foto": foto, "actualizado_en": _ahora()})
 
+    def guardar_zona(self, usuario, nombre, zona, lat, lon):
+        """"De dónde eres" (013_zona_perfil.sql): el texto elegido y su punto; None en los tres para quitarla."""
+        self._rest("POST", "perfiles", params={"on_conflict": "usuario"}, prefer="resolution=merge-duplicates",
+                   json={"usuario": usuario, "nombre": nombre, "zona": zona, "zona_lat": lat, "zona_lon": lon,
+                         "actualizado_en": _ahora()})
+
+    def gente_cerca(self, lat, lon, radio_km, excepto, limite=200):
+        """Perfiles con @alias cuya zona cae en el cuadrado de `radio_km` alrededor de (lat, lon), menos `excepto`.
+        El círculo exacto se recorta después (logica.sugerir_personas)."""
+        dlat, dlon = radio_km / 111.0, radio_km / (111.0 * max(math.cos(math.radians(lat)), 0.01))
+        return self._rest("GET", "perfiles", params={
+            "alias": "not.is.null", "usuario": f"neq.{excepto}", "select": "usuario,nombre,alias,foto,zona_lat,zona_lon",
+            "and": f"(zona_lat.gte.{lat - dlat},zona_lat.lte.{lat + dlat},zona_lon.gte.{lon - dlon},zona_lon.lte.{lon + dlon})",
+            "limit": limite})
+
+    def amistades_aceptadas_de(self, usuarios):
+        """Amistades aceptadas en las que está alguno de esos usuarios: [{solicitante, destinatario}]."""
+        if not usuarios:
+            return []
+        dentro = _filtro_in(sorted(usuarios))
+        return self._rest("GET", "amistades", params={
+            "or": f"(solicitante.in.{dentro},destinatario.in.{dentro})", "estado": "eq.aceptada",
+            "select": "solicitante,destinatario", "limit": 5000})
+
     def amistades_de(self, usuario):
         """Filas de amistades donde participa el usuario (enviadas, recibidas y aceptadas)."""
         u = _comillas(usuario)

@@ -12,7 +12,8 @@ from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_1, COL_VOTOS_2, OR
                     SCORE_COCINA_SECUNDARIA, estadisticas_lista, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, parsear_rango_precio, puntuacion_cocina, solapamiento,
                     sugerencia_plato, hace_cuanto, compatibilidad, cocina_favorita, en_comun,
-                    insertar_en_orden, insights_perfil, mejores_visitas, semana_cerrada, vista_previa_posicion)
+                    insertar_en_orden, insights_perfil, mejores_visitas, semana_cerrada, sugerir_personas,
+                    vista_previa_posicion)
 
 
 @pytest.mark.parametrize("texto, esperado", [
@@ -257,6 +258,20 @@ def test_mejores_visitas_solo_los_ultimos_restaurantes():
                   (3, 4, "2026-10-21T10:00:00+00:00"))
     assert mejores_visitas(df, n=2, rng=0, solo_ultimos=True)["ID"].tolist() == [3, 2]   # el 1 es más antiguo
     assert mejores_visitas(pd.DataFrame(), n=5).empty
+
+
+def test_sugerir_personas_amigos_de_amigos_y_cercanos_sin_conocidos():
+    amistades = [{"solicitante": "bea", "destinatario": "dani"}, {"solicitante": "luis", "destinatario": "dani"},
+                 {"solicitante": "eva", "destinatario": "bea"}, {"solicitante": "bea", "destinatario": "yo"},
+                 {"solicitante": "bea", "destinatario": "luis"},     # amigo de amigo, pero ya es amigo mío
+                 {"solicitante": "bea", "destinatario": "carlos"}]   # solicitud pendiente conmigo
+    r = sugerir_personas("yo", amigos={"bea", "luis"}, conocidos={"bea", "luis", "carlos"},
+                         amistades_de_amigos=amistades, cercanos=["zoe", "carlos", "eva", "yo"])
+    assert r == [{"usuario": "dani", "comunes": ["bea", "luis"], "cerca": False},   # 2 amigos en común
+                 {"usuario": "eva", "comunes": ["bea"], "cerca": True},             # 1 en común y vive cerca
+                 {"usuario": "zoe", "comunes": [], "cerca": True}]                  # solo vive cerca
+    assert sugerir_personas("yo", set(), set(), [], ["zoe", "eva"], limite=1) == [
+        {"usuario": "zoe", "comunes": [], "cerca": True}]
 
 
 def test_semana_cerrada_de_lunes_a_lunes_a_las_3():
