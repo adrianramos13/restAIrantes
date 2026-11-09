@@ -303,6 +303,7 @@ def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
         st.image(foto, width="stretch")
     if BD is not None and usuario:
         bloque_he_ido(fila)   # justo debajo de la foto
+    resena_de_la_visita(fila)
 
     cerrado = estado_cerrado(fila)
     if cerrado:
@@ -316,6 +317,8 @@ def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
         f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)} reseñas  \n"
         + " · ".join(p for p in lugar if p)
     )
+    if BD is not None and usuario:
+        bloque_resenas(fila)
 
     if plato:
         st.markdown(f"**Sobre «{plato}»:** {resumen_mencion_plato(fila['ID'], plato, df_platos)}")
@@ -577,6 +580,54 @@ def capa_visita(id_restaurante, visita, abierta):
     _recargar_ventana()
 
 
+# ----------------------- RESEÑAS DE LOS USUARIOS DE LA APP ----------------------- #
+
+def _resena(nombre, alias, nota, comentario, fecha):
+    """Una reseña en una caja: quién, cuándo, estrellas y comentario (texto de otra persona: siempre escapado)."""
+    with st.container(border=True):
+        quien = f"**{amigos.texto_seguro(nombre)}**" + (f" · @{alias}" if alias else "")
+        estrellas_txt = f" · ★ {f'{float(nota):g}'.replace('.', ',')}" if nota is not None else ""
+        st.markdown(f"{quien}  \n{_hora_local(str(fecha)):%d/%m/%Y}{estrellas_txt}")
+        if comentario:
+            st.markdown(f"«{amigos.texto_seguro(comentario)}»")
+
+
+def resena_de_la_visita(fila):
+    """Si la ficha se ha abierto desde la visita de alguien (sus valoraciones, lo de tus amigos, lo mejor de la
+    semana, tu diario: filas de datos.visitas_a_dataframe), su nota y su comentario."""
+    if "Fecha visita" not in fila.index:
+        return
+    nota, comentario = _o_none(fila["Nota visita"]), _o_none(fila["Comentario visita"])
+    if nota is not None or comentario:
+        _resena(fila["Amigo"], None, nota, comentario, fila["Fecha visita"])
+
+
+def bloque_resenas(fila):
+    """«Ver reseñas (N)»: las notas y comentarios de los usuarios de la app (solo si hay alguna). Se abren en una
+    capa encima de la ficha, como la eatlist (la ficha es una ventana y no puede abrir otra)."""
+    id_restaurante = int(fila["ID"])
+    try:
+        resenas = amigos.cargar_resenas(BD, id_restaurante)
+    except bd.ErrorSupabase:
+        return
+    if not resenas:
+        return
+    abierta = f"resenas_capa_{id_restaurante}"
+    st.button(f"Ver reseñas ({len(resenas)})", icon=":material/reviews:", width="stretch",
+              key=f"ver_resenas_{id_restaurante}", on_click=lambda: st.session_state.update({abierta: True}))
+    if not st.session_state.get(abierta):
+        return
+    with st.container(key="capa_resenas"):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.markdown("#### Reseñas")
+            st.space("stretch")
+            st.button(":material/close:", type="tertiary", key=f"resenas_cerrar_{id_restaurante}", help="Cerrar",
+                      on_click=lambda: st.session_state.pop(abierta, None))
+        st.caption(amigos.texto_seguro(fila["Nombre"]))
+        for r in resenas:
+            _resena(r["nombre"], r["alias"], r["nota"], r["comentario"], r["fecha"])
+
+
 def _recargar_ventana():
     try:
         st.rerun(scope="fragment")   # la ficha es una ventana: solo se vuelve a dibujar ella
@@ -779,18 +830,21 @@ def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_re
 
 # Dentro de una ventana (st.dialog) no se puede abrir otra: la ficha del restaurante tocado sale en la misma
 # ventana, en lugar de la lista. Se olvida en cada recarga completa (las de la ventana no pasan por arriba).
-VENTANA_FICHA = "ventana_ficha"
+VENTANA_FICHA, VENTANA_LISTA = "ventana_ficha", "ventana_lista"
 
 
 def _al_abrir_en_ventana(key):
     valor = st.session_state[key].abrir
     if valor is not None:
-        st.session_state[VENTANA_FICHA] = int(valor)
+        st.session_state[VENTANA_FICHA], st.session_state[VENTANA_LISTA] = int(valor), key
 
 
-def ficha_en_ventana(df, df_platos=None, plato=None):
-    """Si se ha tocado un restaurante de `df` dentro de esta ventana, dibuja «Volver» y su ficha y devuelve True."""
+def ficha_en_ventana(df, df_platos=None, plato=None, lista=None):
+    """Si se ha tocado un restaurante de `df` dentro de esta ventana (en la lista de key `lista`, si se da), dibuja
+    «Volver» y su ficha y devuelve True."""
     abierto = st.session_state.get(VENTANA_FICHA)
+    if lista is not None and st.session_state.get(VENTANA_LISTA) != lista:
+        abierto = None
     coincide = df[df["ID"] == abierto] if abierto is not None and not df.empty else df.iloc[0:0]
     if coincide.empty:
         return False

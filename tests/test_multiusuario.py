@@ -222,6 +222,8 @@ def multiusuario(monkeypatch):
                                                                          if u in estado["perfiles"]})
     monkeypatch.setattr(datos.Supabase, "solicitar_amistad", lambda self, de, a: estado["solicitudes"].append((de, a)))
     monkeypatch.setattr(datos.Supabase, "visitas_de", lambda self, usuarios, limite=10, desde=None: estado["visitas"])
+    estado["resenas"] = []   # "Ver reseñas" de la ficha: ninguna salvo que el test diga otra cosa
+    monkeypatch.setattr(datos.Supabase, "resenas_de", lambda self, i, limite=100: estado["resenas"])
     def registrar_visita(self, u, i, nota=None, comentario=None, fecha=None, anadido_por=None):
         estado["visitas_guardadas"].append((u, i, nota, comentario))
         estado["fechas_visita"].append(fecha)
@@ -727,6 +729,49 @@ def test_he_ido_desde_la_ficha(multiusuario):
 VISITA_LUIS = {"usuario": "luis@x.com", "nota": 4.5, "comentario": "Las bravas",
                "creado_en": "2026-10-12T20:00:00+00:00",
                "restaurantes": {"id": 7, "datos": {"Nombre": "Casa Pepe", "Puntuación": 4.5}, "imagen": None}}
+
+
+def _textos(at):
+    return " ".join(m.value for m in at.markdown)
+
+
+def test_ficha_desde_la_visita_de_un_amigo_ensena_su_comentario(multiusuario):
+    maestro = pd.read_excel(EXCEL, sheet_name="Restaurantes")
+    multiusuario["relaciones"] = [{"usuario": "luis@x.com", "nombre": "Luis", "alias": "luis",
+                                   "estado": "aceptada", "enviada": False}]
+    multiusuario["visitas"] = [{**VISITA_LUIS, "restaurantes": {"id": 9999, "imagen": None,
+                                                                "datos": datos.fila_para_json(maestro.iloc[0])}}]
+    at = correr(seccion="inicio")
+    at.session_state["ficha_abrir"] = 9999                    # tocado en "Tus amigos han ido a"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "**Luis**" in _textos(at) and "«Las bravas»" in _textos(at) and "★ 4,5" in _textos(at)
+    _, id_sugerido, _ = at.session_state["sugerencia"]
+    at.session_state["ficha_abrir"] = id_sugerido             # cualquier otra ficha: sin la reseña de nadie
+    at.run()
+    assert "Las bravas" not in _textos(at)
+
+
+def test_ver_resenas_de_los_usuarios_de_la_app(multiusuario):
+    at = correr(seccion="inicio")
+    _, id_restaurante, _ = at.session_state["sugerencia"]
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.run()
+    assert not [b for b in at.button if b.key == f"ver_resenas_{id_restaurante}"]   # sin reseñas, sin botón
+    multiusuario["resenas"] = [
+        {"usuario": "luis@x.com", "nota": 4.0, "comentario": "Muy *rico*", "creado_en": "2026-10-12T20:00:00+00:00"},
+        {"usuario": "eva@x.com", "nota": None, "comentario": "Volveré", "creado_en": "2026-09-01T20:00:00+00:00"}]
+    multiusuario["perfiles"] = {"luis@x.com": {"nombre": "Luis", "alias": "luis"}, "eva@x.com": {"nombre": "Eva"}}
+    st.cache_data.clear()
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.run()
+    assert at.button(key=f"ver_resenas_{id_restaurante}").label == "Ver reseñas (2)"
+    at.session_state["ficha_abrir"] = id_restaurante
+    at.button(key=f"ver_resenas_{id_restaurante}").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    textos = _textos(at)
+    assert "**Luis** · @luis" in textos and "12/10/2026 · ★ 4" in textos and r"«Muy \*rico\*»" in textos
+    assert "**Eva**" in textos and "«Volveré»" in textos and "x.com" not in textos   # nunca los correos
 
 
 def test_ficha_en_verde_si_ya_has_ido(multiusuario):
@@ -1379,6 +1424,14 @@ def test_lugares_a_verificar_y_marcar_sin_la_012(monkeypatch):
     bd_.marcar_verificado("b", ficha={"nota_google": 4.3})
     assert llamadas[-2][3]["estado_analisis"] == "cerrado" and "verificado_en" in llamadas[-2][3]
     assert set(llamadas[-1][3]) == {"verificado_en"}                   # sin la 012: ni ficha_en ni ficha
+
+
+def test_resenas_de_solo_las_que_tienen_nota_o_comentario(monkeypatch):
+    bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: [])
+    bd_.resenas_de(7)
+    metodo, tabla, params = llamadas[-1][:3]
+    assert (metodo, tabla, params["restaurante_id"]) == ("GET", "visitas", "eq.7")
+    assert params["or"] == "(nota.not.is.null,comentario.not.is.null)" and params["order"] == "creado_en.desc"
 
 
 def test_ficha_rapida_con_la_012(monkeypatch):

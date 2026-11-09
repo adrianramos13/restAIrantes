@@ -620,6 +620,12 @@ class Supabase:
             params["creado_en"] = f"gte.{desde.isoformat()}"
         return self._rest("GET", "visitas", params=params)
 
+    def resenas_de(self, restaurante_id, limite=100):
+        """Las visitas a un restaurante con nota o comentario (de todos los usuarios), de la más reciente."""
+        return self._rest("GET", "visitas", params={
+            "restaurante_id": f"eq.{int(restaurante_id)}", "or": "(nota.not.is.null,comentario.not.is.null)",
+            "order": "creado_en.desc", "limit": limite, "select": "usuario,nota,comentario,creado_en"})
+
     def visitas_valoradas(self, hasta, desde=None, limite=200):
         """Visitas con nota de todos los usuarios anteriores a `hasta` (datetime con zona), con su restaurante
         embebido: con `desde`, las de ese intervalo de mejor a peor nota; sin él, las últimas."""

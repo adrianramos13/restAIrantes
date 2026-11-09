@@ -174,9 +174,19 @@ def cargar_sugerencias(_bd, usuario, zona):
             for s in sugeridas]
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def cargar_resenas(_bd, restaurante_id):
+    """Reseñas de los usuarios de la app sobre un restaurante: [{nombre, alias, nota, comentario, fecha}], sin
+    correos (solo se usan aquí para buscar su nombre)."""
+    filas = _bd.resenas_de(restaurante_id)
+    perfiles = _bd.perfiles_de({f["usuario"] for f in filas}) if filas else {}
+    return [{"nombre": _nombre(perfiles.get(f["usuario"]) or {}), "alias": (perfiles.get(f["usuario"]) or {}).get("alias"),
+             "nota": f.get("nota"), "comentario": f.get("comentario"), "fecha": f["creado_en"]} for f in filas]
+
+
 def limpiar_cache():
     for funcion in (cargar_relaciones, cargar_visitas_amigos, cargar_mis_visitas, cargar_valoraciones_de,
-                    cargar_sugerencias):
+                    cargar_sugerencias, cargar_resenas):
         funcion.clear()
 
 
@@ -333,7 +343,9 @@ def _mini_perfil(cliente, usuario, amigo, mi_lista, su_lista, mis_valoraciones, 
     def _ventana():
         valoraciones = cargar_valoraciones_de(cliente, amigo["usuario"], nombre)
         comunes = en_comun(mi_lista, su_lista)
-        if ficha(valoraciones.head(EN_MINI_PERFIL)) or ficha(mi_lista[mi_lista["ID"].isin(comunes)]):
+        # desde sus valoraciones, la ficha lleva su nota y su comentario; desde "En común", no
+        if (ficha(valoraciones.head(EN_MINI_PERFIL), lista="lista_amigo_valoraciones")
+                or ficha(mi_lista[mi_lista["ID"].isin(comunes)], lista="lista_amigo_comunes")):
             return
         sus_notas = _notas(valoraciones)
         afinidad = compatibilidad(mi_lista, su_lista, _notas(mis_valoraciones), sus_notas)
