@@ -4,9 +4,10 @@ export default function (component) {
   botones.forEach((boton) => {
     const activa = boton.dataset.seccion === data.activa;
     if (activa) boton.setAttribute('aria-current', 'page'); else boton.removeAttribute('aria-current');
-    // Mi lista avisa aunque ya estés en ella: tocarla otra vez quita todos sus filtros.
+    // Mi lista y Perfil avisan aunque ya estés en ellas: Mi lista quita sus filtros y Perfil vuelve a tu perfil
+    // (desde el de un amigo o el listado de amigos).
     boton.onclick = () => {
-      if (!activa || boton.dataset.seccion === 'mi_lista') setTriggerValue('seccion', boton.dataset.seccion);
+      if (!activa || ['mi_lista', 'perfil'].includes(boton.dataset.seccion)) setTriggerValue('seccion', boton.dataset.seccion);
     };
   });
 

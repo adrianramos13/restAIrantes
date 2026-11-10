@@ -1180,7 +1180,8 @@ def _al_cambiar_seccion():
     seccion = st.session_state["barra_secciones"].seccion
     if seccion == "mi_lista":
         st.session_state["limpiar_mi_lista"] = True
-    st.session_state.pop("perfil_vista", None)
+    st.session_state.pop("perfil_vista", None)   # Perfil siempre abre el tuyo, no el de un amigo
+    st.session_state.pop(amigos.AMIGO_ABIERTO, None)
     if seccion in SECCIONES:
         ir_a(seccion)
 
