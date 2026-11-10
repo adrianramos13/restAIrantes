@@ -879,7 +879,7 @@ def test_amigos_solicitudes_y_fila(multiusuario):
     at.button(key="contador_amigos").click().run()                     # tocar "amigos" arriba abre su listado
     assert not at.exception, [e.value for e in at.exception]
     assert any(h.value == "Amigos" for h in at.subheader)
-    assert at.button(key="contador_amigos").label == "**1** amigos"
+    assert at.button(key="contador_amigos").label == "**1** Amigos"
     assert not at.caption                                              # solo la lista, sin textos
     assert "Solicitudes enviadas (1)" in str(at.get("popover")[0].proto)   # las enviadas, en un desplegable
     assert at.button(key="cancelar_pepe").label == "Cancelar"
@@ -1065,7 +1065,7 @@ def test_cabecera_estilo_instagram(multiusuario):
     assert "Ana" in cabecera(at) and "@ana_g" in cabecera(at) and "ana@ejemplo.com" not in cabecera(at)
     total = len(pd.read_excel(EXCEL, sheet_name="Restaurantes"))
     assert [at.button(key=k).label for k in ("contador_idos", "contador_lista", "contador_amigos")] == [
-        "**1** idos", f"**{total}** en tu lista", "**1** amigos"]
+        "**1** Idos", f"**{total}** En tu lista", "**1** Amigos"]
     assert [o for o in at.button_group if "Eatlist" in str(o.proto)], "faltan las pestañas Perfil / Diario / Eatlist"
     assert any(h.value == "Tus datos" for h in at.subheader)
     at.button(key="contador_idos").click().run()                       # "idos": ventana con los que has ido

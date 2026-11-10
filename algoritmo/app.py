@@ -1804,11 +1804,11 @@ def cabecera_perfil(usuario, nombre, perfil, foto, maestro, visitas, df_platos):
             st.html(f'<div class="perfil-nombre">{html.escape(nombre)}</div>'
                     + (f'<div class="perfil-alias">@{html.escape(alias)}</div>' if alias else ""))
             with st.container(horizontal=True, gap="medium"):
-                st.button(f"**{len(visitas)}** idos", type="tertiary", key="contador_idos",
+                st.button(f"**{len(visitas)}** Idos", type="tertiary", key="contador_idos",
                           on_click=abrir_lista_del_perfil, args=(LISTA_IDOS,), help="Ver a cuáles has ido")
-                st.button(f"**{len(maestro)}** en tu lista", type="tertiary", key="contador_lista",
+                st.button(f"**{len(maestro)}** En tu lista", type="tertiary", key="contador_lista",
                           on_click=abrir_lista_del_perfil, args=(LISTA_TUYA,), help="Ver tu lista")
-                st.button(f"**{n_amigos}** amigos", type="tertiary", key="contador_amigos",
+                st.button(f"**{n_amigos}** Amigos", type="tertiary", key="contador_amigos",
                           on_click=lambda: st.session_state.update(perfil_vista="amigos"), help="Ver tus amigos")
     if st.session_state.pop("abrir_ajustes", False):
         ajustes_de_usuario(usuario)
