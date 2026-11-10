@@ -597,9 +597,11 @@ def resena_de_la_visita(fila):
     semana, tu diario: filas de datos.visitas_a_dataframe), su nota y su comentario."""
     if "Fecha visita" not in fila.index:
         return
-    nota, comentario = _o_none(fila["Nota visita"]), _o_none(fila["Comentario visita"])
-    if nota is not None or comentario:
-        _resena(fila["Amigo"], None, nota, comentario, fila["Fecha visita"])
+    # la de otra persona (no tu diario): la key cambia el fondo de toda la ficha (global.css, .st-key-ficha_valorada)
+    with st.container(key="ficha_valorada" if fila["Amigo"] != "Tú" else None):
+        nota, comentario = _o_none(fila["Nota visita"]), _o_none(fila["Comentario visita"])
+        if nota is not None or comentario:
+            _resena(fila["Amigo"], None, nota, comentario, fila["Fecha visita"])
 
 
 def bloque_resenas(fila):
@@ -800,6 +802,21 @@ def _al_abrir_desde_lista(key):
     if valor is not None:
         st.session_state["restaurante_seleccionado"] = int(valor)
         st.session_state["ficha_abrir"] = int(valor)
+        st.session_state["ficha_lista"] = key   # el mismo sitio puede estar en dos listas (ficha_de_lista)
+
+
+def ficha_de_lista(df, lista):
+    """Si se acaba de tocar un restaurante de `df` en la lista de key `lista`, abre su ficha (ventana) y devuelve
+    True. Así, en el perfil de un amigo, la ficha de "Sus últimas valoraciones" lleva su reseña y la de "En común" no."""
+    abrir = st.session_state.get("ficha_abrir")
+    if abrir is None or df.empty or st.session_state.get("ficha_lista") != lista:
+        return False
+    coincide = df[df["ID"] == abrir]
+    if coincide.empty:
+        return False
+    st.session_state.pop("ficha_abrir")
+    mostrar_ficha(coincide.iloc[0], pd.DataFrame(columns=bd.COLUMNAS_PLATOS))
+    return True
 
 
 def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_restaurantes", extra=None,
@@ -1810,7 +1827,8 @@ def cabecera_perfil(usuario, nombre, perfil, foto, maestro, visitas, df_platos):
                 st.button(f"**{len(maestro)}** En tu lista", type="tertiary", key="contador_lista",
                           on_click=abrir_lista_del_perfil, args=(LISTA_TUYA,), help="Ver tu lista")
                 st.button(f"**{n_amigos}** Amigos", type="tertiary", key="contador_amigos",
-                          on_click=lambda: st.session_state.update(perfil_vista="amigos"), help="Ver tus amigos")
+                          on_click=lambda: (st.session_state.update(perfil_vista="amigos"),
+                                            st.session_state.pop(amigos.AMIGO_ABIERTO, None)), help="Ver tus amigos")
     if st.session_state.pop("abrir_ajustes", False):
         ajustes_de_usuario(usuario)
     cual = st.session_state.pop("abrir_lista", None)
@@ -1828,12 +1846,16 @@ def seccion_perfil(maestro, usuario=None, nombre=None, google=None, lista=None, 
         visitas = amigos.cargar_mis_visitas(BD, usuario)
     except bd.ErrorSupabase:
         visitas = pd.DataFrame()
-    cabecera_perfil(usuario, nombre, perfil, google.get("foto"), maestro, visitas, df_platos)
-    if st.session_state.get("perfil_vista") == "amigos":   # "amigos" de la cabecera: su listado
+    en_amigos = st.session_state.get("perfil_vista") == "amigos"   # "amigos" de la cabecera: su listado
+    if not (en_amigos and st.session_state.get(amigos.AMIGO_ABIERTO)):   # el perfil de un amigo ocupa la pantalla
+        cabecera_perfil(usuario, nombre, perfil, google.get("foto"), maestro, visitas, df_platos)
+    if en_amigos:
+        # desde el perfil de un amigo, al listado; desde el listado, a tu perfil
         st.button("Volver", type="tertiary", icon=":material/arrow_back:", key="volver_del_listado",
-                  on_click=lambda: st.session_state.pop("perfil_vista", None))
+                  on_click=lambda: st.session_state.pop(amigos.AMIGO_ABIERTO, None)
+                  or st.session_state.pop("perfil_vista", None))
         amigos.bloque_amigos(BD, usuario, nombre, perfil, al_guardar_alias=cargar_perfil.clear,
-                             mi_lista=maestro, mostrar_lista=mostrar_lista, ficha=ficha_en_ventana)
+                             mi_lista=maestro, mostrar_lista=mostrar_lista, ficha=ficha_de_lista)
         return
 
     pestana = st.segmented_control("Pestañas del perfil", PESTANAS_PERFIL, key="perfil_pestana", required=True,

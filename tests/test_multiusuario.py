@@ -892,7 +892,9 @@ def test_amigos_solicitudes_y_fila(multiusuario):
     at.session_state["amigo_abierto"] = "luis"                          # lo que hace tocar su fila
     at.run()
     assert any("% de gustos en común" in m.value for m in at.markdown)
-    at.button(key="volver_del_listado").click().run()
+    at.button(key="volver_del_listado").click().run()                  # del perfil del amigo, a tus amigos
+    assert "amigo_abierto" not in at.session_state and at.session_state["perfil_vista"] == "amigos"
+    at.button(key="volver_del_listado").click().run()                  # y de ahí, a tu perfil
     assert "perfil_vista" not in at.session_state
 
 
@@ -909,6 +911,25 @@ def test_mini_perfil_de_un_amigo(multiusuario):
     assert metricas["Ha ido a"] == "1" and metricas["Nota media"] == "4,5 ★"
     assert any(m.value.startswith("🍽️ Cocina favorita: **") for m in at.markdown)
     assert any(m.value.startswith("**En común**") for m in at.markdown)
+    assert "contador_idos" not in [b.key for b in at.button]            # a pantalla completa: sin tu cabecera
+
+
+def test_perfil_de_amigo_abre_la_ficha_con_su_resena(multiusuario):
+    maestro = pd.read_excel(EXCEL, sheet_name="Restaurantes")
+    multiusuario["perfil"] = {"usuario": "ana@ejemplo.com", "nombre": "Ana", "alias": "ana_g"}
+    multiusuario["relaciones"] = [LUIS]
+    multiusuario["visitas"] = [{**VISITA_LUIS, "restaurantes": {"id": 9999, "imagen": None,
+                                                                "datos": datos.fila_para_json(maestro.iloc[0])}}]
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["perfil_vista"] = "amigos"
+    at.session_state["amigo_abierto"] = "luis"
+    at = correr(at, seccion="perfil")
+    at.session_state["ficha_abrir"] = 9999                                 # tocado en "Sus últimas valoraciones"
+    at.session_state["ficha_lista"] = "lista_amigo_valoraciones"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "«Las bravas»" in _textos(at)
+    assert any("ficha_valorada" in str(b.proto) for b in at.get("flex_container"))   # marca del fondo distinto
 
 
 def test_globito_de_solicitudes_en_la_barra(multiusuario):

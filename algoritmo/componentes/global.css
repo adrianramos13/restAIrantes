@@ -80,6 +80,10 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
   .st-key-capa_eatlist, .st-key-capa_visita, .st-key-capa_resenas { background: #16130F; border-color: rgba(255, 255, 255, 0.12); }
 }
 
+/* Ficha abierta desde la valoración de otra persona (amigos, lo mejor de la semana, el perfil de un amigo): otro fondo */
+[role="dialog"]:has(.st-key-ficha_valorada) { background: #EAF1F8; }
+@media (prefers-color-scheme: dark) { [role="dialog"]:has(.st-key-ficha_valorada) { background: #18212B; } }
+
 /* Ficha, eatlist: vista previa sutil de cómo quedaría la lista alrededor del puesto elegido */
 .eat-previa {
   margin-top: -4px; padding: 6px 10px; border-radius: 10px; font-size: 0.88rem;

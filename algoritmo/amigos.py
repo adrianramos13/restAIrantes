@@ -255,12 +255,12 @@ def bloque_cenar_con(cliente, usuario, zona, abrir_ajustes):
 
 def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, mostrar_lista, ficha):
     """La página de tus amigos (al tocar "amigos" en la cabecera del Perfil): solicitudes y el listado; al
-    tocar uno, su mini perfil. `mi_lista`: tu lista (DataFrame), para comparar. `mostrar_lista`: la función de
-    app.py que dibuja tarjetas de restaurantes (en el mini perfil) y `ficha`, la que dibuja la ficha del que se toque
-    dentro de la ventana (app.ficha_en_ventana). Buscar gente está en Buscar -> Personas."""
-    st.subheader("Amigos")
+    tocar uno, su perfil a pantalla completa. `mi_lista`: tu lista (DataFrame), para comparar. `mostrar_lista`: la
+    función de app.py que dibuja tarjetas de restaurantes y `ficha`, la que abre la ficha del que se toque en una
+    de ellas (app.ficha_de_lista). Buscar gente está en Buscar -> Personas."""
     alias = (perfil or {}).get("alias")
     if not alias:
+        st.subheader("Amigos")
         _elegir_alias(cliente, usuario, nombre, al_guardar_alias)
         return
     if st.session_state.get("error_amigos"):
@@ -272,21 +272,22 @@ def bloque_amigos(cliente, usuario, nombre, perfil, al_guardar_alias, mi_lista, 
         return
     amigos = [r for r in relaciones if r["estado"] == "aceptada"]
 
-    _solicitudes(cliente, usuario, [r for r in relaciones if r["estado"] == "pendiente" and not r["enviada"]])
-    listas, mis_valoraciones = {}, pd.DataFrame()
-    try:
-        listas = {a["usuario"]: cargar_lista_de(cliente, a["usuario"]) for a in amigos}
-        mis_valoraciones = cargar_mis_visitas(cliente, usuario)
-        _enviadas(cliente, usuario, [r for r in relaciones if r["estado"] == "pendiente" and r["enviada"]])
-        _lista_de_amigos(amigos)
-    except bd.ErrorSupabase:
-        st.caption("No se pueden ver los datos de tus amigos ahora mismo.")
-
-    abierto = st.session_state.pop("amigo_abierto", None)
+    # el amigo tocado: su perfil ocupa la pantalla en lugar del listado (hasta «Volver»)
+    abierto = st.session_state.get(AMIGO_ABIERTO)
     elegido = next((a for a in amigos if (a["alias"] or a["usuario"]) == abierto), None)
-    if elegido is not None and elegido["usuario"] in listas:
-        _mini_perfil(cliente, usuario, elegido, mi_lista, listas[elegido["usuario"]], mis_valoraciones, mostrar_lista,
-                     ficha)
+    if elegido is not None:
+        try:
+            _mini_perfil(cliente, usuario, elegido, mi_lista, cargar_lista_de(cliente, elegido["usuario"]),
+                         cargar_mis_visitas(cliente, usuario), mostrar_lista, ficha)
+        except bd.ErrorSupabase:
+            st.caption("No se puede ver su perfil ahora mismo.")
+        return
+    st.session_state.pop(AMIGO_ABIERTO, None)   # ya no es tu amigo
+
+    st.subheader("Amigos")
+    _solicitudes(cliente, usuario, [r for r in relaciones if r["estado"] == "pendiente" and not r["enviada"]])
+    _enviadas(cliente, usuario, [r for r in relaciones if r["estado"] == "pendiente" and r["enviada"]])
+    _lista_de_amigos(amigos)
 
 
 def _solicitudes(cliente, usuario, recibidas):
@@ -316,10 +317,13 @@ def _enviadas(cliente, usuario, enviadas):
                           on_click=_accion, args=(cliente.quitar_amistad, usuario, r["usuario"]))
 
 
+AMIGO_ABIERTO = "amigo_abierto"   # @usuario (o correo) del amigo cuyo perfil se está viendo
+
+
 def _al_tocar_amigo():
     clave = st.session_state["lista_amigos"].abrir
     if clave:
-        st.session_state["amigo_abierto"] = clave
+        st.session_state[AMIGO_ABIERTO] = clave
 
 
 def _lista_de_amigos(amigos):
@@ -335,56 +339,53 @@ def _lista_de_amigos(amigos):
 
 
 def _mini_perfil(cliente, usuario, amigo, mi_lista, su_lista, mis_valoraciones, mostrar_lista, ficha):
-    """Ventana con lo que hace un amigo: compatibilidad, cifras, sus últimas valoraciones y lo que tenéis en común.
-    Al tocar un restaurante, su ficha sale en la misma ventana (con «Volver»)."""
+    """Página (a pantalla completa, en lugar del listado) con lo que hace un amigo: compatibilidad, cifras, sus
+    últimas valoraciones y lo que tenéis en común. Al tocar un restaurante se abre su ficha (`ficha`:
+    app.ficha_de_lista); desde sus valoraciones lleva su nota y su comentario, desde "En común" no."""
     nombre = _nombre(amigo)
+    valoraciones = cargar_valoraciones_de(cliente, amigo["usuario"], nombre)
+    comunes = en_comun(mi_lista, su_lista)
+    sus_notas = _notas(valoraciones)
+    afinidad = compatibilidad(mi_lista, su_lista, _notas(mis_valoraciones), sus_notas)
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.html(avatar_html(amigo, 72), width="content")
+        st.html(f'<div class="perfil-nombre">{html.escape(nombre)}</div>'
+                + (f'<div class="perfil-alias">@{html.escape(amigo["alias"])}</div>' if amigo.get("alias") else ""))
+    if afinidad is not None:
+        st.markdown(f"**🤝 {afinidad} % de gustos en común**")
 
-    @st.dialog(nombre, width="medium")
-    def _ventana():
-        valoraciones = cargar_valoraciones_de(cliente, amigo["usuario"], nombre)
-        comunes = en_comun(mi_lista, su_lista)
-        # desde sus valoraciones, la ficha lleva su nota y su comentario; desde "En común", no
-        if (ficha(valoraciones.head(EN_MINI_PERFIL), lista="lista_amigo_valoraciones")
-                or ficha(mi_lista[mi_lista["ID"].isin(comunes)], lista="lista_amigo_comunes")):
-            return
-        sus_notas = _notas(valoraciones)
-        afinidad = compatibilidad(mi_lista, su_lista, _notas(mis_valoraciones), sus_notas)
-        with st.container(horizontal=True, vertical_alignment="center"):
-            st.html(avatar_html(amigo, 72), width="content")
-            st.markdown((f"@{amigo['alias']}  \n" if amigo.get("alias") else "")
-                        + (f"**🤝 {afinidad} % de gustos en común**" if afinidad is not None else ""))
+    with st.container(horizontal=True):
+        st.metric("Nota media", f"{sum(sus_notas.values()) / len(sus_notas):.1f} ★".replace(".", ",")
+                  if sus_notas else "–")
+        st.metric("Ha ido a", len(valoraciones))
+    favorita = cocina_favorita(su_lista)
+    if favorita:   # como texto: con st.metric, un nombre largo ("Tapas y raciones") sale enorme
+        st.markdown(f"🍽️ Cocina favorita: **{texto_seguro(favorita)}**")
 
-        with st.container(horizontal=True):
-            st.metric("Nota media", f"{sum(sus_notas.values()) / len(sus_notas):.1f} ★".replace(".", ",")
-                      if sus_notas else "–")
-            st.metric("Ha ido a", len(valoraciones))
-        favorita = cocina_favorita(su_lista)
-        if favorita:   # como texto: con st.metric, un nombre largo ("Tapas y raciones") sale enorme
-            st.markdown(f"🍽️ Cocina favorita: **{texto_seguro(favorita)}**")
+    ahora = datetime.now(timezone.utc)
+    st.markdown("**Sus últimas valoraciones**")
+    if valoraciones.empty:
+        st.caption("Todavía no ha marcado ningún sitio con «He ido».")
+    else:
+        mostrar_lista(valoraciones.head(EN_MINI_PERFIL), key="lista_amigo_valoraciones",
+                      carrusel=True, extra=lambda f: {
+                          "cuando": hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
+                          "nota": None if pd.isna(f["Nota visita"]) else float(f["Nota visita"]),
+                          "cita": None if pd.isna(f["Comentario visita"]) else f["Comentario visita"]})
+        ficha(valoraciones.head(EN_MINI_PERFIL), lista="lista_amigo_valoraciones")
 
-        ahora = datetime.now(timezone.utc)
-        st.markdown("**Sus últimas valoraciones**")
-        if valoraciones.empty:
-            st.caption("Todavía no ha marcado ningún sitio con «He ido».")
-        else:
-            mostrar_lista(valoraciones.head(EN_MINI_PERFIL), key="lista_amigo_valoraciones",
-                          carrusel=True, en_ventana=True, extra=lambda f: {
-                              "cuando": hace_cuanto(f["Fecha visita"], ahora), "visitado": False,
-                              "nota": None if pd.isna(f["Nota visita"]) else float(f["Nota visita"]),
-                              "cita": None if pd.isna(f["Comentario visita"]) else f["Comentario visita"]})
+    idos_los_dos = _ids(mis_valoraciones) & _ids(valoraciones)
+    st.markdown(f"**En común** · {len(comunes)} restaurante{'s' if len(comunes) != 1 else ''} en vuestras listas"
+                + (f" · habéis ido los dos a {len(idos_los_dos)}" if idos_los_dos else ""))
+    if comunes:
+        en_comun_df = mi_lista[mi_lista["ID"].isin(comunes)].head(EN_MINI_PERFIL)
+        mostrar_lista(en_comun_df, key="lista_amigo_comunes", carrusel=True)
+        ficha(en_comun_df, lista="lista_amigo_comunes")
 
-        idos_los_dos = _ids(mis_valoraciones) & _ids(valoraciones)
-        st.markdown(f"**En común** · {len(comunes)} restaurante{'s' if len(comunes) != 1 else ''} en vuestras listas"
-                    + (f" · habéis ido los dos a {len(idos_los_dos)}" if idos_los_dos else ""))
-        if comunes:
-            mostrar_lista(mi_lista[mi_lista["ID"].isin(comunes)].head(EN_MINI_PERFIL),
-                          key="lista_amigo_comunes", carrusel=True, en_ventana=True)
-
-        if st.button("Quitar de amigos", icon=":material/person_remove:", width="stretch", key="quitar_amigo"):
-            _accion(cliente.quitar_amistad, usuario, amigo["usuario"])
-            st.rerun()   # cierra la ventana
-
-    _ventana()
+    if st.button("Quitar de amigos", icon=":material/person_remove:", width="stretch", key="quitar_amigo"):
+        _accion(cliente.quitar_amistad, usuario, amigo["usuario"])
+        st.session_state.pop(AMIGO_ABIERTO, None)
+        st.rerun()   # vuelve al listado
 
 
 def _elegir_alias(cliente, usuario, nombre, al_guardar_alias):
