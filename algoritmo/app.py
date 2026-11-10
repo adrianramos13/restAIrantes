@@ -806,8 +806,8 @@ def mostrar_lista(top, modo_transporte=None, seleccionado_id=None, key="lista_re
                   carrusel=False, estatica=False, poster=False, en_ventana=False):
     """Tarjetas de `top`. Con `modo_transporte` (resultados de una búsqueda) enseñan el tiempo de viaje;
     `extra(fila)` añade datos a la tarjeta (amigo, cuando, nota, cita: ver componentes/lista.js). Las de
-    sitios a los que ya has ido llevan "✓ Has ido". `poster`: la foto de fondo y los datos en barras encima
-    (en columna, una tira debajo de otra; con `carrusel`, tarjetas altas en fila).
+    sitios a los que ya has ido llevan "✓ Has ido". `poster`: tiras con la foto redonda, el sitio arriba y debajo
+    quién fue con sus estrellas y su comentario.
     `en_ventana`: la lista está dentro de un st.dialog; al tocar una tarjeta, su ficha sale ahí (ficha_en_ventana)."""
     visitados = set(mis_visitas())
     items = []
@@ -1384,7 +1384,8 @@ def lista_filtrable(maestro, df_platos, en_ventana=False):
         plato = st.text_input("Plato que destaquen", placeholder="Ej. croquetas", key="ml_plato")
         ocultar_cerrados = st.toggle("Ocultar los cerrados", key="ml_cerrados")
     orden = st.segmented_control("Ordenar", [ORDEN_PUNTUACION, ORDEN_RESENAS, ORDEN_NOMBRE], default=ORDEN_PUNTUACION,
-                                 key="ml_orden", label_visibility="collapsed", required=True)
+                                 key="ml_orden", label_visibility="collapsed", required=True, width="stretch",
+                                 format_func=lambda o: "Mejor nota" if o == ORDEN_PUNTUACION else o)   # cabe en una fila
 
     df = filtrar_lista(maestro, df_platos, texto, cocinas, presupuesto_min,
                        None if presupuesto_max == PRESUPUESTO_SIN_LIMITE else presupuesto_max,
@@ -1745,7 +1746,7 @@ def pestana_diario(visitas):
         return
     with st.container(horizontal=True, vertical_alignment="center"):
         st.caption(f"{len(visitas)} restaurante{'s' if len(visitas) != 1 else ''}")
-        st.button("Ver en formato lista", type="tertiary", icon=":material/format_list_bulleted:",
+        st.button("Aplicar filtros", type="tertiary", icon=":material/tune:",
                   key="mis_visitas_en_lista", on_click=abrir_lista_del_perfil, args=(LISTA_IDOS,))
     grupos = []
     for _, fila in visitas.iterrows():   # ya vienen de la más reciente a la más antigua

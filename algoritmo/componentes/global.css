@@ -51,8 +51,12 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
 .perfil-alias { font-size: 0.95rem; opacity: 0.7; line-height: 1.3; }
 [class*="st-key-contador_"] button { padding: 0; min-height: 0; color: var(--st-text-color); }
 [class*="st-key-contador_"] button p {
-  display: flex; flex-direction: column; align-items: flex-start; font-size: 13px; line-height: 1.3;
+  display: flex; flex-direction: column; align-items: center; font-size: 13px; line-height: 1.3;
 }
+/* Ordenar de las listas (también en las ventanas «idos» / «en tu lista»): las tres opciones en una sola fila */
+.st-key-ml_orden [data-testid="stButtonGroup"] > div { flex-wrap: nowrap; }
+.st-key-ml_orden button { flex: 1 1 0; min-width: 0; padding-left: 6px; padding-right: 6px; }
+.st-key-ml_orden button p { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 [class*="st-key-contador_"] button strong { font-size: 1.3rem; font-weight: 700; line-height: 1.2; }
 
 /* Perfil, "Tus datos": tarjetas de dos en dos */

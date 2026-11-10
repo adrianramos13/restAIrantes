@@ -7,16 +7,15 @@ function span(clase, texto) {
   return s;
 }
 
-// Póster ("Lo mejor de la semana"): la foto ocupa la tarjeta y encima, abajo, tres barras alargadas:
-// el sitio (nota y precio de Google), quién fue con sus estrellas y su comentario (si dejó).
-function barrasPoster(r) {
-  const barras = document.createElement('div'); barras.className = 'lr-barras';
-  const sitio = document.createElement('div'); sitio.className = 'lr-barra';
+// Póster ("Lo mejor de la semana"): foto redonda a la izquierda; arriba el sitio (nombre, nota y precio de
+// Google) y abajo dos recuadros: a la izquierda quién fue y sus estrellas, a la derecha su comentario (si dejó).
+function infoPoster(r) {
+  const info = document.createElement('div'); info.className = 'lr-info';
+  const sitio = document.createElement('div'); sitio.className = 'lr-barra lr-barra-sitio';
   sitio.append(span('lr-nombre', r.nombre), span('lr-meta', r.meta));
+  const abajo = document.createElement('div'); abajo.className = 'lr-abajo';
   const quien = document.createElement('div'); quien.className = 'lr-barra lr-barra-quien';
-  const persona = span('lr-quien', '');
-  persona.append(span('lr-amigo', r.amigo || ''), span('lr-cuando', mayuscula(r.cuando)));
-  quien.append(persona);
+  quien.append(span('lr-amigo', r.amigo || ''));
   if (r.nota != null) {
     const estrellas = span('lr-estrellas', ''); estrellas.setAttribute('aria-hidden', 'true');
     const dibujo = span('lr-e-dibujo', '');
@@ -25,13 +24,11 @@ function barrasPoster(r) {
     estrellas.append(dibujo, span('lr-e-numero', String(r.nota).replace('.', ',')));
     quien.append(estrellas);
   }
-  barras.append(sitio, quien);
-  if (r.cita) {
-    const cita = document.createElement('div'); cita.className = 'lr-barra';
-    cita.append(span('lr-cita', `«${r.cita}»`));
-    barras.append(cita);
-  }
-  return barras;
+  const cita = document.createElement('div'); cita.className = 'lr-barra lr-barra-cita';
+  cita.append(span('lr-cita', r.cita ? `«${r.cita}»` : mayuscula(r.cuando)));
+  abajo.append(quien, cita);
+  info.append(sitio, abajo);
+  return info;
 }
 
 export default function (component) {
@@ -72,7 +69,7 @@ export default function (component) {
     num.className = 'lr-num'; num.textContent = String(r.n);
     foto.appendChild(num);
     if (data.poster) {
-      boton.append(foto, barrasPoster(r));
+      boton.append(foto, infoPoster(r));
       boton.onclick = () => setTriggerValue('abrir', r.id);
       li.appendChild(boton);
       lista.appendChild(li);

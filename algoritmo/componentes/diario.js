@@ -26,7 +26,9 @@ export default function (component) {
       foto.textContent = (r.nombre.trim()[0] || '?').toUpperCase();
       if (r.foto) {
         const img = document.createElement('img'); img.alt = ''; img.loading = 'lazy'; img.referrerPolicy = 'no-referrer';
-        img.src = r.foto; img.onload = () => { foto.textContent = ''; foto.appendChild(img); };
+        // ya en el DOM: una imagen lazy suelta no se carga nunca. Tapa la inicial y, si falla, se quita.
+        img.src = r.foto; img.onerror = () => img.remove();
+        foto.appendChild(img);
       }
       const info = document.createElement('span'); info.className = 'info';
       const nombre = document.createElement('span'); nombre.className = 'nombre'; nombre.textContent = r.nombre + ' ';

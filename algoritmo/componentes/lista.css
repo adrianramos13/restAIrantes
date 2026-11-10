@@ -80,34 +80,25 @@
 .lr-carrusel .lr-foto img, .lr-carrusel .lr-inicial { width: 100%; height: 100px; }
 .lr-carrusel .lr-num, .lr-carrusel .lr-flecha { display: none; }
 .lr-carrusel .lr-nombre { font-size: 15px; }
-/* Póster ("Lo mejor de la semana"): tarjeta alta con la foto de fondo y barras alargadas abajo, encima de la
-   foto. Las barras llevan el fondo del tema casi opaco: se leen igual en claro y en oscuro sobre cualquier foto. */
-.lr-posters.lr-carrusel > li { flex: 0 0 min(260px, 78%); width: min(260px, 78%); }
-.lr-posters .lr-card {
-  position: relative; display: block; height: 340px; padding: 0; overflow: hidden; border-radius: 22px;
-}
-/* Sin carrusel: tiras a todo el ancho, una encima de otra, con el puesto (1, 2...) arriba a la izquierda */
-.lr-posters:not(.lr-carrusel) { gap: 12px; }
-.lr-posters:not(.lr-carrusel) .lr-card { height: 230px; }
-.lr-posters .lr-num { left: 10px; top: 10px; z-index: 1; }
-.lr-posters .lr-foto, .lr-posters .lr-foto img, .lr-posters .lr-inicial {
-  position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0;
-}
-.lr-posters .lr-inicial { font-size: 64px; }
-.lr-barras {
-  position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 6px;
-}
+/* Póster ("Lo mejor de la semana"): tiras bajas, una encima de otra. Foto redonda a la izquierda (con el puesto)
+   y a la derecha, arriba, el sitio y, abajo, dos recuadros: quién fue con sus estrellas | su comentario. */
+.lr-posters { gap: 8px; }
+.lr-posters .lr-card { gap: 10px; padding: 8px; min-height: 0; border-radius: 18px; }
+.lr-posters .lr-foto { flex: 0 0 64px; width: 64px; height: 64px; }
+.lr-posters .lr-foto img, .lr-posters .lr-inicial { width: 64px; height: 64px; border-radius: 50%; }
+.lr-posters .lr-info { gap: 6px; }
 .lr-barra {
-  display: flex; flex-direction: column; gap: 1px; padding: 6px 12px; border-radius: 14px;
-  background: color-mix(in srgb, var(--st-background-color) 90%, transparent);
-  border: 1px solid var(--st-border-color); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  display: flex; flex-direction: column; justify-content: center; gap: 1px; min-width: 0; padding: 4px 10px;
+  border-radius: 10px; border: 1px solid var(--st-border-color); background: var(--st-background-color);
 }
 .lr-posters .lr-nombre { font-size: 15px; -webkit-line-clamp: 1; }
-/* quién fue en una línea entera (el nombre no se corta) y debajo, cuándo a la izquierda y sus estrellas a la derecha */
-.lr-barra-quien { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 8px; }
-.lr-barra-quien .lr-quien { display: contents; }
-.lr-barra-quien .lr-amigo { grid-column: 1 / -1; }
-.lr-posters .lr-cita { -webkit-line-clamp: 2; opacity: 1; }
+.lr-posters .lr-meta { font-size: 12px; opacity: 0.8; }
+.lr-abajo { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px; }
+.lr-barra-quien { gap: 2px; }
+.lr-barra-quien .lr-amigo { font-size: 12px; max-width: 110px; }
+.lr-posters .lr-estrellas { gap: 4px; font-size: 12px; }
+.lr-posters .lr-e-dibujo { font-size: 13px; }
+.lr-posters .lr-cita { font-size: 12px; -webkit-line-clamp: 2; opacity: 0.9; }
 @media (prefers-reduced-motion: reduce) { .lr-card { transition: none; } .lr-card:active { transform: none; } }
 
 /* Tarjetas solo para mirar: sin cursor de enlace ni efecto al pulsar */
