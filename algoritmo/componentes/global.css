@@ -81,8 +81,9 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"], [data-tes
 }
 
 /* Ficha abierta desde la valoración de otra persona (amigos, lo mejor de la semana, el perfil de un amigo): otro fondo */
-[role="dialog"]:has(.st-key-ficha_valorada) { background: #EAF1F8; }
-@media (prefers-color-scheme: dark) { [role="dialog"]:has(.st-key-ficha_valorada) { background: #18212B; } }
+/* mismo tono crema que el fondo (#FBF7F2 / #16130F), un punto más marcado */
+[role="dialog"]:has(.st-key-ficha_valorada) { background: #F5EADB; }
+@media (prefers-color-scheme: dark) { [role="dialog"]:has(.st-key-ficha_valorada) { background: #241D16; } }
 
 /* Ficha, eatlist: vista previa sutil de cómo quedaría la lista alrededor del puesto elegido */
 .eat-previa {
