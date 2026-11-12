@@ -439,7 +439,7 @@ def insights_perfil(maestro, visitas, ahora):
     }
 
 
-# ---------------- «No tengo ni idea»: restaurantes que encajan con tus gustos ----------------
+# ---------------- «Food match»: restaurantes que encajan con tus gustos ----------------
 PESO_GUSTO_LISTA = 1.0       # está en tu lista
 PESO_GUSTO_EATLIST = 1.5     # en tu eatlist: tienes ganas de ir
 PESO_GUSTO_DESLIZADO = 1.5   # te ha gustado deslizando

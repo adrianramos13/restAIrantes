@@ -171,7 +171,7 @@ def procesar_lista(bd, lista):
     subir_fotos(bd, catalogo_nuevo)
     ids = bd.guardar_restaurantes(actualizados + catalogo_nuevo)
     de_google = list(dict.fromkeys(ids[c] for c in claves if c in ids))   # orden de Google, sin repetidos
-    # + los que le gustaron deslizando en «No tengo ni idea», al final: no están en su lista de Google Maps
+    # + los que le gustaron deslizando en «Food match», al final: no están en su lista de Google Maps
     bd.reemplazar_lista(lista["id"], de_google + bd.gustados_fuera(lista["usuario"], de_google))
     resumen = f"{len(vistas)} restaurantes ({len(catalogo_nuevo)} nuevos)"
     bd.marcar(lista["id"], "lista", resumen)

@@ -1,4 +1,4 @@
-/* «No tengo ni idea»: pila de tarjetas que se deslizan (derecha = me gusta, izquierda = no) */
+/* «Food match»: pila de tarjetas que se deslizan (derecha = me gusta, izquierda = no) */
 .dz { display: flex; flex-direction: column; align-items: center; gap: 14px; font-family: var(--st-font, sans-serif); }
 .dz-mazo { position: relative; width: 100%; max-width: 420px; aspect-ratio: 3 / 4; max-height: calc(100svh - 440px); min-height: 280px; }   /* que los botones quepan sobre la barra */
 .dz-tarjeta {

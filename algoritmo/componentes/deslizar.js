@@ -1,4 +1,4 @@
-// «No tengo ni idea»: pila de tarjetas. Arrastrar a la derecha (o ♥) = me gusta; a la izquierda (o ✕) = no.
+// «Food match»: pila de tarjetas. Arrastrar a la derecha (o ♥) = me gusta; a la izquierda (o ✕) = no.
 // Python manda las tarjetas pendientes (data.tarjetas, la primera es la de arriba) y recibe cada decisión por el
 // trigger «decision» = {id, gusta}. La pila vive aquí: las tarjetas nuevas se meten por debajo sin redibujar las
 // que ya están, así que no hay parpadeos mientras Python guarda y manda la siguiente tanda.

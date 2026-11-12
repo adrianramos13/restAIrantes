@@ -249,7 +249,7 @@ def multiusuario(monkeypatch):
                         estado["invitaciones_borradas"].append((de, para, i)))
     monkeypatch.setattr(datos.Supabase, "aceptar_invitacion", lambda self, u, de, i, nota=None, comentario=None, fecha=None:
                         estado["invitaciones_aceptadas"].append((u, de, i, nota, comentario, fecha)))
-    # «No tengo ni idea»: desactivado (sin supabase/014_deslizar.sql) salvo que el test diga otra cosa
+    # «Food match»: desactivado (sin supabase/014_deslizar.sql) salvo que el test diga otra cosa
     estado.update(deslizar=False, deslizados={}, deslizados_guardados=[], anadidos_a_lista=[])
     monkeypatch.setattr(datos.Supabase, "con_deslizar", lambda self: estado["deslizar"])
     monkeypatch.setattr(datos.Supabase, "deslizados_de", lambda self, u: estado["deslizados"])
@@ -1695,7 +1695,7 @@ def test_rescatar_interrumpidos_vuelve_a_pendiente(monkeypatch):
     assert (m2, t2, p2, j2["estado_analisis"]) == ("PATCH", "lugares", {"estado_analisis": "eq.procesando"}, "pendiente")
 
 
-# ---------------- «No tengo ni idea» (algoritmo/deslizar.py) ----------------
+# ---------------- «Food match» (algoritmo/deslizar.py) ----------------
 
 def _catalogo_para_deslizar(monkeypatch):
     """Catálogo de la zona: los restaurantes del excel con otros IDs (los del excel ya están en la lista de Ana)."""
@@ -1743,4 +1743,12 @@ def test_no_tengo_ni_idea_desliza_y_anade_a_tu_lista(multiusuario, monkeypatch):
     assert len(est["pendientes"]) == 4 + 15 and len(set(est["pendientes"])) == len(est["pendientes"])
 
     at.button(key="deslizar_volver").click().run()
-    assert at.session_state["vista"] == "buscador" and "deslizar" not in at.session_state
+    assert at.session_state["vista"] == "buscador"
+    assert at.session_state["deslizar"]["pendientes"] == est["pendientes"]   # al volver, sigue donde lo dejó
+
+
+def test_no_tengo_ni_idea_queda_preparado_desde_inicio(multiusuario, monkeypatch):
+    multiusuario["deslizar"] = True
+    _catalogo_para_deslizar(monkeypatch)
+    at = correr(seccion="inicio")
+    assert len(at.session_state["deslizar"]["pendientes"]) == 15   # en la recámara antes de pulsar el botón

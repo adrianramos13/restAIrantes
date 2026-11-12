@@ -287,7 +287,7 @@ def test_semana_cerrada_de_lunes_a_lunes_a_las_3():
     assert (desde.hour, hasta.hour) == (3, 3)
 
 
-# ---------------- «No tengo ni idea»: recomendar por gustos ----------------
+# ---------------- «Food match»: recomendar por gustos ----------------
 from logica import (PESO_GUSTO_LISTA, PESO_NO_GUSTA, intercalar, motivo_gusto, perfil_de_gustos,
                     platos_destacados, ranking_por_gustos)
 

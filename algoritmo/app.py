@@ -1471,7 +1471,7 @@ def cargar_catalogo_cerca(lat, lon, radio_km):
 
 
 def con_deslizar():
-    """¿Sale «No tengo ni idea»? Solo con cuentas y con supabase/014_deslizar.sql."""
+    """¿Sale «Food match»? Solo con cuentas y con supabase/014_deslizar.sql."""
     try:
         return BD is not None and BD.con_deslizar()
     except bd.ErrorSupabase:
@@ -2016,6 +2016,8 @@ barra_secciones(seccion, google.get("foto"), amigos.solicitudes_pendientes(BD, u
 # Inicio, Mi lista y Perfil trabajan siempre con la lista del usuario; "Comer hoy" es lo de debajo.
 if seccion == "inicio":
     seccion_inicio(maestro, df_platos, hay_intro, momento_portada, nombre_usuario)
+    if con_deslizar():   # con Inicio ya dibujado: el mazo de «Food match» queda listo en la recámara
+        deslizar.preparar(contexto_deslizar())
     st.stop()
 if seccion == "mi_lista":
     seccion_mi_lista(maestro, df_platos)
@@ -2045,7 +2047,7 @@ if vista == "resultados" and st.session_state.get("resultado") is not None:
     st.html(_CSS_OCULTAR_BUSCADOR)
 if vista == "deslizar" and not con_deslizar():
     vista = st.session_state["vista"] = "buscador"
-if vista == "deslizar":   # «No tengo ni idea»: el buscador se sigue dibujando (oculto) para no perder lo escrito
+if vista == "deslizar":   # «Food match»: el buscador se sigue dibujando (oculto) para no perder lo escrito
     st.html(_CSS_OCULTAR_BUSCADOR)
     deslizar.pantalla(contexto_deslizar())
 
@@ -2056,7 +2058,7 @@ with st.container(key="buscador"):
         st.segmented_control("Buscar en", [FUENTE_MI_LISTA, FUENTE_TODOS], default=FUENTE_MI_LISTA,
                              key="fuente", width="stretch", required=True)
         if con_deslizar():
-            st.button("No tengo ni idea", icon=":material/swipe:", width="stretch", key="boton_ni_idea",
+            st.button("Food match", icon=":material/swipe:", width="stretch", key="boton_ni_idea",
                       help="Te enseño sitios que te pueden gustar: desliza a la derecha los que sí",
                       on_click=lambda: st.session_state.update(vista="deslizar"))
         if maestro.empty and not todos_por_zona:
@@ -2196,6 +2198,9 @@ with st.container(key="buscador"):
         st.session_state["restaurante_seleccionado"] = None
         st.session_state["vista"] = "resultados"
         st.rerun()
+
+if vista == "buscador" and con_deslizar():   # con el buscador ya dibujado: el mazo, a la recámara
+    deslizar.preparar(contexto_deslizar())
 
 # ----------------------- VISTA: RESULTADOS ----------------------- #
 resultado = st.session_state.get("resultado")

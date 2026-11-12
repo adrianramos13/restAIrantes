@@ -652,7 +652,7 @@ class Supabase:
             sobran["restaurante_id"] = f"not.in.({','.join(map(str, ids))})"
         self._rest("DELETE", "eatlist", params=sobran)
 
-    # ---------------- «No tengo ni idea»: restaurantes deslizados (supabase/014_deslizar.sql) ----------------
+    # ---------------- «Food match»: restaurantes deslizados (supabase/014_deslizar.sql) ----------------
 
     def con_deslizar(self):
         """¿Está ya supabase/014_deslizar.sql? (se mira una vez): sin ella, el botón no sale."""

@@ -1,5 +1,5 @@
 """
-Comer hoy -> «No tengo ni idea» (solo con cuentas y con supabase/014_deslizar.sql): restaurantes de uno en uno,
+Comer hoy -> «Food match» (solo con cuentas y con supabase/014_deslizar.sql): restaurantes de uno en uno,
 estilo Tinder. Derecha = te gusta (entra en tu lista); izquierda = no te gusta (no vuelve a salir).
 
 Qué sale: los restaurantes del catálogo que no conoces (ni en tu lista, ni en tu eatlist, ni donde has ido, ni ya
@@ -34,8 +34,20 @@ CLAVE_MAZO = "mazo_deslizar"     # key del componente (app.mazo_deslizar)
 
 
 def salir():
-    st.session_state.pop(ESTADO, None)
-    st.session_state["vista"] = "buscador"
+    st.session_state["vista"] = "buscador"   # el mazo se queda: al volver, sigue donde lo dejaste
+
+
+def preparar(ctx):
+    """El mazo «en la recámara»: se llama al final de Inicio y Comer hoy, con la página ya dibujada, para que al
+    pulsar «Food match» la primera tanda ya esté lista (lo lento es bajarse los restaurantes de la zona)."""
+    if ESTADO in st.session_state:
+        return
+    try:
+        est = empezar(ctx)
+        rellenar(est, ctx)
+    except bd.ErrorSupabase:
+        return   # ya se intentará al pulsar el botón, y allí sí se avisa
+    st.session_state[ESTADO] = est
 
 
 def pantalla(ctx):
@@ -44,7 +56,7 @@ def pantalla(ctx):
     tarjeta(fila) -> {foto, meta}, al_cambiar_lista() (borra la caché de tu lista) y mazo(tarjetas, al_decidir)
     (dibuja el componente: se registra en app.py, como los de explorar.py)."""
     st.button("Volver", icon=":material/arrow_back:", type="tertiary", on_click=salir, key="deslizar_volver")
-    st.subheader("¿No sabes qué te apetece?")
+    st.subheader("Food match")
     st.caption("Desliza a la derecha lo que te guste (se añade a tu lista) y a la izquierda lo que no. "
                + ("Salen sitios de tu zona y de Madrid." if ctx["zona"] else "Salen sitios de Madrid: "
                   "pon «De dónde eres» en tus ajustes para ver también los de tu zona."))
