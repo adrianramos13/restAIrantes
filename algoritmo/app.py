@@ -1136,7 +1136,7 @@ def mostrar_portada(num_restaurantes, tras_intro=False, maestro=None,
     momento = momento or f"🍽️ Vuestra lista · {num_restaurantes} sitios"
 
     st.html(_CSS_PORTADA + f"""
-<div class="portada{' tras-intro' if tras_intro else ''}">
+<div class="portada{' tras-intro' if tras_intro else ''}{' solo-cinta' if solo_cinta else ''}">
   {f'<div class="cinta" aria-hidden="true"><div class="pista">{cinta}</div></div>' if fotos else ''}
   {'' if solo_cinta else f'<p class="momento">{momento}</p><h1>¿Dónde comemos?</h1><p class="sub">{subtitulo}</p>'}
 </div>

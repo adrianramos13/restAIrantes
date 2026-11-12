@@ -1,4 +1,7 @@
 .portada { margin: 1rem 0 4px; }   /* deja libre la barra superior de Streamlit */
+/* Buscar: solo la cinta; lo de debajo (el título «Buscar») se sube para que no quede un hueco */
+.portada.solo-cinta { margin-bottom: -1.75rem; }
+.portada.solo-cinta .cinta { margin-bottom: 0; }
 .portada .cinta {
   overflow: hidden; margin: 0 -16px 18px; padding: 4px 0;
   -webkit-mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
