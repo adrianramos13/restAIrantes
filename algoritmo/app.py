@@ -1127,7 +1127,9 @@ def mostrar_intro():
 
 
 def mostrar_portada(num_restaurantes, tras_intro=False, maestro=None,
-                    momento=None, subtitulo="Decid desde dónde salís y qué os apetece, y os digo cuál."):
+                    momento=None, subtitulo="Decid desde dónde salís y qué os apetece, y os digo cuál.",
+                    solo_cinta=False):
+    """`solo_cinta`: solo las fotos redondas que se deslizan, sin título ni textos (Buscar)."""
     fotos = fotos_portada(maestro)
     # La lista va dos veces seguidas: al desplazarse la mitad, vuelve al principio sin salto.
     cinta = "".join(f'<img src="{f}" alt="">' for f in fotos * 2)
@@ -1136,9 +1138,7 @@ def mostrar_portada(num_restaurantes, tras_intro=False, maestro=None,
     st.html(_CSS_PORTADA + f"""
 <div class="portada{' tras-intro' if tras_intro else ''}">
   {f'<div class="cinta" aria-hidden="true"><div class="pista">{cinta}</div></div>' if fotos else ''}
-  <p class="momento">{momento}</p>
-  <h1>¿Dónde comemos?</h1>
-  <p class="sub">{subtitulo}</p>
+  {'' if solo_cinta else f'<p class="momento">{momento}</p><h1>¿Dónde comemos?</h1><p class="sub">{subtitulo}</p>'}
 </div>
 """)
 
@@ -1357,6 +1357,7 @@ MODOS_BUSCAR = (MODO_DESCUBRIR, MODO_PERSONAS)
 def seccion_mi_lista(maestro, df_platos):
     """Buscar: en "Descubrir", cualquier restaurante, bar o cafetería (explorar.py); en "Personas", gente registrada
     para hacerte su amigo. Sin cuentas (modo local), tu lista con filtros; con cuenta, eso está en el Perfil."""
+    mostrar_portada(len(maestro), maestro=maestro, solo_cinta=True)
     st.header("Buscar")
     if not CONFIG_MULTIUSUARIO:
         lista_filtrable(maestro, df_platos)

@@ -293,7 +293,12 @@ async def _abrir_chrome_con_sesion(p):
         opciones["args"] = opciones["args"] + ["--window-position=-32000,-32000"]
     try:
         return await p.chromium.launch_persistent_context(channel="chrome", **opciones)
-    except Exception:
+    except Exception as e:
+        # Solo si no hay Chrome instalado. Si lo hay pero falla (p. ej. mientras se actualiza), el Chromium de
+        # Playwright es más antiguo, toma el perfil por un "downgrade" y lo aparta para borrarlo (casi perdimos así
+        # la sesión de Google el 11/11/2026): mejor fallar y reintentar en la siguiente vuelta.
+        if "is not found" not in str(e):
+            raise
         return await p.chromium.launch_persistent_context(**opciones)
 
 
@@ -312,7 +317,8 @@ async def _asegurar_sesion(page, url):
         pass
     if SIN_VENTANA:   # no hay ventana donde iniciar sesión
         raise SystemExit("ERROR: no hay sesión de Google en el Chrome del procesador. Ejecuta una vez "
-                         "'python obtener_datos/procesar_solicitudes.py' (sin --sin-ventana) e inicia sesión.")
+                         "'python obtener_datos/procesar_solicitudes.py --vigilar 0.25 --lote' (sin --sin-ventana: así abre "
+                         "Chrome aunque no haya nada pedido), inicia sesión y páralo con Ctrl+C.")
     print("\n  No hay sesión de Google guardada. Inicia sesión en la ventana de Chrome que se ha abierto")
     print(f"  (solo hace falta la primera vez). Esperando hasta {ESPERA_INICIO_SESION_S // 60} minutos...\n")
     # Google solo deja volver a sus propios dominios tras iniciar sesión (con el enlace corto
