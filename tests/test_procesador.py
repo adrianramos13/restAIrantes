@@ -39,6 +39,9 @@ class BDFalsa:
     def reemplazar_lista(self, lista_id, ids):
         self.contenido[lista_id] = list(ids)
 
+    def gustados_fuera(self, usuario, ids):
+        return [i for i in getattr(self, "gustados", []) if i not in ids]
+
     def subir_foto(self, archivo, contenido):
         pass
 

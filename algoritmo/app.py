@@ -51,7 +51,7 @@ from streamlit.errors import StreamlitAPIException
 # vieja de los módulos que ya tenía importados (p. ej. "AttributeError: datos.foto_valida"). Se recarga
 # cada módulo propio cuyo archivo haya cambiado desde que se cargó, antes de importar nada de él (en
 # orden: primero los que no dependen de otros). En los tests no: desharía lo que sustituyen (monkeypatch).
-_MODULOS_PROPIOS = ("logica", "servicios", "datos", "sesion", "cuentas", "acceso", "amigos", "explorar")
+_MODULOS_PROPIOS = ("logica", "servicios", "datos", "sesion", "cuentas", "acceso", "amigos", "explorar", "deslizar")
 if "PYTEST_CURRENT_TEST" not in os.environ:
     for _nombre in _MODULOS_PROPIOS:
         _modulo = sys.modules.get(_nombre)
@@ -61,11 +61,12 @@ if "PYTEST_CURRENT_TEST" not in os.environ:
 from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
                     ORDEN_RESENAS, PRESUPUESTO_SIN_LIMITE, VOTOS_MIN_SECUNDARIA, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, sugerencia_plato, tiene_categorias_jev, insights_perfil,
-                    insertar_en_orden, vista_previa_posicion)
+                    insertar_en_orden, vista_previa_posicion, PESO_GUSTO_EATLIST, PESO_GUSTO_LISTA)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
 import acceso
 import amigos
 import datos as bd
+import deslizar
 import explorar
 from cuentas import Cuentas
 from logica import hace_cuanto
@@ -486,6 +487,11 @@ def bloque_quitar_de_mi_lista(fila):
         st.error("No se ha podido quitar ahora mismo. Inténtalo en un momento.")
         return
     st.session_state.pop(confirmar, None)
+    if con_deslizar():   # si lo añadiste deslizando, que no vuelva al sincronizar tu lista de Google Maps
+        try:
+            BD.no_me_gusta_ya(usuario, id_restaurante)
+        except bd.ErrorSupabase:
+            pass   # ya está quitado de la lista; como mucho volvería al sincronizar
     cargar_datos_usuario.clear()
     st.toast(f"«{fila['Nombre']}» ya no está en tu lista", icon=":material/check:")
     st.rerun()   # cierra la ficha y la lista se ve ya sin él
@@ -1464,6 +1470,54 @@ def cargar_catalogo_cerca(lat, lon, radio_km):
     return BD.restaurantes_cerca(lat, lon, radio_km)
 
 
+def con_deslizar():
+    """¿Sale «No tengo ni idea»? Solo con cuentas y con supabase/014_deslizar.sql."""
+    try:
+        return BD is not None and BD.con_deslizar()
+    except bd.ErrorSupabase:
+        return False
+
+
+def tarjeta_deslizar(fila):
+    nota = fila.get("Puntuación")
+    partes = [etiqueta_cocina(fila), valor_o(fila, "Rango de precios", ""),
+              f"⭐ {float(nota):.1f}".replace(".", ",") if pd.notna(nota) else ""]
+    return {"foto": foto_restaurante(fila, ancho=600), "meta": " · ".join(str(p) for p in partes if p and p != "N/D")}
+
+
+_MAZO_DESLIZAR = st.components.v2.component(
+    "mazo_deslizar", html=recurso("deslizar.html"), css=recurso("deslizar.css"), js=recurso("deslizar.js"))
+
+
+def mazo_deslizar(tarjetas, al_decidir):
+    _MAZO_DESLIZAR(key=deslizar.CLAVE_MAZO, data={"tarjetas": tarjetas}, on_decision_change=al_decidir)
+
+
+def _zona_deslizar(lat, lon, radio_km):
+    if BD.con_ficha_rapida():
+        return cargar_catalogo_cerca(round(lat, 3), round(lon, 3), radio_km)[0]
+    return cargar_catalogo()[0]   # ponytail: sin 012 no hay lat/lon en el catálogo: todo, sin zona
+
+
+def contexto_deslizar():
+    """Lo que necesita deslizar.pantalla: tus gustos (lista, eatlist y visitas) y cómo cargar restaurantes."""
+    mi_lista_df = cargar_datos_usuario(usuario)[0]   # la tuya, aunque Comer hoy esté en «Todos los restaurantes»
+    eatlist = mi_eatlist()
+    try:
+        visitas = amigos.cargar_mis_visitas(BD, usuario)
+    except bd.ErrorSupabase:
+        visitas = pd.DataFrame()
+    zona = ((perfil or {}).get("zona_lat"), (perfil or {}).get("zona_lon"))
+    zona = zona if None not in zona else st.session_state.get("ubicacion_actual")
+    return {
+        "bd": BD, "usuario": usuario, "lista": mi_lista, "zona": zona,
+        "fuentes": [(mi_lista_df, PESO_GUSTO_LISTA), (eatlist, PESO_GUSTO_EATLIST), (visitas, None)],
+        "excluir": {int(i) for df in (mi_lista_df, eatlist, visitas) for i in df.get("ID", [])},
+        "cargar_zona": _zona_deslizar, "cargar_todo": lambda: cargar_catalogo()[0],
+        "tarjeta": tarjeta_deslizar, "al_cambiar_lista": cargar_datos_usuario.clear, "mazo": mazo_deslizar,
+    }
+
+
 def radio_busqueda_km(modo_transporte, minutos):
     """Hasta dónde se puede llegar en ese tiempo, con margen: en coche ~1 km por minuto y andando ~0,1."""
     return max(1.0, minutos * (1.0 if modo_transporte == "En coche" else 0.1) * 1.3)
@@ -1989,6 +2043,11 @@ if CONFIG_MULTIUSUARIO:
 vista = st.session_state.setdefault("vista", "buscador")
 if vista == "resultados" and st.session_state.get("resultado") is not None:
     st.html(_CSS_OCULTAR_BUSCADOR)
+if vista == "deslizar" and not con_deslizar():
+    vista = st.session_state["vista"] = "buscador"
+if vista == "deslizar":   # «No tengo ni idea»: el buscador se sigue dibujando (oculto) para no perder lo escrito
+    st.html(_CSS_OCULTAR_BUSCADOR)
+    deslizar.pantalla(contexto_deslizar())
 
 # ----------------------- VISTA: BUSCADOR ----------------------- #
 with st.container(key="buscador"):
@@ -1996,6 +2055,10 @@ with st.container(key="buscador"):
     if CONFIG_MULTIUSUARIO:
         st.segmented_control("Buscar en", [FUENTE_MI_LISTA, FUENTE_TODOS], default=FUENTE_MI_LISTA,
                              key="fuente", width="stretch", required=True)
+        if con_deslizar():
+            st.button("No tengo ni idea", icon=":material/swipe:", width="stretch", key="boton_ni_idea",
+                      help="Te enseño sitios que te pueden gustar: desliza a la derecha los que sí",
+                      on_click=lambda: st.session_state.update(vista="deslizar"))
         if maestro.empty and not todos_por_zona:
             st.info("Todavía no tienes restaurantes en tu lista. Añádela en tus **ajustes** (toca tu foto en el Perfil) "
                     "o busca en **Todos los restaurantes**.")

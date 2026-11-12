@@ -285,3 +285,58 @@ def test_semana_cerrada_de_lunes_a_lunes_a_las_3():
     assert semana_cerrada(lunes_3) == (datetime(2026, 11, 2, 3, tzinfo=madrid), lunes_3)          # justo a las 3: cambia
     desde, hasta = semana_cerrada(datetime(2026, 3, 31, 12, tzinfo=madrid))   # cruza el cambio de hora del 29/3
     assert (desde.hour, hasta.hour) == (3, 3)
+
+
+# ---------------- «No tengo ni idea»: recomendar por gustos ----------------
+from logica import (PESO_GUSTO_LISTA, PESO_NO_GUSTA, intercalar, motivo_gusto, perfil_de_gustos,
+                    platos_destacados, ranking_por_gustos)
+
+
+def _sitio(id_, cocina, precio="20-30 €", nota=4.0, platos=None, estado=None):
+    return {"ID": id_, "Nombre": f"Sitio {id_}", COL_CATEGORIA: cocina, "Rango de precios": precio,
+            "Puntuación": nota, "Platos mejor valorados": platos, "Estado": estado}
+
+
+def test_platos_destacados_lee_la_columna_de_jev():
+    assert platos_destacados("burritos (8), lasaña (3), nachos (2)") == ["burritos", "lasaña", "nachos"]
+    assert platos_destacados(None) == []
+
+
+def test_perfil_de_gustos_suma_lista_y_notas_de_visitas():
+    lista = pd.DataFrame([_sitio(1, "Japonesa", platos="ramen (5)"), _sitio(2, "Japonesa")])
+    visitas = pd.DataFrame([{**_sitio(3, "Italiana"), "Nota visita": 5.0},
+                            {**_sitio(4, "Mexicana", precio="50-60 €"), "Nota visita": 1.0}])
+    perfil = perfil_de_gustos([(lista, PESO_GUSTO_LISTA), (visitas, None)])
+    assert perfil["cocinas"]["Japonesa"] == 2 and perfil["cocinas"]["Italiana"] == 1.5
+    assert perfil["cocinas"]["Mexicana"] == -1.5          # 1★: resta
+    assert perfil["platos"]["ramen"] == 1
+    assert perfil["precio"] == (20, 30)                    # solo cuentan los que te gustan
+
+
+def test_ranking_por_gustos_prefiere_tu_cocina_y_quita_lo_que_conoces():
+    perfil = perfil_de_gustos([(pd.DataFrame([_sitio(1, "Japonesa")] * 3), PESO_GUSTO_LISTA),
+                               (pd.DataFrame([_sitio(2, "Hamburguesas")]), PESO_NO_GUSTA)])
+    candidatos = pd.DataFrame([_sitio(10, "Hamburguesas", nota=5.0), _sitio(11, "Japonesa", nota=3.5),
+                               _sitio(12, "Japonesa", estado="Cerrado permanentemente"), _sitio(13, "Japonesa")])
+    orden = ranking_por_gustos(candidatos, perfil, random.Random(1), excluir={13})
+    assert orden == [11, 10]   # la japonesa antes que la hamburguesería aunque tenga peor nota; sin cerrados ni vistos
+
+
+def test_ranking_por_gustos_sin_datos_tira_de_la_nota():
+    perfil = perfil_de_gustos([])
+    candidatos = pd.DataFrame([_sitio(1, "Tapas", nota=3.0), _sitio(2, "Tapas", nota=4.9)])
+    assert ranking_por_gustos(candidatos, perfil, random.Random(0)) == [2, 1]
+
+
+def test_intercalar_dos_de_cerca_por_uno_de_lejos_y_rellena():
+    assert intercalar([1, 2, 3, 4, 5], [10, 11], excluir={2}, n=7) == [1, 3, 10, 4, 5, 11]
+    assert intercalar([1, 2], [], excluir=(), n=5) == [1, 2]
+    assert intercalar([1, 2, 3], [3, 4], excluir=(), n=4) == [1, 2, 3, 4]   # sin repetir
+
+
+def test_motivo_gusto():
+    perfil = perfil_de_gustos([(pd.DataFrame([_sitio(1, "Japonesa", platos="ramen (5)")]), PESO_GUSTO_LISTA)])
+    assert motivo_gusto(_sitio(2, "Japonesa", platos="ramen (2)"), perfil) == "Destacan: ramen"
+    assert motivo_gusto(_sitio(3, "Japonesa"), perfil) == "Te suele gustar: Japonesa"
+    assert motivo_gusto(_sitio(4, "Tapas", nota=4.7), perfil) == "Muy bien valorado en Google (4,7)"
+    assert motivo_gusto(_sitio(5, "Tapas"), perfil) is None

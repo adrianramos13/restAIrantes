@@ -249,6 +249,14 @@ def multiusuario(monkeypatch):
                         estado["invitaciones_borradas"].append((de, para, i)))
     monkeypatch.setattr(datos.Supabase, "aceptar_invitacion", lambda self, u, de, i, nota=None, comentario=None, fecha=None:
                         estado["invitaciones_aceptadas"].append((u, de, i, nota, comentario, fecha)))
+    # «No tengo ni idea»: desactivado (sin supabase/014_deslizar.sql) salvo que el test diga otra cosa
+    estado.update(deslizar=False, deslizados={}, deslizados_guardados=[], anadidos_a_lista=[])
+    monkeypatch.setattr(datos.Supabase, "con_deslizar", lambda self: estado["deslizar"])
+    monkeypatch.setattr(datos.Supabase, "deslizados_de", lambda self, u: estado["deslizados"])
+    monkeypatch.setattr(datos.Supabase, "guardar_deslizado", lambda self, u, i, gusta:
+                        estado["deslizados_guardados"].append((u, i, gusta)))
+    monkeypatch.setattr(datos.Supabase, "anadir_a_lista", lambda self, lista_id, i:
+                        estado["anadidos_a_lista"].append((lista_id, i)))
     st.cache_data.clear()
     yield estado
     st.cache_data.clear()
@@ -1685,3 +1693,54 @@ def test_rescatar_interrumpidos_vuelve_a_pendiente(monkeypatch):
     (m1, t1, p1, j1), (m2, t2, p2, j2) = llamadas[-2:]
     assert (m1, t1, p1, j1["estado"]) == ("PATCH", "listas", {"estado": "eq.procesando"}, "pendiente")
     assert (m2, t2, p2, j2["estado_analisis"]) == ("PATCH", "lugares", {"estado_analisis": "eq.procesando"}, "pendiente")
+
+
+# ---------------- «No tengo ni idea» (algoritmo/deslizar.py) ----------------
+
+def _catalogo_para_deslizar(monkeypatch):
+    """Catálogo de la zona: los restaurantes del excel con otros IDs (los del excel ya están en la lista de Ana)."""
+    catalogo = pd.read_excel(EXCEL, sheet_name="Restaurantes").assign(ID=lambda d: d["ID"] + 10_000)
+    monkeypatch.setattr(datos.Supabase, "con_ficha_rapida", lambda self: True)
+    monkeypatch.setattr(datos.Supabase, "restaurantes_cerca", lambda self, lat, lon, radio, limite=3000:
+                        (catalogo.copy(), pd.DataFrame(columns=datos.COLUMNAS_PLATOS)))
+    return catalogo
+
+
+def test_no_tengo_ni_idea_solo_con_la_tabla(multiusuario):
+    at = correr()
+    assert not [b for b in at.button if b.key == "boton_ni_idea"]   # sin supabase/014_deslizar.sql, no sale
+    multiusuario["deslizar"] = True
+    at = correr()
+    assert at.button(key="boton_ni_idea")
+
+
+def test_no_tengo_ni_idea_desliza_y_anade_a_tu_lista(multiusuario, monkeypatch):
+    multiusuario["deslizar"] = True
+    multiusuario["deslizados"] = {10_001: False}   # ya lo descartó otro día: no vuelve a salir
+    catalogo = _catalogo_para_deslizar(monkeypatch)
+    at = correr()
+    at.button(key="boton_ni_idea").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state["vista"] == "deslizar"
+    pendientes = list(at.session_state["deslizar"]["pendientes"])
+    assert len(pendientes) == 15 and 10_001 not in pendientes
+    assert set(pendientes) <= set(catalogo["ID"])   # nada de lo que ya está en tu lista
+
+    primero, segundo = pendientes[:2]
+    at.session_state["deslizar_decision"] = {"id": primero, "gusta": True}
+    at.run()
+    at.session_state["deslizar_decision"] = {"id": segundo, "gusta": False}
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert multiusuario["deslizados_guardados"] == [("ana@ejemplo.com", primero, True),
+                                                     ("ana@ejemplo.com", segundo, False)]
+    assert multiusuario["anadidos_a_lista"] == [(LISTA_OK["id"], primero)]   # solo el que le gusta
+
+    for rid in list(at.session_state["deslizar"]["pendientes"])[:9]:   # al quedar 5, llega otra tanda de 15
+        at.session_state["deslizar_decision"] = {"id": rid, "gusta": False}
+        at.run()
+    est = at.session_state["deslizar"]
+    assert len(est["pendientes"]) == 4 + 15 and len(set(est["pendientes"])) == len(est["pendientes"])
+
+    at.button(key="deslizar_volver").click().run()
+    assert at.session_state["vista"] == "buscador" and "deslizar" not in at.session_state

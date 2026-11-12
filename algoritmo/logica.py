@@ -437,3 +437,127 @@ def insights_perfil(maestro, visitas, ahora):
         "favorito": mejor,
         "precio_medio": stats["precio_medio"] if stats else None,
     }
+
+
+# ---------------- «No tengo ni idea»: restaurantes que encajan con tus gustos ----------------
+PESO_GUSTO_LISTA = 1.0       # está en tu lista
+PESO_GUSTO_EATLIST = 1.5     # en tu eatlist: tienes ganas de ir
+PESO_GUSTO_DESLIZADO = 1.5   # te ha gustado deslizando
+PESO_NO_GUSTA = -1.0         # deslizado a la izquierda
+NOTA_NEUTRA = 3.0            # en "He ido": por encima suma y por debajo resta (5★ = +1,5; 1★ = -1,5)
+PESOS_DESLIZAR = {"cocina": 0.55, "precio": 0.15, "platos": 0.15, "calidad": 0.15}
+AZAR_DESLIZAR = 0.08         # un poco de azar: que no salga siempre lo mismo en el mismo orden
+_PATRON_PLATO = re.compile(r"([^,(]+?)\s*\(\d+\)")
+
+
+def cocina_de(fila):
+    """La cocina de un restaurante: la de Jev o, si no hay, la de Google."""
+    for columna in (COL_CATEGORIA, "Tipo de cocina"):
+        valor = fila.get(columna)
+        if isinstance(valor, str) and valor.strip():
+            return valor.strip()
+    return None
+
+
+def platos_destacados(texto):
+    """"burritos (8), lasaña (3)" (columna "Platos mejor valorados") -> ["burritos", "lasaña"]."""
+    if not isinstance(texto, str):
+        return []
+    return [p.strip().lower() for p in _PATRON_PLATO.findall(texto) if p.strip()]
+
+
+def _peso_visita(nota):
+    if nota is None or pd.isna(nota):
+        return PESO_GUSTO_LISTA   # fuiste y no lo valoraste: cuenta como uno de tu lista
+    return (float(nota) - NOTA_NEUTRA) * 0.75
+
+
+def perfil_de_gustos(fuentes):
+    """Tus gustos a partir de [(DataFrame con columnas del restaurante, peso)]: con peso None, el de cada fila sale
+    de su "Nota visita". Devuelve {"cocinas": {cocina: peso}, "platos": {plato: peso}, "precio": (min, max) o None},
+    donde el precio es la mediana de los rangos de los sitios que te gustan."""
+    cocinas, platos, minimos, maximos = {}, {}, [], []
+    for df, peso in fuentes:
+        if df is None or df.empty:
+            continue
+        for fila in df.to_dict("records"):
+            p = _peso_visita(fila.get("Nota visita")) if peso is None else peso
+            if (cocina := cocina_de(fila)) is not None:
+                cocinas[cocina] = cocinas.get(cocina, 0) + p
+            for plato in platos_destacados(fila.get("Platos mejor valorados")):
+                platos[plato] = platos.get(plato, 0) + p
+            if p > 0:
+                minimo, maximo = parsear_rango_precio(fila.get("Rango de precios"))
+                minimos += [minimo] if minimo is not None else []
+                maximos += [maximo] if maximo is not None else []
+    precio = None
+    if minimos or maximos:
+        mediana = lambda v: sorted(v)[len(v) // 2] if v else None
+        precio = (mediana(minimos), mediana(maximos))
+    return {"cocinas": cocinas, "platos": platos, "precio": precio}
+
+
+def puntuar_por_gustos(candidatos, perfil, azar):
+    """Cuánto encaja cada candidato con tus gustos (Serie con su índice; más alto, mejor). Sin gustos conocidos
+    (cuenta nueva) pesan sobre todo la nota de Google y el azar. `azar`: un random.Random."""
+    if candidatos.empty:
+        return pd.Series(dtype=float)
+    tope_cocina = max((abs(v) for v in perfil["cocinas"].values()), default=0) or 1
+    tope_platos = max((v for v in perfil["platos"].values() if v > 0), default=0) or 1
+
+    def puntos(fila):
+        cocina = perfil["cocinas"].get(cocina_de(fila), 0) / tope_cocina if perfil["cocinas"] else 0.5
+        minimo, maximo = parsear_rango_precio(fila.get("Rango de precios"))
+        precio = solapamiento(minimo, maximo, *perfil["precio"]) if perfil["precio"] else 0.5
+        platos = min(1.0, sum(max(0, perfil["platos"].get(p, 0))
+                              for p in platos_destacados(fila.get("Platos mejor valorados"))) / tope_platos)
+        nota = fila.get("Puntuación")
+        calidad = 0.0 if nota is None or pd.isna(nota) else float(nota) / 5
+        return (PESOS_DESLIZAR["cocina"] * cocina + PESOS_DESLIZAR["precio"] * precio
+                + PESOS_DESLIZAR["platos"] * platos + PESOS_DESLIZAR["calidad"] * calidad + AZAR_DESLIZAR * azar.random())
+    return pd.Series([puntos(f) for f in candidatos.to_dict("records")], index=candidatos.index)
+
+
+def ranking_por_gustos(candidatos, perfil, azar, excluir=()):
+    """IDs de los candidatos de más a menos afines, sin los de `excluir` ni los cerrados."""
+    if candidatos.empty:
+        return []
+    fuera = set(excluir)
+    abiertos = candidatos[~candidatos["ID"].isin(fuera)]
+    if "Estado" in abiertos.columns:
+        abiertos = abiertos[~abiertos["Estado"].astype(str).str.lower().str.contains("cerrado", na=False)]
+    puntos = puntuar_por_gustos(abiertos, perfil, azar)
+    return [int(i) for i in abiertos.loc[puntos.sort_values(ascending=False, kind="stable").index, "ID"]]
+
+
+def intercalar(cerca, lejos, excluir, n, de_cerca=2):
+    """Hasta `n` IDs sin repetir ni los de `excluir`: `de_cerca` de `cerca` por cada uno de `lejos`. Si una lista
+    se acaba, la otra rellena."""
+    fuera, elegidos = set(excluir), []
+    fuentes = [iter(cerca)] * de_cerca + [iter(lejos)]   # el mismo iterador repetido: avanza de verdad
+    agotadas = set()
+    while len(elegidos) < n and len(agotadas) < 2:
+        for fuente in fuentes:
+            if len(elegidos) >= n:
+                break
+            siguiente = next((i for i in fuente if i not in fuera), None)
+            if siguiente is None:
+                agotadas.add(id(fuente))
+                continue
+            fuera.add(siguiente)
+            elegidos.append(siguiente)
+    return elegidos
+
+
+def motivo_gusto(fila, perfil):
+    """Por qué sale este restaurante, en pocas palabras (o None)."""
+    platos = [p for p in platos_destacados(fila.get("Platos mejor valorados")) if perfil["platos"].get(p, 0) > 0]
+    if platos:
+        return f"Destacan: {', '.join(platos[:2])}"
+    cocina = cocina_de(fila)
+    if cocina and perfil["cocinas"].get(cocina, 0) > 0:
+        return f"Te suele gustar: {cocina}"
+    nota = fila.get("Puntuación")
+    if nota is not None and not pd.isna(nota) and float(nota) >= 4.5:
+        return f"Muy bien valorado en Google ({float(nota):.1f})".replace(".", ",")
+    return None

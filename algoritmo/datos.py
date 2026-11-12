@@ -380,7 +380,7 @@ class Supabase:
         ids = self.ids_de_lista(igual["id"]) if igual else []
         if not ids:
             return lista
-        self.reemplazar_lista(lista["id"], ids)
+        self.reemplazar_lista(lista["id"], ids + self.gustados_fuera(usuario, ids))
         self.marcar(lista["id"], "lista", f"{len(ids)} restaurantes (copiada de una lista ya procesada)")
         return {**lista, "estado": "lista"}
 
@@ -652,6 +652,58 @@ class Supabase:
             sobran["restaurante_id"] = f"not.in.({','.join(map(str, ids))})"
         self._rest("DELETE", "eatlist", params=sobran)
 
+    # ---------------- «No tengo ni idea»: restaurantes deslizados (supabase/014_deslizar.sql) ----------------
+
+    def con_deslizar(self):
+        """¿Está ya supabase/014_deslizar.sql? (se mira una vez): sin ella, el botón no sale."""
+        if getattr(self, "_con_deslizar", None) is None:
+            try:
+                self._rest("GET", "deslizados", params={"select": "usuario", "limit": 1})
+                self._con_deslizar = True
+            except ErrorSupabase:
+                self._con_deslizar = False
+        return self._con_deslizar
+
+    def deslizados_de(self, usuario):
+        """{id del restaurante: gusta} de todo lo que ha deslizado."""
+        filas = self._paginado("deslizados", {"usuario": f"eq.{usuario}", "select": "restaurante_id,gusta",
+                                              "order": "restaurante_id"}, 100_000)
+        return {f["restaurante_id"]: f["gusta"] for f in filas}
+
+    def guardar_deslizado(self, usuario, restaurante_id, gusta):
+        self._rest("POST", "deslizados", params={"on_conflict": "usuario,restaurante_id"},
+                   prefer="resolution=merge-duplicates",
+                   json={"usuario": usuario, "restaurante_id": int(restaurante_id), "gusta": bool(gusta)})
+
+    def no_me_gusta_ya(self, usuario, restaurante_id):
+        """Lo has quitado de tu lista: deja de contar como «te gusta» (y no vuelve al sincronizar la lista)."""
+        self._rest("PATCH", "deslizados", params={"usuario": f"eq.{usuario}", "restaurante_id": f"eq.{int(restaurante_id)}"},
+                   json={"gusta": False})
+
+    def gustados_fuera(self, usuario, ids):
+        """Los que te gustaron deslizando y no están en `ids`, para no perderlos al reemplazar la lista con la de
+        Google Maps. [] si aún no está supabase/014_deslizar.sql."""
+        try:
+            filas = self._rest("GET", "deslizados", params={"usuario": f"eq.{usuario}", "gusta": "is.true",
+                                                            "select": "restaurante_id", "order": "creado_en"}) or []
+        except ErrorSupabase:
+            return []
+        dentro = set(ids)
+        return [f["restaurante_id"] for f in filas if f["restaurante_id"] not in dentro]
+
+    def anadir_a_lista(self, lista_id, restaurante_id):
+        """Añade un restaurante al final de una lista (si ya está, no hace nada)."""
+        ultima = self._rest("GET", "lista_restaurantes", params={
+            "lista_id": f"eq.{int(lista_id)}", "select": "posicion", "order": "posicion.desc", "limit": 1}) or []
+        self._rest("POST", "lista_restaurantes", params={"on_conflict": "lista_id,restaurante_id"},
+                   prefer="resolution=ignore-duplicates",
+                   json={"lista_id": int(lista_id), "restaurante_id": int(restaurante_id),
+                         "posicion": (ultima[0]["posicion"] if ultima else 0) + 1})
+
+    def crear_lista_vacia(self, usuario):
+        """Para quien aún no tiene lista y le gusta algo deslizando: una lista sin enlace de Google Maps."""
+        return self.guardar_lista(usuario, estado="lista", mensaje="Creada al deslizar")
+
     # ---------------- catálogo compartido ----------------
 
     def todos_los_restaurantes(self):
@@ -799,9 +851,9 @@ class Supabase:
     def restaurantes_cerca(self, lat, lon, radio_km, limite=3000):
         """(maestro, df_platos) de los restaurantes del catálogo dentro del cuadrado de `radio_km` alrededor."""
         a, b, c, d = caja_alrededor(lat, lon, radio_km)
-        filas = self._rest("GET", "restaurantes", params={
-            "select": "id,datos,platos,imagen", "limit": limite,
-            "and": f"(lat.gte.{a:.6f},lat.lte.{b:.6f},lon.gte.{c:.6f},lon.lte.{d:.6f})"})
+        filas = self._paginado("restaurantes", {   # de 1000 en 1000: más por petición, Supabase no da
+            "select": "id,datos,platos,imagen", "order": "id",
+            "and": f"(lat.gte.{a:.6f},lat.lte.{b:.6f},lon.gte.{c:.6f},lon.lte.{d:.6f})"}, limite)
         return filas_a_dataframes([{"posicion": i, "restaurantes": f} for i, f in enumerate(filas)])
 
     def cocinas_del_catalogo(self):
