@@ -23,6 +23,8 @@ def config_multiusuario():
         return {
             "url": secretos["supabase"]["url"],
             "clave_servicio": secretos["supabase"]["clave_servicio"],
+            # URL pública del bucket de R2 con las fotos de restaurantes; sin ella, se leen de Supabase Storage
+            "fotos_url": secretos.get("r2", {}).get("url_publica"),
             # vacío = cualquier cuenta de Google puede entrar
             "permitidos": [c.strip().lower() for c in secretos.get("usuarios_permitidos", [])],
         }

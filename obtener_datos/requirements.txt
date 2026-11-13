@@ -9,3 +9,4 @@ playwright
 typesafe-sdk
 duckdb
 pillow
+boto3   # subir fotos a Cloudflare R2 (API S3)

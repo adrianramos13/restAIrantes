@@ -995,9 +995,11 @@ def test_preparar_foto_perfil_rechaza(contenido):
 def test_subir_foto_perfil(monkeypatch):
     subidas, borradas = [], []
     bd_, llamadas = _supabase_falso(monkeypatch, lambda m, t, p: None)
-    monkeypatch.setattr(datos.Supabase, "subir_foto", lambda self, archivo, contenido: subidas.append((archivo, contenido)))
+    monkeypatch.setattr(datos.Supabase, "_subir_a_supabase",
+                        lambda self, archivo, contenido: subidas.append((archivo, contenido)))
     monkeypatch.setattr(datos.requests, "delete", lambda url, **kw: borradas.append(url))
-    anterior = "https://x.supabase.co/storage/v1/object/public/fotos/perfiles/" + "b2" * 16 + ".jpg"
+    bd_.fotos_url, bd_.r2 = "https://fotos.ejemplo.com", {"bucket": "b"}   # con R2, la de perfil sigue en Supabase
+    anterior ="https://x.supabase.co/storage/v1/object/public/fotos/perfiles/" + "b2" * 16 + ".jpg"
     url = bd_.subir_foto_perfil("ana@x.com", "Ana", _imagen(300, 300), anterior=anterior)
     archivo, contenido = subidas[0]
     assert archivo.startswith("perfiles/") and archivo.endswith(".jpg") and contenido[:2] == b"\xff\xd8"   # JPEG
@@ -1007,6 +1009,33 @@ def test_subir_foto_perfil(monkeypatch):
     assert llamadas[-1][3]["foto"] is None and len(borradas) == 2
     bd_.quitar_foto_perfil("ana@x.com", "Ana", anterior="https://lh3.googleusercontent.com/a/x")
     assert len(borradas) == 2                                         # la de Google no es nuestra: no se borra
+
+
+def test_fotos_en_r2():
+    sin_r2 = datos.Supabase("https://x.supabase.co", "k")
+    assert sin_r2.url_foto("casa pepe.jpg") == "https://x.supabase.co/storage/v1/object/public/fotos/casa%20pepe.jpg"
+    bd_ = datos.Supabase("https://x.supabase.co", "k", fotos_url="https://fotos.ejemplo.com/",
+                         r2={"cuenta": "c", "clave_id": "i", "clave_secreta": "s", "bucket": "fotos"})
+    assert bd_.url_foto("lugares/7.jpg") == "https://fotos.ejemplo.com/lugares/7.jpg"
+    assert bd_.url_foto(None) is None
+
+    subidas = []
+
+    class S3Falso:
+        def put_object(self, **kw):
+            subidas.append(kw)
+
+    bd_._s3 = S3Falso()
+    bd_.subir_foto("lugares/7.jpg", b"jpg")
+    assert subidas[0]["Bucket"] == "fotos" and subidas[0]["Key"] == "lugares/7.jpg" and subidas[0]["Body"] == b"jpg"
+
+    class S3Roto:
+        def put_object(self, **kw):
+            raise OSError("sin red")
+
+    bd_._s3 = S3Roto()
+    with pytest.raises(datos.ErrorSupabase):   # los llamadores ya tratan ErrorSupabase
+        bd_.subir_foto("lugares/7.jpg", b"jpg")
 
 
 

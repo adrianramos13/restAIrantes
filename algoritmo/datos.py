@@ -349,8 +349,14 @@ def _filtro_comida():
 
 
 class Supabase:
-    def __init__(self, url, clave_servicio):
+    def __init__(self, url, clave_servicio, fotos_url=None, r2=None):
+        """`fotos_url`: URL pública del bucket de R2 (las fotos de restaurantes y sitios se leen de ahí; sin ella,
+        de Supabase Storage). `r2`: {cuenta, clave_id, clave_secreta, bucket} para subirlas (solo los scripts de
+        obtener_datos/). Las fotos de perfil se quedan siempre en Supabase."""
         self.url = url.rstrip("/")
+        self.fotos_url = fotos_url.rstrip("/") if fotos_url else None
+        self.r2 = r2
+        self._s3 = None
         self._cabeceras = {"apikey": clave_servicio}
         # Las claves antiguas (service_role, "eyJ...") son JWT y van también como Bearer; las nuevas
         # (sb_secret_...) no son JWT y Supabase solo las acepta en la cabecera apikey.
@@ -952,6 +958,31 @@ class Supabase:
     # ---------------- fotos ----------------
 
     def subir_foto(self, archivo, contenido):
+        """Foto de restaurante o sitio: a R2 si está configurado; si no, a Supabase Storage."""
+        if not self.r2:
+            return self._subir_a_supabase(archivo, contenido)
+        try:
+            self._cliente_r2().put_object(Bucket=self.r2["bucket"], Key=archivo, Body=contenido,
+                                          ContentType="image/jpeg", CacheControl="public, max-age=604800")
+        except Exception as e:   # botocore lanza varios tipos (red, credenciales, bucket)
+            raise ErrorSupabase(f"subir foto {archivo} a R2: {type(e).__name__}: {str(e)[:200]}") from e
+
+    def _cliente_r2(self):
+        if self._s3 is None:
+            import boto3   # solo en obtener_datos/requirements.txt: la app no sube a R2
+            self._s3 = boto3.client("s3", endpoint_url=f"https://{self.r2['cuenta']}.r2.cloudflarestorage.com",
+                                    aws_access_key_id=self.r2["clave_id"],
+                                    aws_secret_access_key=self.r2["clave_secreta"], region_name="auto")
+        return self._s3
+
+    def fotos_en_r2(self):
+        """Nombres de todos los archivos que ya hay en el bucket de R2."""
+        nombres = set()
+        for pagina in self._cliente_r2().get_paginator("list_objects_v2").paginate(Bucket=self.r2["bucket"]):
+            nombres.update(o["Key"] for o in pagina.get("Contents", []))
+        return nombres
+
+    def _subir_a_supabase(self, archivo, contenido):
         r = requests.post(f"{self.url}/storage/v1/object/{BUCKET_FOTOS}/{urllib.parse.quote(archivo)}",
                           data=contenido, timeout=TIMEOUT_S,
                           headers={**self._cabeceras, "Content-Type": "image/jpeg", "x-upsert": "true"})
@@ -962,8 +993,8 @@ class Supabase:
         """Sube una foto propia (ya preparada aquí: cuadrada, pequeña y sin metadatos) y la pone en el perfil.
         El nombre del archivo es aleatorio; si había otra propia, se borra. Devuelve la URL."""
         archivo = f"perfiles/{uuid.uuid4().hex}.jpg"
-        self.subir_foto(archivo, preparar_foto_perfil(contenido))
-        url = self.url_foto(archivo)
+        self._subir_a_supabase(archivo, preparar_foto_perfil(contenido))
+        url = url_foto(self.url, archivo)
         self.guardar_foto(usuario, nombre, url)
         self._borrar_foto_propia(anterior)
         return url
@@ -985,6 +1016,8 @@ class Supabase:
             pass   # solo queda un archivo sin usar en el almacenamiento: no merece fallar por eso
 
     def url_foto(self, archivo):
+        if self.fotos_url and archivo:
+            return f"{self.fotos_url}/{urllib.parse.quote(archivo)}"
         return url_foto(self.url, archivo)
 
     def fotos_en_storage(self, carpeta=""):

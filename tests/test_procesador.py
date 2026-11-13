@@ -407,3 +407,15 @@ def test_reducir_fotos_del_almacenamiento(monkeypatch):
     cuantas, mb = espacio.reducir_fotos(BD())
     assert cuantas == 1 and list(subidas) == ["grande.jpg"] and mb > 0   # la pequeña ni se descarga
     assert max(Image.open(io.BytesIO(subidas["grande.jpg"])).size) == 320
+
+
+def test_config_r2(monkeypatch):
+    import conexion_supabase as cs
+    for campo in ("URL_PUBLICA",) + tuple(c.upper() for c in cs.CAMPOS_R2):
+        monkeypatch.delenv(f"R2_{campo}", raising=False)
+    completo = {"url_publica": "https://fotos.x", "cuenta": "c", "clave_id": "i", "clave_secreta": "s", "bucket": "b"}
+    assert cs.config_r2({"r2": completo}) == ("https://fotos.x", {k: completo[k] for k in cs.CAMPOS_R2})
+    assert cs.config_r2({"r2": {**completo, "clave_secreta": ""}}) == (None, None)   # incompleto: sigue en Supabase
+    assert cs.config_r2({}) == (None, None)
+    monkeypatch.setenv("R2_BUCKET", "otro")                                           # la variable manda
+    assert cs.config_r2({"r2": completo})[1]["bucket"] == "otro"

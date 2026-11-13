@@ -107,7 +107,8 @@ TOP_N_MAX = 10
 # Modo multiusuario (login de Google + Supabase) si los secrets lo configuran; si no, modo local
 # con los excels de siempre. Ver sesion.py.
 CONFIG_MULTIUSUARIO = config_multiusuario()
-BD = bd.Supabase(CONFIG_MULTIUSUARIO["url"], CONFIG_MULTIUSUARIO["clave_servicio"]) if CONFIG_MULTIUSUARIO else None
+BD = (bd.Supabase(CONFIG_MULTIUSUARIO["url"], CONFIG_MULTIUSUARIO["clave_servicio"],
+                  fotos_url=CONFIG_MULTIUSUARIO.get("fotos_url")) if CONFIG_MULTIUSUARIO else None)
 # Cuentas con correo y contraseña (Supabase Auth), además de Google. Ver cuentas.py y acceso.py.
 CUENTAS = Cuentas(CONFIG_MULTIUSUARIO["url"], CONFIG_MULTIUSUARIO["clave_servicio"]) if CONFIG_MULTIUSUARIO else None
 

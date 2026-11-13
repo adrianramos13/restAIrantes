@@ -2,7 +2,7 @@
 # cocina y foto pequeña; no necesita sesión de Google). Los lunes de madrugada y, mientras queden sitios sin ficha
 # rápida (la carga inicial), una ejecución detrás de otra. El análisis completo NO va aquí: Google anula la sesión
 # si se usa desde un servidor; lo hace el procesador en tu ordenador (tarea de Windows, ver el README).
-# Secretos: SUPABASE_URL y SUPABASE_CLAVE_SERVICIO. Los registros son públicos: el script no imprime correos ni claves.
+# Secretos: SUPABASE_URL y SUPABASE_CLAVE_SERVICIO (y R2_* para las fotos). Los registros son públicos: el script no imprime correos ni claves.
 name: Comprobar sitios abiertos
 
 on:
@@ -25,6 +25,12 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_CLAVE_SERVICIO: ${{ secrets.SUPABASE_CLAVE_SERVICIO }}
+      # Fotos en Cloudflare R2 (si faltan, se suben a Supabase Storage como antes)
+      R2_URL_PUBLICA: ${{ secrets.R2_URL_PUBLICA }}
+      R2_CUENTA: ${{ secrets.R2_CUENTA }}
+      R2_CLAVE_ID: ${{ secrets.R2_CLAVE_ID }}
+      R2_CLAVE_SECRETA: ${{ secrets.R2_CLAVE_SECRETA }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
       PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
