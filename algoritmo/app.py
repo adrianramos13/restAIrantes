@@ -1482,15 +1482,20 @@ def tarjeta_deslizar(fila):
     nota = fila.get("Puntuación")
     partes = [etiqueta_cocina(fila), valor_o(fila, "Rango de precios", ""),
               f"⭐ {float(nota):.1f}".replace(".", ",") if pd.notna(nota) else ""]
-    return {"foto": foto_restaurante(fila, ancho=600), "meta": " · ".join(str(p) for p in partes if p and p != "N/D")}
+    lat, lon = fila.get("Latitud"), fila.get("Longitud")
+    return {"foto": foto_restaurante(fila, ancho=600), "meta": " · ".join(str(p) for p in partes if p and p != "N/D"),
+            **({"lat": float(lat), "lon": float(lon)} if pd.notna(lat) and pd.notna(lon) else {})}
 
 
+# isolate_styles=False: el CSS de Leaflet (el mapa de cada tarjeta) se carga en <head> y no llegaría a la sombra
 _MAZO_DESLIZAR = st.components.v2.component(
-    "mazo_deslizar", html=recurso("deslizar.html"), css=recurso("deslizar.css"), js=recurso("deslizar.js"))
+    "mazo_deslizar", html=recurso("deslizar.html"), css=recurso("deslizar.css"), js=recurso("deslizar.js"),
+    isolate_styles=False)
 
 
 def mazo_deslizar(tarjetas, al_decidir):
-    _MAZO_DESLIZAR(key=deslizar.CLAVE_MAZO, data={"tarjetas": tarjetas}, on_decision_change=al_decidir)
+    _MAZO_DESLIZAR(key=deslizar.CLAVE_MAZO, data={"tarjetas": tarjetas, "base": configuracion_mapa_base()["respaldo"]},
+                   on_decision_change=al_decidir)
 
 
 def _zona_deslizar(lat, lon, radio_km):

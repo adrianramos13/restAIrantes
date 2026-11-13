@@ -28,11 +28,35 @@
   background: rgba(255, 255, 255, 0.18);
 }
 .dz-sello {
-  position: absolute; top: 22px; padding: 4px 12px; border: 3px solid; border-radius: 10px; opacity: 0;
+  position: absolute; top: 22px; padding: 4px 12px; border: 3px solid; border-radius: 10px; opacity: 0; pointer-events: none; z-index: 3;
   font-size: 1.5rem; font-weight: 800; letter-spacing: 0.06em; background: rgba(255, 255, 255, 0.85);
 }
 .dz-sello-si { left: 18px; color: #15803D; transform: rotate(-12deg); }
 .dz-sello-no { right: 18px; color: #B91C1C; transform: rotate(12deg); }
+/* mapa del sitio: vista previa en la esquina; al tocarla ocupa la tarjeta y abajo queda una barra con el nombre
+   (arrastrándola se desliza). La duración de la animación es AMPLIAR_MS en deslizar.js. */
+.dz-mapa {
+  position: absolute; z-index: 1; top: 12px; right: 12px; width: 96px; height: 96px; cursor: zoom-in;
+  border-radius: 14px; overflow: hidden; border: 2px solid #FFFFFF; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  background: var(--st-secondary-background-color);
+  transition: top 0.25s ease-out, right 0.25s ease-out, width 0.25s ease-out, height 0.25s ease-out, border-radius 0.25s ease-out;
+}
+.dz-mapa:focus-visible { outline: 3px solid var(--st-primary-color); outline-offset: 2px; }
+.dz-mapa .leaflet-control-attribution { font-size: 7px; line-height: 1.2; padding: 0 3px; }
+.dz-con-mapa .dz-mapa {
+  top: 0; right: 0; width: 100%; height: calc(100% - 56px); border: 0; border-radius: 0; box-shadow: none; cursor: auto;
+}
+.dz-con-mapa .dz-mapa .leaflet-control-attribution { font-size: 11px; }
+.dz-cerrar-mapa {
+  all: unset; display: none; position: absolute; z-index: 2; top: 12px; right: 12px; width: 36px; height: 36px;
+  border-radius: 50%; cursor: pointer; align-items: center; justify-content: center; font-size: 18px; font-weight: 700;
+  color: #FFFFFF; background: rgba(0, 0, 0, 0.6);
+}
+.dz-cerrar-mapa:focus-visible { outline: 3px solid var(--st-primary-color); outline-offset: 2px; }
+.dz-con-mapa .dz-cerrar-mapa { display: flex; }
+.dz-con-mapa .dz-info { height: 56px; box-sizing: border-box; padding: 0 16px; justify-content: center; background: rgba(0, 0, 0, 0.82); }
+.dz-con-mapa .dz-meta, .dz-con-mapa .dz-motivo { display: none; }
+.dz-con-mapa .dz-nombre { font-size: 1.15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dz-botones { display: flex; gap: 28px; }
 .dz-boton {
   all: unset; box-sizing: border-box; width: 64px; height: 64px; border-radius: 50%; cursor: pointer;
@@ -45,4 +69,4 @@
 .dz-no { color: #DC2626; border-color: #DC2626; }
 .dz-si { color: #16A34A; border-color: #16A34A; }
 .dz-boton:disabled { opacity: 0.4; cursor: default; }
-@media (prefers-reduced-motion: reduce) { .dz-tarjeta { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .dz-tarjeta, .dz-mapa { transition: none; } }
