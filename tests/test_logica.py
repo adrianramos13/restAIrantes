@@ -340,3 +340,35 @@ def test_motivo_gusto():
     assert motivo_gusto(_sitio(3, "Japonesa"), perfil) == "Te suele gustar: Japonesa"
     assert motivo_gusto(_sitio(4, "Tapas", nota=4.7), perfil) == "Muy bien valorado en Google (4,7)"
     assert motivo_gusto(_sitio(5, "Tapas"), perfil) is None
+
+
+# ----------------------- LOCALIDAD (Food match) ----------------------- #
+from logica import localidad_por_vecinos, nombre_localidad  # noqa: E402
+
+SOL = (40.4169, -3.7035)
+
+
+def _lugar(dlat_m, ciudad):
+    return {"lat": SOL[0] + dlat_m / 111_320, "lon": SOL[1], "ciudad": ciudad}
+
+
+def test_localidad_gana_la_mayoria_de_los_vecinos_no_el_mas_cercano():
+    # el más cercano dice el barrio («Tribunal»); los demás, Madrid
+    lugares = [_lugar(5, "Tribunal")] + [_lugar(20 * n, "Madrid") for n in range(1, 5)]
+    assert localidad_por_vecinos(*SOL, lugares, radio_m=250) == "Madrid"
+
+
+def test_localidad_solo_cuenta_los_cercanos_y_los_que_estan_dentro_del_radio():
+    lugares = [_lugar(10, "Majadahonda"), _lugar(400, "Madrid"), _lugar(410, "Madrid")]
+    assert localidad_por_vecinos(*SOL, lugares, radio_m=250) == "Majadahonda"
+    assert localidad_por_vecinos(*SOL, [_lugar(400, "Madrid")], radio_m=250) is None
+    cerca = [_lugar(n, "Getafe") for n in range(1, 8)] + [_lugar(100 + n, "Leganés") for n in range(10)]
+    assert localidad_por_vecinos(*SOL, cerca, radio_m=250) == "Getafe"   # solo los 7 más cercanos votan
+
+
+def test_localidad_empate_lo_decide_el_mas_cercano_y_se_unifican_mayusculas():
+    lugares = [_lugar(30, "Las Rozas De Madrid"), _lugar(10, "Las Rozas de Madrid"), _lugar(5, "Torrelodones"),
+               _lugar(40, "Torrelodones")]
+    assert localidad_por_vecinos(*SOL, lugares, radio_m=250) == "Torrelodones"   # 2-2: gana el más cercano
+    assert nombre_localidad(" San Lorenzo De El Escorial ") == "San Lorenzo de El Escorial"
+    assert nombre_localidad("Villanueva De La Cañada") == "Villanueva de la Cañada"

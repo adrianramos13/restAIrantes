@@ -21,7 +21,12 @@ import numpy as np
 import pandas as pd
 import requests
 
+from logica import METROS_POR_GRADO, localidad_por_vecinos
+
 BUCKET_FOTOS = "fotos"
+# Supabase.localidades: en el centro sobran vecinos a 150 m (mismo resultado que 250 m, la mitad de tiempo: ~1 s por
+# tanda de 15); en el campo no hay ninguno y se mira a 1,5 km
+RADIOS_LOCALIDAD_M = (150, 1500)
 TIMEOUT_S = 30
 FILAS_POR_PETICION = 100   # al guardar o buscar por clave, para no hacer URLs/peticiones enormes
 COLUMNAS_PLATOS = ["ID_Restaurante", "Plato", "Sentimiento"]
@@ -318,6 +323,14 @@ def eatlist_a_dataframe(filas):
 def _lotes(elementos, tamano=FILAS_POR_PETICION):
     for i in range(0, len(elementos), tamano):
         yield elementos[i:i + tamano]
+
+
+def _caja_postgrest(lat, lon, radio_m):
+    """Filtro PostgREST (para dentro de un or=) de la caja de lado 2*radio_m centrada en (lat, lon)."""
+    dlat = radio_m / METROS_POR_GRADO
+    dlon = dlat / max(math.cos(math.radians(lat)), 0.01)
+    return (f"and(lat.gte.{lat - dlat:.6f},lat.lte.{lat + dlat:.6f},"
+            f"lon.gte.{lon - dlon:.6f},lon.lte.{lon + dlon:.6f})")
 
 
 # Trozos de categorías de Google que no son sitios de comer (tiendas, empresas, salones de eventos...): el análisis por
@@ -745,17 +758,23 @@ class Supabase:
                                                                "select": "id,datos,platos,imagen"})
         return filas_a_dataframes([{"posicion": i, "restaurantes": f} for i, f in enumerate(filas)])
 
-    def ciudades_de(self, ids):
-        """{id de restaurante: localidad}, sacada del lugar de Overture enlazado (el catálogo no la tiene).
-        Los que no tienen lugar enlazado o ciudad no salen."""
-        ciudades = {}
-        for lote in _lotes(sorted({int(i) for i in ids}), 500):
-            for f in self._rest("GET", "lugares", params={"restaurante_id": f"in.({','.join(map(str, lote))})",
-                                                          "ciudad": "not.is.null", "select": "restaurante_id,ciudad"}) or []:
-                # Overture mezcla «Las Rozas De Madrid» y «Las Rozas de Madrid»: los enlaces, en minúscula
-                ciudades[f["restaurante_id"]] = re.sub(r"(?<=\s)(De|Del|La|Las|Los|El|Y)(?=\s)",
-                                                       lambda m: m.group().lower(), f["ciudad"].strip())
-        return ciudades
+    def localidades(self, puntos):
+        """{id: localidad} de cada (id, lat, lon): la que más se repite entre los lugares de Overture de alrededor
+        (logica.localidad_por_vecinos; el catálogo no la tiene). Una petición por radio para todos los puntos: primero
+        RADIOS_LOCALIDAD_M[0] y, solo para los que no tienen vecinos (zonas poco densas), el siguiente. Los que
+        siguen sin vecinos (p. ej. fuera de la zona importada) no salen."""
+        resultado, quedan = {}, list(puntos)
+        for radio in RADIOS_LOCALIDAD_M:
+            for lote in _lotes(quedan, 20):   # 20 cajas caben de sobra en la URL
+                cajas = ",".join(_caja_postgrest(lat, lon, radio) for _, lat, lon in lote)
+                cerca = self._paginado("lugares", {"select": "lat,lon,ciudad", "ciudad": "not.is.null",
+                                                   "or": f"({cajas})", "order": "id"}, 20_000)
+                for i, lat, lon in lote:
+                    localidad = localidad_por_vecinos(lat, lon, cerca, radio)
+                    if localidad:
+                        resultado[i] = localidad
+            quedan = [p for p in quedan if p[0] not in resultado]
+        return resultado
 
     # ---------------- explorar: lugares de Overture (supabase/009_lugares.sql) ----------------
 

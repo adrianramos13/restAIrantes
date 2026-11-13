@@ -258,8 +258,9 @@ def multiusuario(monkeypatch):
     monkeypatch.setattr(datos.Supabase, "anadir_a_lista", lambda self, lista_id, i:
                         estado["anadidos_a_lista"].append((lista_id, i)))
     estado["ciudades_pedidas"] = []
-    monkeypatch.setattr(datos.Supabase, "ciudades_de", lambda self, ids: (
-        estado["ciudades_pedidas"].append(sorted(ids)) or {i: "Leganés" for i in ids if i % 2 == 0}))
+    monkeypatch.setattr(datos.Supabase, "localidades", lambda self, puntos: (
+        estado["ciudades_pedidas"].append(sorted(i for i, _, _ in puntos)) or
+        {i: "Leganés" for i, _, _ in puntos if i % 2 == 0}))
     st.cache_data.clear()
     yield estado
     st.cache_data.clear()

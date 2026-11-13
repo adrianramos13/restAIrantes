@@ -3,8 +3,10 @@ Lógica de recomendación, sin Streamlit ni red: filtros estrictos, puntuación 
 Se puede importar y probar sola (tests/test_logica.py).
 """
 
+import math
 import re
 import unicodedata
+from collections import Counter
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -561,3 +563,30 @@ def motivo_gusto(fila, perfil):
     if nota is not None and not pd.isna(nota) and float(nota) >= 4.5:
         return f"Muy bien valorado en Google ({float(nota):.1f})".replace(".", ",")
     return None
+
+
+# ----------------------- LOCALIDAD (tarjetas de Food match) ----------------------- #
+VECINOS_LOCALIDAD = 7
+METROS_POR_GRADO = 111_320
+
+
+def nombre_localidad(ciudad):
+    """Overture mezcla «Las Rozas De Madrid» y «Las Rozas de Madrid»: los enlaces, en minúscula («El» no: «San
+    Lorenzo de El Escorial»)."""
+    return re.sub(r"(?<=\s)(De|Del|La|Las|Los|Y)(?=\s)", lambda m: m.group().lower(), str(ciudad).strip())
+
+
+def localidad_por_vecinos(lat, lon, lugares, radio_m, vecinos=VECINOS_LOCALIDAD):
+    """La localidad que más se repite entre los `vecinos` lugares ({lat, lon, ciudad}) más cercanos a (lat, lon), a
+    menos de `radio_m`; en empate, la del más cercano. None si no hay ninguno. Se vota con la posición del propio
+    restaurante y no con su lugar enlazado: hay enlaces a otra sucursal de la misma cadena y lugares con el barrio
+    («Tribunal», «Hortaleza») como ciudad."""
+    escala = math.cos(math.radians(lat))
+    cerca = sorted(
+        (d, nombre_localidad(l["ciudad"])) for l in lugares if l.get("ciudad")
+        for d in [METROS_POR_GRADO * math.hypot(l["lat"] - lat, (l["lon"] - lon) * escala)] if d <= radio_m
+    )[:vecinos]
+    if not cerca:
+        return None
+    votos = Counter(c for _, c in cerca)   # Counter guarda el orden de llegada: en empate gana el más cercano
+    return votos.most_common(1)[0][0]

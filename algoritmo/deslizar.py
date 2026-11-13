@@ -161,20 +161,23 @@ def mazo(ctx):
         st.info("¡Has visto todos los restaurantes que tenemos! Cada día se analizan sitios nuevos: vuelve en unos días.")
         return
     pool = est["pool"].set_index("ID", drop=False)
-    ciudades = _ciudades(est, ctx)
+    ciudades = _ciudades(est, ctx, pool)
     tarjetas = [{"id": int(i), "nombre": str(pool.at[i, "Nombre"]), "localidad": ciudades.get(i) or "",
                  **ctx["tarjeta"](pool.loc[i]), "motivo": motivo_gusto(pool.loc[i], est["perfil"])}
                 for i in est["pendientes"] if i in pool.index]
     ctx["mazo"](tarjetas, _al_decidir)
 
 
-def _ciudades(est, ctx):
-    """Localidad de cada tarjeta: se pide una vez por tanda nueva y se guarda en el mazo."""
+def _ciudades(est, ctx, pool):
+    """Localidad de cada tarjeta (por su posición: datos.localidades): se pide una vez por tanda nueva y se guarda
+    en el mazo. Sin coordenadas, sin localidad."""
     ciudades = est.setdefault("ciudades", {})
-    faltan = [i for i in est["pendientes"] if i not in ciudades]
+    faltan = [i for i in est["pendientes"] if i not in ciudades and i in pool.index]
+    puntos = [(i, float(pool.at[i, "Latitud"]), float(pool.at[i, "Longitud"])) for i in faltan
+              if pd.notna(pool.at[i, "Latitud"]) and pd.notna(pool.at[i, "Longitud"])]
     if faltan:
         try:
-            ciudades.update(dict.fromkeys(faltan) | ctx["bd"].ciudades_de(faltan))
+            ciudades.update(dict.fromkeys(faltan) | (ctx["bd"].localidades(puntos) if puntos else {}))
         except bd.ErrorSupabase:
             pass   # solo es un dato de la tarjeta: sin él sale igual, y se vuelve a pedir con la siguiente decisión
     return ciudades
