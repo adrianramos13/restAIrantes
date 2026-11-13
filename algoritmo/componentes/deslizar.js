@@ -98,6 +98,7 @@ function tarjeta(r, base) {
   }
   const info = document.createElement('div'); info.className = 'dz-info';
   info.append(texto('div', 'dz-nombre', r.nombre));
+  if (r.localidad) info.append(texto('div', 'dz-localidad', `📍 ${r.localidad}`));
   if (r.meta) info.append(texto('div', 'dz-meta', r.meta));
   if (r.motivo) info.append(texto('div', 'dz-motivo', r.motivo));
   t.append(info, texto('div', 'dz-sello dz-sello-si', 'ME GUSTA'), texto('div', 'dz-sello dz-sello-no', 'PASO'));

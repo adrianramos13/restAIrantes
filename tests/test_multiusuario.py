@@ -257,6 +257,9 @@ def multiusuario(monkeypatch):
                         estado["deslizados_guardados"].append((u, i, gusta)))
     monkeypatch.setattr(datos.Supabase, "anadir_a_lista", lambda self, lista_id, i:
                         estado["anadidos_a_lista"].append((lista_id, i)))
+    estado["ciudades_pedidas"] = []
+    monkeypatch.setattr(datos.Supabase, "ciudades_de", lambda self, ids: (
+        estado["ciudades_pedidas"].append(sorted(ids)) or {i: "Leganés" for i in ids if i % 2 == 0}))
     st.cache_data.clear()
     yield estado
     st.cache_data.clear()
@@ -1725,6 +1728,8 @@ def test_no_tengo_ni_idea_desliza_y_anade_a_tu_lista(multiusuario, monkeypatch):
     pendientes = list(at.session_state["deslizar"]["pendientes"])
     assert len(pendientes) == 15 and 10_001 not in pendientes
     assert set(pendientes) <= set(catalogo["ID"])   # nada de lo que ya está en tu lista
+    ciudades = at.session_state["deslizar"]["ciudades"]   # la localidad de cada tarjeta, pedida una vez
+    assert all(ciudades[i] == ("Leganés" if i % 2 == 0 else None) for i in pendientes)
 
     primero, segundo = pendientes[:2]
     at.session_state["deslizar_decision"] = {"id": primero, "gusta": True}
@@ -1741,6 +1746,7 @@ def test_no_tengo_ni_idea_desliza_y_anade_a_tu_lista(multiusuario, monkeypatch):
         at.run()
     est = at.session_state["deslizar"]
     assert len(est["pendientes"]) == 4 + 15 and len(set(est["pendientes"])) == len(est["pendientes"])
+    assert len(multiusuario["ciudades_pedidas"]) == 2   # la primera tanda y la segunda: no una por decisión
 
     at.button(key="deslizar_volver").click().run()
     assert at.session_state["vista"] == "buscador"

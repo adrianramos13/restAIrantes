@@ -745,6 +745,18 @@ class Supabase:
                                                                "select": "id,datos,platos,imagen"})
         return filas_a_dataframes([{"posicion": i, "restaurantes": f} for i, f in enumerate(filas)])
 
+    def ciudades_de(self, ids):
+        """{id de restaurante: localidad}, sacada del lugar de Overture enlazado (el catálogo no la tiene).
+        Los que no tienen lugar enlazado o ciudad no salen."""
+        ciudades = {}
+        for lote in _lotes(sorted({int(i) for i in ids}), 500):
+            for f in self._rest("GET", "lugares", params={"restaurante_id": f"in.({','.join(map(str, lote))})",
+                                                          "ciudad": "not.is.null", "select": "restaurante_id,ciudad"}) or []:
+                # Overture mezcla «Las Rozas De Madrid» y «Las Rozas de Madrid»: los enlaces, en minúscula
+                ciudades[f["restaurante_id"]] = re.sub(r"(?<=\s)(De|Del|La|Las|Los|El|Y)(?=\s)",
+                                                       lambda m: m.group().lower(), f["ciudad"].strip())
+        return ciudades
+
     # ---------------- explorar: lugares de Overture (supabase/009_lugares.sql) ----------------
 
     def con_ficha_rapida(self):
