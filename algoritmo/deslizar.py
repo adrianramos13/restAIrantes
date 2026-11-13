@@ -31,6 +31,7 @@ CENTRO_MADRID = (40.4169, -3.7035)   # Puerta del Sol
 # (radio de tu zona, radio de Madrid) en km; None = el catálogo entero. Se pasa a la siguiente al acabarse.
 FASES = ((3.0, 5.0), (12.0, 12.0), (None, None))
 CLAVE_MAZO = "mazo_deslizar"     # key del componente (app.mazo_deslizar)
+AVISO_SEGUNDOS = 3               # lo que dura «X añadido a tu lista»
 
 
 def salir():
@@ -152,7 +153,7 @@ def mazo(ctx):
         if decision:
             aviso = decidir(est, ctx, int(decision["id"]), bool(decision["gusta"]))
             if aviso:
-                st.toast(aviso, icon=":material/favorite:")
+                st.toast(aviso, icon=":material/favorite:", duration=AVISO_SEGUNDOS)
         rellenar(est, ctx)
     except bd.ErrorSupabase:
         st.toast("No se ha podido guardar ahora mismo. Prueba en un momento.", icon=":material/error:")
