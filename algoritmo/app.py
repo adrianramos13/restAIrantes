@@ -296,12 +296,34 @@ def icono_transporte(modo_transporte):
     return "🚗" if modo_transporte == "En coche" else "🚶"
 
 
+_CSS_CARRUSEL = "<style>\n" + recurso("carrusel.css") + "</style>\n"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fotos_extra(restaurante_id):
+    """URLs de las fotos de la galería del restaurante (supabase/015_fotos_extra.sql; [] si aún no tiene)."""
+    try:
+        return [BD.url_foto(a) for a in BD.fotos_de(restaurante_id)]
+    except bd.ErrorSupabase:
+        return []
+
+
+def carrusel_fotos(urls):
+    total = len(urls)
+    return _CSS_CARRUSEL + '<div class="carrusel">' + "".join(
+        f'<figure><img src="{html.escape(u)}" alt="Foto {i} de {total}" loading="{"eager" if i == 1 else "lazy"}">'
+        f"<figcaption>{i}/{total}</figcaption></figure>" for i, u in enumerate(urls, 1)) + "</div>"
+
+
 def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
     """Foto, datos, lo que destacan y enlaces de un restaurante. `modo_transporte` solo viene de una
     búsqueda (trae el tiempo de viaje); `plato`, de una búsqueda con plato o de la idea de Inicio."""
     imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
     foto = str(imagen_local) if BD is None and imagen_local.is_file() else foto_restaurante(fila, ancho=800)
-    if foto:
+    extra = fotos_extra(int(fila["ID"])) if BD is not None and pd.notna(fila.get("ID")) else []
+    if extra:
+        st.html(carrusel_fotos(extra))
+    elif foto:
         st.image(foto, width="stretch")
     if BD is not None and usuario:
         bloque_he_ido(fila)   # justo debajo de la foto

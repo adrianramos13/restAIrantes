@@ -1,0 +1,15 @@
+/* Ficha: carrusel de fotos (principal + comida + ambiente). Solo CSS: se desliza con el dedo (o la rueda / la barra
+   en el ordenador) y cada foto encaja sola en su sitio. */
+.carrusel {
+  display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; border-radius: 12px;
+  -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+}
+.carrusel figure { position: relative; flex: 0 0 100%; margin: 0; scroll-snap-align: center; }
+.carrusel img {
+  display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 12px;
+  background: var(--st-secondary-background-color);
+}
+.carrusel figcaption {
+  position: absolute; right: 8px; bottom: 8px; padding: 2px 8px; border-radius: 999px;
+  background: rgba(0, 0, 0, .6); color: #fff; font-size: .75rem;
+}

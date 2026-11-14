@@ -16,6 +16,8 @@ ENLACE = "https://maps.app.goo.gl/5QLC8VhBqetTCbjGA"
 
 
 class BDFalsa:
+    r2 = None   # sin R2: el procesador no saca fotos extra
+
     def rescatar_interrumpidos(self):
         return 0
 
@@ -419,3 +421,63 @@ def test_config_r2(monkeypatch):
     assert cs.config_r2({}) == (None, None)
     monkeypatch.setenv("R2_BUCKET", "otro")                                           # la variable manda
     assert cs.config_r2({"r2": completo})[1]["bucket"] == "otro"
+
+
+def test_fotos_galeria_url_y_subida(monkeypatch):
+    import fotos_galeria as fg
+    assert fg.url_grande("https://lh3.googleusercontent.com/gps-cs-s/abc=w203-h152-k-no") == \
+        "https://lh3.googleusercontent.com/gps-cs-s/abc=w800-h800-k-no"
+    assert fg.url_grande("https://lh3.googleusercontent.com/gps-cs-s/abc").endswith("/abc=w800-h800-k-no")
+    monkeypatch.setattr(fg, "descargar", lambda url: None if url == "rota" else b"jpg-" + url.encode())
+    subidas = []
+
+    class BD:
+        def subir_foto(self, archivo, contenido):
+            subidas.append((archivo, contenido))
+
+    # la rota y la vacía no dejan hueco en la numeración
+    assert fg.subir(BD(), 7, ["a", "rota", "", "b"]) == ["restaurantes/7/1.jpg", "restaurantes/7/2.jpg"]
+    assert subidas == [("restaurantes/7/1.jpg", b"jpg-a"), ("restaurantes/7/2.jpg", b"jpg-b")]
+
+
+def test_fotos_galeria_trabajar(monkeypatch):
+    import asyncio
+    import fotos_galeria as fg
+    monkeypatch.setattr(fg, "ESPERA_S", (0, 0))
+    monkeypatch.setattr(fg, "subir", lambda bd, rid, urls: [f"restaurantes/{rid}/{i}.jpg" for i in range(1, len(urls) + 1)])
+    galerias = {"Con fotos": {"principal": "p", "comida": ["c1", "c2", "c3"], "ambiente": ["a"]},
+                "Sin galería": {"principal": "p", "comida": [], "ambiente": []}}
+
+    async def buscar(page, nombre, cerca=None):
+        return nombre != "No existe"
+
+    async def abrir(page, nombre):
+        page.append(nombre)
+
+    async def galeria(page):
+        if page[-1] == "Rompe":
+            raise RuntimeError("Google cambió algo")
+        return galerias[page[-1]]
+
+    monkeypatch.setattr(fg.extraer_resenas, "buscar_restaurante", buscar)
+    monkeypatch.setattr(fg.extraer_resenas, "abrir_ficha_desde_resultados", abrir)
+    monkeypatch.setattr(fg.extraer_resenas, "obtener_fotos_galeria", galeria)
+    guardadas = {}
+
+    class BD:
+        def guardar_fotos(self, rid, archivos):
+            guardadas[rid] = archivos
+
+    g = fg.Galeria(BD())
+    cola = [{"id": i, "nombre": n, "lat": 40.4, "lon": -3.7}
+            for i, n in enumerate(["Con fotos", "Sin galería", "No existe", "Rompe"], 1)]
+    asyncio.run(g.trabajar([], cola))
+    assert guardadas == {1: [f"restaurantes/1/{i}.jpg" for i in range(1, 6)],   # principal + 3 comida + 1 ambiente
+                         3: []}                                                  # no está en Google: no se repite
+    assert g.saltados == {2, 4} and g.hechos == 1   # sin galería o con error: se reintentan al reiniciar
+
+    parar = asyncio.Event()
+    parar.set()
+    cola = [{"id": 9, "nombre": "Con fotos", "lat": None, "lon": None}]
+    asyncio.run(g.trabajar([], cola, parar))        # el análisis ya acabó: no empieza otro
+    assert 9 not in guardadas and len(cola) == 1

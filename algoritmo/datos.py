@@ -673,6 +673,35 @@ class Supabase:
 
     # ---------------- «Food match»: restaurantes deslizados (supabase/014_deslizar.sql) ----------------
 
+    # ---------------- fotos extra (supabase/015_fotos_extra.sql) ----------------
+
+    def con_fotos_extra(self):
+        """¿Está ya supabase/015_fotos_extra.sql? (se mira una vez): sin ella, ni se buscan ni se enseñan."""
+        if getattr(self, "_con_fotos_extra", None) is None:
+            try:
+                self._rest("GET", "restaurantes", params={"select": "fotos_en", "limit": 1})
+                self._con_fotos_extra = True
+            except ErrorSupabase:
+                self._con_fotos_extra = False
+        return self._con_fotos_extra
+
+    def restaurantes_sin_fotos(self, limite):
+        """[{id, nombre, lat, lon}] de los restaurantes cuya galería aún no se ha mirado."""
+        return self._rest("GET", "restaurantes", params={
+            "select": "id,nombre:datos->>Nombre,lat,lon", "fotos_en": "is.null", "order": "id", "limit": limite})
+
+    def guardar_fotos(self, restaurante_id, archivos):
+        """Apunta las fotos de un restaurante (lista de archivos, puede estar vacía: ya se miró y no había)."""
+        self._rest("PATCH", "restaurantes", params={"id": f"eq.{int(restaurante_id)}"},
+                   json={"fotos": list(archivos), "fotos_en": _ahora()})
+
+    def fotos_de(self, restaurante_id):
+        """Archivos de las fotos extra de un restaurante ([] si no tiene o sin la 015)."""
+        if not self.con_fotos_extra():
+            return []
+        filas = self._rest("GET", "restaurantes", params={"id": f"eq.{int(restaurante_id)}", "select": "fotos"})
+        return (filas[0].get("fotos") or []) if filas else []
+
     def con_deslizar(self):
         """¿Está ya supabase/014_deslizar.sql? (se mira una vez): sin ella, el botón no sale."""
         if getattr(self, "_con_deslizar", None) is None:

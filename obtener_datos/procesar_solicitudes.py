@@ -68,6 +68,7 @@ def datos_actualizados(existente, fila_lista):
 
 PESTANAS = 3   # restaurantes a la vez al sacar reseñas (--pestanas); si Google pone pegas, bajar a 1
 MAPS = "https://www.google.com/maps?hl=es"
+GALERIA = None   # fotos_galeria.Galeria con --vigilar, R2 y la 015: saca fotos extra a la vez que se analiza
 
 
 async def _resenas_de(nombres, pestanas=None, cercas=None):
@@ -90,7 +91,18 @@ async def _resenas_de(nombres, pestanas=None, cercas=None):
                 i, (nombre, cerca) = pendientes.pop(0)
                 por_indice[i] = await extraer_resenas.procesar_restaurante(page, nombre, i, len(nombres), cerca)
 
-        await asyncio.gather(*(trabajador(pagina) for pagina in paginas))
+        acabado = asyncio.Event()
+
+        async def analisis():
+            try:
+                await asyncio.gather(*(trabajador(pagina) for pagina in paginas))
+            finally:
+                acabado.set()
+
+        tareas = [analisis()]
+        if GALERIA:   # a la vez, en otra pestaña: fotos de los restaurantes que aún no las tienen
+            tareas.append(GALERIA.mientras(await contexto.new_page(), acabado))
+        await asyncio.gather(*tareas)
         await contexto.close()
     return [fila for i in sorted(por_indice) for fila in por_indice[i]]
 
@@ -380,6 +392,13 @@ def main(argv=None):
         # ponytail: supone un solo procesador; si lanzas otro --vigilar a la vez, repetiría lo que el primero tiene a medias
         print(f"Rescatados {bd.rescatar_interrumpidos()} análisis que se quedaron a medias.")
         lote = Lote(args.tope_usd) if args.lote else None
+        global GALERIA
+        if bd.r2 and bd.con_fotos_extra():   # fotos extra: solo a R2 (en Supabase no cabrían)
+            import fotos_galeria
+            GALERIA = fotos_galeria.Galeria(bd)
+            print("Fotos extra: activadas (a la vez que el análisis y cuando el procesador esté libre).")
+        else:
+            print("Fotos extra: desactivadas (faltan R2 o supabase/015_fotos_extra.sql).")
         if lote:
             print(f"Por adelantado: activado, con tope de {args.tope_usd:g} $ (gastado hasta ahora: {gastado_en_lote():.2f} $).")
         rescate = time.monotonic()
@@ -395,6 +414,9 @@ def main(argv=None):
                     procesar_varias(bd, pendientes)
                 procesar_explorar(bd)
                 hecho = bool(lote) and lote.uno(bd)
+                en_descanso = bool(lote) and time.monotonic() < lote.pausa_hasta   # el descanso anti-robot vale para todo
+                if not hecho and GALERIA and not en_descanso:   # libre: fotos de los ya analizados
+                    hecho = GALERIA.tanda()
             except Exception as e:   # p. ej. sin red un rato: se reintenta en la siguiente vuelta
                 print(f"ERROR (se reintenta en {args.vigilar:g} min): {str(e)[:300]}")
             if not hecho:

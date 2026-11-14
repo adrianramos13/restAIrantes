@@ -343,6 +343,62 @@ async def obtener_datos_extra(page):
         return {"cocina": "", "precio": "", "estado": "", "foto": "", "resenas": None}
 
 
+# Fotos de la galería de la ficha (solo con la sesión de Google: sin ella sale un visor de una sola foto).
+# Pestañas de la galería: «Todas», «Comida y bebida», «Ambiente», «Carta», platos sueltos...
+# Miniaturas de la cuadrícula: cada una va dentro de un elemento «Foto N» (los vídeos, «Google Videos») y sale dos
+# veces (dos capas). Se devuelve la URL sin el sufijo de tamaño («=w203-h152-k-no»), ya sin repetidas.
+_JS_MINIATURAS = r"""() => [...new Set([...document.querySelectorAll('[style*="background-image"]')]
+  .filter(e => /^Foto \d+/.test(e.closest('[aria-label]')?.getAttribute('aria-label') || ''))
+  .map(e => ((e.style.backgroundImage.match(/url\("?(.*?)"?\)/) || [])[1] || '').split('=')[0])
+  .filter(u => u.includes('googleusercontent'))
+  .map(u => u.startsWith('//') ? 'https:' + u : u))]"""
+FOTOS_COMIDA, FOTOS_AMBIENTE = 3, 1
+
+
+async def _miniaturas_estables(page, antes=None):
+    """Las miniaturas cuando dejan de cambiar (y son distintas de `antes`, si se da); [] si no llegan."""
+    previas = None
+    for _ in range(15):
+        await page.wait_for_timeout(400)
+        ahora = await page.evaluate(_JS_MINIATURAS)
+        if ahora and ahora == previas and ahora != antes:
+            return ahora
+        previas = ahora
+    return []
+
+
+async def _miniaturas_de_pestana(page, pestana):
+    for boton in (page.get_by_role("tab", name=pestana, exact=True), page.get_by_role("button", name=pestana, exact=True)):
+        if await boton.count():
+            antes = await page.evaluate(_JS_MINIATURAS)
+            await boton.first.click()
+            return await _miniaturas_estables(page, antes)
+    return []
+
+
+async def obtener_fotos_galeria(page):
+    """Con la ficha abierta: {principal, comida: [hasta FOTOS_COMIDA], ambiente: [hasta FOTOS_AMBIENTE]} (URLs de
+    Google; '' / [] si no hay). Sin pestaña «Comida y bebida» o «Ambiente», se completa con las de «Todas»."""
+    vacio = {"principal": "", "comida": [], "ambiente": []}
+    try:
+        principal = await page.evaluate(_JS_FICHA_EXTRA)
+        boton = page.locator('button[jsaction*="heroHeaderImage"]').first
+        if not await boton.count():
+            return vacio
+        await boton.click()
+        todas = await _miniaturas_estables(page)
+        comida = (await _miniaturas_de_pestana(page, "Comida y bebida"))[:FOTOS_COMIDA]
+        ambiente = [u for u in await _miniaturas_de_pestana(page, "Ambiente") if u not in comida][:FOTOS_AMBIENTE]
+        resto = [u for u in todas if u not in comida + ambiente]
+        comida += resto[:FOTOS_COMIDA - len(comida)]
+        resto = resto[FOTOS_COMIDA:]
+        ambiente += [u for u in resto if u not in comida][:FOTOS_AMBIENTE - len(ambiente)]
+        await page.keyboard.press("Escape")
+        return {"principal": principal.get("foto", ""), "comida": comida, "ambiente": ambiente}
+    except Exception:
+        return vacio
+
+
 async def _hay_tarjetas_resena(page):
     loc = page.locator("div[data-review-id], div.jftiEf")
     try:
