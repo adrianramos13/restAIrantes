@@ -111,9 +111,10 @@ def analizar_nuevos(filas, resenas=None):
     """Restaurantes que no están en el catálogo -> filas del catálogo, con el proceso de siempre
     (foto, reseñas y Jev) sobre excels temporales: no se toca excels/. `resenas`: si ya se han
     sacado (Explorar, junto con su ficha), no se vuelven a sacar."""
-    if not os.environ.get("TYPESAFE_API_KEY"):
-        raise ErrorLista("falta la variable de entorno TYPESAFE_API_KEY para clasificar los restaurantes nuevos")
     import clasificar_restaurantes_jev as clasif
+    con_jev = clasif.MOTOR == "jev"
+    if con_jev and not os.environ.get("TYPESAFE_API_KEY"):
+        raise ErrorLista("falta la variable de entorno TYPESAFE_API_KEY para clasificar los restaurantes nuevos")
 
     import time
     t0 = time.time()
@@ -134,9 +135,11 @@ def analizar_nuevos(filas, resenas=None):
         except SystemExit:   # ninguna reseña útil (p. ej. solo direcciones sueltas): sin clasificación
             return datos.filas_catalogo_desde_excel(clasif.cargar_restaurantes_base(),
                                                      pd.DataFrame(columns=datos.COLUMNAS_PLATOS))
-        clasif._comprobar_conexion()
+        if con_jev:
+            clasif._comprobar_conexion()
         clasif.ejecutar(SimpleNamespace(reiniciar=False, hilos=clasif.HILOS_DEFECTO, verbose=False), rest, preparadas)
-        clasif._cerrar_clientes()
+        if con_jev:
+            clasif._cerrar_clientes()
         df_rest = pd.read_excel(tmp / "salida.xlsx", sheet_name="Restaurantes")
         df_platos = pd.read_excel(tmp / "salida.xlsx", sheet_name="Platos mencionados")
     return datos.filas_catalogo_desde_excel(df_rest, df_platos)
@@ -332,7 +335,9 @@ class Lote:
         self.en_tanda, self.pausa_hasta, self.errores_seguidos, self.parado = 0, 0.0, 0, False
 
     def toca(self):
-        return not self.parado and time.monotonic() >= self.pausa_hasta and gastado_en_lote() < self.tope_usd
+        import clasificar_restaurantes_jev as clasif   # con el clasificador local no se gasta: sin tope
+        sin_tope = clasif.MOTOR == "local" or gastado_en_lote() < self.tope_usd
+        return not self.parado and time.monotonic() >= self.pausa_hasta and sin_tope
 
     def uno(self, bd):
         """Analiza el siguiente. Devuelve si ha hecho algo (si no, toca esperar: descanso, tope o nada que hacer)."""
@@ -357,7 +362,7 @@ class Lote:
             print(f"Por adelantado: PARADO tras {MAX_ERRORES_SEGUIDOS} errores seguidos (¿Google pone pegas o se ha "
                   "perdido la sesión?). Revisa la sesión y reinicia la tarea.")
             self.parado = True
-        elif gasto >= self.tope_usd:
+        elif clasif.MOTOR == "jev" and gasto >= self.tope_usd:
             print(f"Por adelantado: alcanzado el tope de {self.tope_usd:g} $ de Jev. Se para.")
         self.en_tanda += len(siguientes)
         if self.en_tanda >= self.por_tanda:
@@ -400,7 +405,12 @@ def main(argv=None):
         else:
             print("Fotos extra: desactivadas (faltan R2 o supabase/015_fotos_extra.sql).")
         if lote:
-            print(f"Por adelantado: activado, con tope de {args.tope_usd:g} $ (gastado hasta ahora: {gastado_en_lote():.2f} $).")
+            import clasificar_restaurantes_jev as clasif
+            if clasif.MOTOR == "local":
+                print("Por adelantado: activado, con el clasificador local (gratis, sin tope).")
+            else:
+                print(f"Por adelantado: activado, con tope de {args.tope_usd:g} $ (gastado hasta ahora: "
+                      f"{gastado_en_lote():.2f} $).")
         rescate = time.monotonic()
         while True:
             hecho = False

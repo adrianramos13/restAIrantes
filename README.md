@@ -65,7 +65,7 @@ Se ejecuta en este orden, desde la carpeta `obtener_datos/`. Dependencias: `pip 
 |---|---|---|---|---|
 | 1 | `extraer_html.py` | tu lista compartida (`--url`) u `origen/restaurantes.html` | `restaurantes_v1.xlsx` | Lee con BeautifulSoup cada restaurante de la lista: nombre, puntuación, nº de reseñas, rango de precios, tipo de cocina (el de Google, en bruto), **estado** (cerrado temporal/permanente) y **URL de la imagen**. Además descarga cada foto a `imagenes/` (solo las que aún no estén), porque las URLs de Google caducan en unas semanas. |
 | 2 | `extraer_resenas.py` | `restaurantes_v1.xlsx` | `restaurantes_v2.xlsx` | Abre Google Maps con **Playwright** (un navegador real, gratis y sin clave), busca `"nombre, Madrid, España"`, entra en la ficha y lee hasta 30 reseñas por restaurante. Guarda una fila por reseña con el nombre, la URL de la ficha, las coordenadas (sacadas de esa URL) y un `Estado` (`OK`, `NO ENCONTRADO`, `SIN RESEÑAS`, `ERROR`). No trae dirección, teléfono ni web. |
-| 3 | `clasificar_restaurantes_jev.py` | los dos anteriores | `clasificacion_jev.xlsx` | Asigna un ID a cada restaurante (por su posición en `restaurantes_v1.xlsx`), le añade la localización cruzando por nombre, y clasifica cada reseña con **Jev**. Es el único script de análisis; genera el excel final completo. |
+| 3 | `clasificar_restaurantes_jev.py` | los dos anteriores | `clasificacion_jev.xlsx` | Asigna un ID a cada restaurante (por su posición en `restaurantes_v1.xlsx`), le añade la localización cruzando por nombre, y clasifica cada reseña: por defecto con el **clasificador local gratis** (`clasificador_local.py`: sentimiento = estrellas de la reseña, cocina = palabras clave; coincide con Jev en el 93 % del sentimiento y el ~75 % de la cocina por restaurante) o, con `--motor jev`, con **Jev** (de pago). Es el único script de análisis; genera el excel final completo. |
 
 ### Cómo obtener la lista (paso 1)
 
@@ -221,7 +221,7 @@ Los resultados se guardan en `st.session_state` para que "Ver más", cambiar el 
 
 | Clave | Dónde | Para qué | Obligatoria |
 |---|---|---|---|
-| `TYPESAFE_API_KEY` | Variable de entorno (local) | Clasificar con Jev (paso 3) | Solo al ejecutar el paso 3 |
+| `TYPESAFE_API_KEY` | Variable de entorno (local) | Clasificar con Jev (paso 3, `--motor jev`) | Solo con `--motor jev` (o `MOTOR = "jev"`) |
 | `ORS_API_KEY` | Secretos de Streamlit | Tiempos reales andando (OpenRouteService, plan gratuito) | No: sin ella, "a pie" estima por línea recta a 5 km/h y avisa |
 
 Secretos en local: fichero `.streamlit/secrets.toml` en la raíz del proyecto:

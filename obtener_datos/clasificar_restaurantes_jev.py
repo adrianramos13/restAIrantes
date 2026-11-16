@@ -105,7 +105,8 @@ RESTAURANTES_XLSX = EXCELS_DIR / "restaurantes_v1.xlsx"           # lista de res
 RESENAS_XLSX = EXCELS_DIR / "restaurantes_v2.xlsx"                # localización (Latitud/Longitud) + reseñas, todo en una sola hoja
 SALIDA_XLSX = EXCELS_DIR / "clasificacion_jev.xlsx"
 
-MODELO_DEFECTO = "jev-1.13.0"     # versión fija (el alias "jev-latest" puede cambiar de modelo sin aviso)
+MOTOR = "local"                   # "local": clasificador_local.py, gratis (estrellas + palabras clave); "jev": de pago
+MODELO_DEFECTO = "jev-1.13.0"    # versión fija (el alias "jev-latest" puede cambiar de modelo sin aviso)
 HILOS_DEFECTO = 4                 # el límite es ~1.200 peticiones/min; 4 hilos quedan por debajo
 PRECIO_USD_POR_MILLON_TOKENS = 0.042
 
@@ -442,7 +443,8 @@ def explicar_sin_resenas(d, limite):
 def preparar_resenas(res):
     """Lista de reseñas a clasificar: textos válidos, recortados, con un máximo por restaurante."""
     preparadas, por_restaurante = [], Counter()
-    for id_r, texto in zip(res["ID_Restaurante"], res["Texto"]):
+    estrellas = res["Puntuación"] if "Puntuación" in res.columns else [None] * len(res)
+    for id_r, texto, estrellas_r in zip(res["ID_Restaurante"], res["Texto"], estrellas):
         if not isinstance(texto, str):
             continue
         texto = re.sub(r"\s+", " ", texto).strip()
@@ -451,7 +453,7 @@ def preparar_resenas(res):
         if por_restaurante[id_r] >= MAX_RESENAS_POR_RESTAURANTE:
             continue
         por_restaurante[id_r] += 1
-        preparadas.append({"id": int(id_r), "texto": texto[:MAX_CARACTERES_RESENA]})
+        preparadas.append({"id": int(id_r), "texto": texto[:MAX_CARACTERES_RESENA], "estrellas": estrellas_r})
     return preparadas
 
 
@@ -588,6 +590,10 @@ def clasificar_todas(resenas, cache, hilos=1, max_errores_seguidos=8):
     confianza, más "estado" ("ok" o "error"). Las reseñas que fallan no se guardan en caché
     (se reintentan al relanzar).
     """
+    if MOTOR == "local":   # gratis e instantáneo: ni caché ni hilos
+        import clasificador_local
+        print(f"  - {len(resenas)} reseñas a clasificar con el clasificador local (gratis)")
+        return [{**clasificador_local.clasificar(r["texto"], r.get("estrellas")), "estado": "ok"} for r in resenas]
     resultados = [None] * len(resenas)
     pendientes = []
     for i, r in enumerate(resenas):
@@ -820,6 +826,8 @@ def parsear_argumentos():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--limite", type=int, default=None, metavar="N",
                    help="clasificar solo los primeros N restaurantes (para probar barato/rápido)")
+    p.add_argument("--motor", choices=("local", "jev"), default=MOTOR,
+                   help=f"local = gratis (estrellas + palabras clave); jev = de pago (por defecto: {MOTOR})")
     p.add_argument("--modelo", default=MODELO_DEFECTO, help=f"modelo a usar (por defecto: {MODELO_DEFECTO})")
     p.add_argument("--hilos", type=int, default=HILOS_DEFECTO, help=f"peticiones en paralelo (por defecto: {HILOS_DEFECTO})")
     p.add_argument("--reiniciar", action="store_true", help="ignorar y borrar la caché")
@@ -863,7 +871,8 @@ def imprimir_detalle_restaurante(nombre, id_r, pares, fila):
 
 def ejecutar(args, rest, resenas):
     """Flujo completo: clasificar cada reseña -> agrupar por restaurante -> guardar excel."""
-    print(f"\n=== Clasificación con Jev ({_modelo}) · huella de categorías: {HUELLA} ===")
+    motor = "clasificador local" if MOTOR == "local" else f"Jev ({_modelo})"
+    print(f"\n=== Clasificación con {motor} · huella de categorías: {HUELLA} ===")
     print(f"  - {len(rest)} restaurantes, {len(resenas)} reseñas válidas "
           f"(≥{MIN_CARACTERES_RESENA} caracteres, máx. {MAX_RESENAS_POR_RESTAURANTE} por restaurante)")
     cache = Cache(CACHE_DIR / "cache_jev.jsonl", reiniciar=args.reiniciar)
@@ -907,10 +916,17 @@ def ejecutar(args, rest, resenas):
 
 
 def main():
-    global _modelo
+    global _modelo, MOTOR
     args = parsear_argumentos()
-    _modelo = args.modelo
+    _modelo, MOTOR = args.modelo, args.motor
 
+    if MOTOR == "local":
+        if args.probar:
+            import clasificador_local
+            imprimir_prueba(clasificador_local.clasificar(args.probar))
+        else:
+            ejecutar(args, *cargar_y_preparar(args.limite))
+        return
     if not os.environ.get("TYPESAFE_API_KEY"):
         raise SystemExit(
             "ERROR: no encuentro la variable de entorno TYPESAFE_API_KEY.\n"

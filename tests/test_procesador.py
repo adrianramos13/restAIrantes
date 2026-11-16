@@ -247,6 +247,7 @@ class ClasifFalso:
     """clasificar_restaurantes_jev sin Jev: cada análisis "gasta" 50.000 tokens (~0,002 $)."""
     PRECIO_USD_POR_MILLON_TOKENS = 0.042
     _tokens_entrada = 0
+    MOTOR = "jev"
 
 
 @pytest.fixture
@@ -278,6 +279,13 @@ def test_lote_para_al_llegar_al_tope(lote):
         pass
     assert estado["analizados"] == ["l0", "l1", "l2"] and ps.gastado_en_lote() >= 0.005
     assert ps.Lote(tope_usd=0.005, por_lote=1).uno(bd) is False                    # el gasto se recuerda entre ejecuciones
+
+
+def test_lote_sin_tope_con_el_clasificador_local(lote, monkeypatch):
+    estado, bd = lote
+    monkeypatch.setattr(ClasifFalso, "MOTOR", "local")
+    ps.GASTO_JEV.write_text('{"usd": 99}', encoding="utf-8")   # lo ya gastado en Jev no frena el análisis gratis
+    assert ps.Lote(tope_usd=10, por_lote=1).uno(bd) and estado["analizados"] == ["l0"]
 
 
 def test_lote_descansa_tras_cada_tanda(lote):
