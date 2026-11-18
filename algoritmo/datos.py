@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from logica import METROS_POR_GRADO, localidad_por_vecinos
+from logica import COL_ANADIDO, METROS_POR_GRADO, localidad_por_vecinos
 
 BUCKET_FOTOS = "fotos"
 # Supabase.localidades: en el centro sobran vecinos a 150 m (mismo resultado que 250 m, la mitad de tiempo: ~1 s por
@@ -75,7 +75,8 @@ def filas_a_dataframes(filas):
     registros, platos = [], []
     for f in sorted(filas, key=lambda f: f["posicion"]):
         r = f["restaurantes"]
-        registros.append({**(r.get("datos") or {}), "ID": r["id"], "Imagen archivo": r.get("imagen")})
+        registros.append({**(r.get("datos") or {}), "ID": r["id"], "Imagen archivo": r.get("imagen"),
+                          **({COL_ANADIDO: f["anadido_en"]} if "anadido_en" in f else {})})
         for p in r.get("platos") or []:
             platos.append({"ID_Restaurante": r["id"], "Plato": p.get("Plato"), "Sentimiento": p.get("Sentimiento")})
     return pd.DataFrame(registros), pd.DataFrame(platos, columns=COLUMNAS_PLATOS)
@@ -430,19 +431,37 @@ class Supabase:
         lista = self.lista_de(usuario)
         if not lista:
             return pd.DataFrame(), pd.DataFrame(columns=COLUMNAS_PLATOS), None
+        fecha = ",anadido_en" if self.con_fecha_en_lista() else ""
         filas = self._rest("GET", "lista_restaurantes", params={
-            "lista_id": f"eq.{lista['id']}", "select": "posicion,restaurantes(id,datos,platos,imagen)"})
+            "lista_id": f"eq.{lista['id']}", "select": f"posicion{fecha},restaurantes(id,datos,platos,imagen)"})
         maestro, df_platos = filas_a_dataframes(filas)
         return maestro, df_platos, lista
 
+    def con_fecha_en_lista(self):
+        """¿Está ya supabase/016_fecha_en_lista.sql? (se mira una vez): sin ella, las listas no llevan fecha."""
+        if getattr(self, "_con_fecha_en_lista", None) is None:
+            try:
+                self._rest("GET", "lista_restaurantes", params={"select": "anadido_en", "limit": 1})
+                self._con_fecha_en_lista = True
+            except ErrorSupabase:
+                self._con_fecha_en_lista = False
+        return self._con_fecha_en_lista
+
     def reemplazar_lista(self, lista_id, ids_en_orden):
-        """La lista del usuario pasa a tener exactamente estos restaurantes, en este orden."""
-        vistos, filas = set(), []
+        """La lista del usuario pasa a tener exactamente estos restaurantes, en este orden. Los que ya estaban
+        conservan cuándo se añadieron (016); los nuevos, ahora."""
+        antes = {}
+        if self.con_fecha_en_lista():
+            antes = {f["restaurante_id"]: f.get("anadido_en") for f in self._rest("GET", "lista_restaurantes", params={
+                "lista_id": f"eq.{lista_id}", "select": "restaurante_id,anadido_en"}) or []}
+        vistos, filas, ahora = set(), [], _ahora()
         for posicion, id_r in enumerate(ids_en_orden, start=1):
             if id_r in vistos:   # mismo restaurante dos veces en la lista de Google
                 continue
             vistos.add(id_r)
-            filas.append({"lista_id": lista_id, "restaurante_id": id_r, "posicion": posicion})
+            filas.append({"lista_id": lista_id, "restaurante_id": id_r, "posicion": posicion,
+                          **({"anadido_en": antes[id_r] if id_r in antes else ahora}   # sin fecha (de antes de
+                             if self.con_fecha_en_lista() else {})})                     # la 016) sigue sin ella
         self._rest("DELETE", "lista_restaurantes", params={"lista_id": f"eq.{lista_id}"})
         for lote in _lotes(filas):
             self._rest("POST", "lista_restaurantes", json=lote)

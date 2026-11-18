@@ -126,10 +126,40 @@ def test_reemplazar_lista_quita_repetidos(monkeypatch):
     llamadas = []
     monkeypatch.setattr(datos.requests, "request",
                         lambda metodo, url, **kw: llamadas.append((metodo, kw)) or RespuestaFalsa(None))
-    datos.Supabase("https://x.supabase.co", "k").reemplazar_lista(5, [7, 3, 7, 9])
+    cliente = datos.Supabase("https://x.supabase.co", "k")
+    cliente._con_fecha_en_lista = False   # sin supabase/016
+    cliente.reemplazar_lista(5, [7, 3, 7, 9])
     assert llamadas[0][0] == "DELETE"
     assert [f["restaurante_id"] for f in llamadas[1][1]["json"]] == [7, 3, 9]
     assert [f["posicion"] for f in llamadas[1][1]["json"]] == [1, 2, 4]
+    assert "anadido_en" not in llamadas[1][1]["json"][0]
+
+
+def test_reemplazar_lista_conserva_cuando_se_anadio(monkeypatch):
+    def respuestas(metodo, tabla, params):
+        if (metodo, tabla) == ("GET", "lista_restaurantes") and params.get("limit") != 1:
+            return [{"restaurante_id": 7, "anadido_en": "2026-01-02T10:00:00+00:00"},
+                    {"restaurante_id": 3, "anadido_en": None}]   # de antes de la 016
+        return []
+    bd_, llamadas = _supabase_falso(monkeypatch, respuestas)
+    bd_.reemplazar_lista(5, [3, 9, 7])
+    filas = {f["restaurante_id"]: f["anadido_en"] for m, t, p, j in llamadas if m == "POST" for f in j}
+    assert filas[7] == "2026-01-02T10:00:00+00:00" and filas[3] is None
+    assert filas[9] and filas[9] > "2026-01-03"   # el nuevo, ahora
+
+
+def test_restaurantes_de_trae_la_fecha_en_que_se_anadio(monkeypatch):
+    def respuestas(metodo, tabla, params):
+        if tabla == "listas":
+            return [{"id": 5, "usuario": "a@b.com", "estado": "lista"}]
+        if params.get("limit") == 1:
+            return []
+        return [{"posicion": 1, "anadido_en": "2026-11-01T23:30:00+00:00",
+                 "restaurantes": {"id": 7, "datos": {"Nombre": "Casa"}, "platos": [], "imagen": None}}]
+    bd_, llamadas = _supabase_falso(monkeypatch, respuestas)
+    maestro = bd_.restaurantes_de("a@b.com")[0]
+    assert maestro.loc[0, datos.COL_ANADIDO] == "2026-11-01T23:30:00+00:00"
+    assert "anadido_en" in [p for m, t, p, j in llamadas if t == "lista_restaurantes"][-1]["select"]
 
 
 @pytest.mark.parametrize("entrada, esperado", [
@@ -1152,6 +1182,26 @@ def test_cabecera_estilo_instagram(multiusuario):
     at.button(key="contador_lista").click().run()                      # "en tu lista": ventana con tu lista
     assert not at.exception and at.session_state["seccion"] == "perfil"
     assert any(c.value == f"{total} de {total} restaurantes" for c in at.caption)   # ...se quita al abrirla
+
+
+def test_en_tu_lista_se_filtra_por_fecha_en_que_se_anadio(multiusuario, monkeypatch):
+    from datetime import date
+    maestro = pd.read_excel(EXCEL, sheet_name="Restaurantes")
+    platos = pd.read_excel(EXCEL, sheet_name="Platos mencionados")
+    total = len(maestro)
+    maestro[datos.COL_ANADIDO] = None   # los de antes de la 016, sin fecha
+    maestro.loc[0, datos.COL_ANADIDO] = "2026-03-10T12:00:00+00:00"
+    maestro.loc[1, datos.COL_ANADIDO] = "2026-06-01T12:00:00+00:00"
+    monkeypatch.setattr(datos.Supabase, "restaurantes_de", lambda self, u: (maestro.copy(), platos.copy(), LISTA_OK))
+    at = correr(seccion="perfil")
+    at.button(key="contador_lista").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any(c.value == f"{total} de {total} restaurantes" for c in at.caption)
+    at.date_input(key="ml_anadido").set_value((date(2026, 3, 10), date(2026, 3, 31)))
+    at.session_state["abrir_lista"] = "tu_lista"   # la ventana es un fragmento: en el navegador sigue abierta
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any(c.value == f"1 de {total} restaurantes" for c in at.caption)
 
 
 def test_diario_por_meses(multiusuario):

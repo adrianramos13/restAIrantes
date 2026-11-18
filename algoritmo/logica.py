@@ -20,6 +20,7 @@ ORDEN_PUNTUACION = "Mejor valorados"
 ORDEN_CERCANOS = "Más cerca"
 ORDEN_RESENAS = "Más reseñas"   # solo en "Mi lista"
 ORDEN_NOMBRE = "Nombre"
+COL_ANADIDO = "Añadido a tu lista"   # ISO con zona (lista_restaurantes.anadido_en, supabase/016); vacío si no se sabe
 PRESUPUESTO_SIN_LIMITE = 100   # el máximo del slider de presupuesto significa "sin tope"
 # Categoría de cocina calculada con Jev (columnas que trae clasificacion_jev.xlsx).
 COL_CATEGORIA = "Categoría (Jev)"
@@ -169,9 +170,10 @@ def cerrados(df):
 
 
 def filtrar_lista(maestro, df_platos, texto="", cocinas=(), presupuesto_min=0, presupuesto_max=None,
-                  nota_min=0.0, plato="", ocultar_cerrados=False, orden=ORDEN_PUNTUACION):
+                  nota_min=0.0, plato="", ocultar_cerrados=False, orden=ORDEN_PUNTUACION, anadido_entre=()):
     """Pestaña "Mi lista": los restaurantes de la lista que cumplen los filtros (los mismos criterios
-    estrictos que el buscador, sin tiempos de viaje), ordenados."""
+    estrictos que el buscador, sin tiempos de viaje), ordenados. `anadido_entre`: (desde, hasta) en fechas de
+    Madrid, ambas incluidas (o solo (desde,)); los que no tienen fecha de adición no pasan."""
     df = maestro
     if df.empty:
         return df
@@ -188,11 +190,21 @@ def filtrar_lista(maestro, df_platos, texto="", cocinas=(), presupuesto_min=0, p
         df = df[df["ID"].apply(lambda i: puntuacion_plato(i, plato.strip(), df_platos) > 0).astype(bool)]
     if ocultar_cerrados:
         df = df[~cerrados(df)]
+    if anadido_entre and not df.empty:
+        dias = fecha_anadido(df)
+        df = df[(dias >= pd.Timestamp(anadido_entre[0])) & (dias <= pd.Timestamp(anadido_entre[-1]))]
     if orden == ORDEN_NOMBRE:
         return df.sort_values("Nombre", key=lambda s: s.map(_sin_tildes))
     if orden == ORDEN_RESENAS:
         return df.sort_values(["Nº Reseñas", "Puntuación"], ascending=False)
     return df.sort_values(["Puntuación", "Nº Reseñas"], ascending=False)
+
+
+def fecha_anadido(df):
+    """Día (de Madrid, a las 00:00 sin zona) en que entró cada restaurante en tu lista; NaT si no se sabe."""
+    fechas = df[COL_ANADIDO] if COL_ANADIDO in df.columns else pd.Series(None, index=df.index, dtype=object)
+    return (pd.to_datetime(fechas, utc=True, errors="coerce").dt.tz_convert("Europe/Madrid")
+            .dt.tz_localize(None).dt.normalize())
 
 
 # Jev a veces apunta como "plato" el tipo de cocina ("india", "peruana"...): en Inicio quedaría

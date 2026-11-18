@@ -58,8 +58,8 @@ if "PYTEST_CURRENT_TEST" not in os.environ:
         if _modulo is not None and getattr(_modulo, "_mtime_cargado", None) != os.path.getmtime(_modulo.__file__):
             importlib.reload(_modulo)
 
-from logica import (COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
-                    ORDEN_RESENAS, PRESUPUESTO_SIN_LIMITE, VOTOS_MIN_SECUNDARIA, filtrar_lista, filtrar_y_puntuar,
+from logica import (COL_ANADIDO, COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
+                    ORDEN_RESENAS, PRESUPUESTO_SIN_LIMITE, VOTOS_MIN_SECUNDARIA, fecha_anadido, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, sugerencia_plato, tiene_categorias_jev, insights_perfil,
                     insertar_en_orden, vista_previa_posicion, PESO_GUSTO_EATLIST, PESO_GUSTO_LISTA)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
@@ -343,6 +343,9 @@ def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
         f"{valor_o(fila, 'Rango de precios', 'Precio ?')} · {resumen_valoracion(fila)} reseñas  \n"
         + " · ".join(p for p in lugar if p)
     )
+    if pd.notna(fila.get(COL_ANADIDO)):
+        fecha = _hora_local(str(fila[COL_ANADIDO]))
+        st.caption(f":material/bookmark_added: En tu lista desde el {fecha.day} de {MESES[fecha.month - 1]} de {fecha.year}")
     if BD is not None and usuario:
         bloque_resenas(fila)
 
@@ -1187,7 +1190,7 @@ _BARRA = st.components.v2.component(
 # Widgets de cada sección cuyo valor tiene que sobrevivir mientras se está en otra.
 CLAVES_FORMULARIOS = {
     "comer": ("fuente", "transporte", "tiempo", "cocina", "presupuesto", "plato", "modo_vista", "orden"),
-    "mi_lista": ("ex_texto", "ex_vista", "ex_orden", "ex_solo_analizados", "ex_cocinas", "ex_presupuesto", "ex_nota", "ex_plato","ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden"),
+    "mi_lista": ("ex_texto", "ex_vista", "ex_orden", "ex_solo_analizados", "ex_cocinas", "ex_presupuesto", "ex_nota", "ex_plato","ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados", "ml_orden", "ml_anadido"),
 }
 
 
@@ -1204,7 +1207,7 @@ def abrir_tus_listas():
 # Filtros de "Mi lista": entrar desde la barra (o volver a tocarla) los quita todos. Los atajos que llevan a
 # Mi lista con un filtro puesto ("Ver en formato lista", una cocina de la gráfica) no pasan por aquí.
 FILTROS_MI_LISTA = ("ml_texto", "ml_cocinas", "ml_presupuesto", "ml_nota", "ml_plato", "ml_cerrados",
-                    "ml_orden", "buscar_modo")
+                    "ml_orden", "ml_anadido", "buscar_modo")
 
 
 def _al_cambiar_seccion():
@@ -1423,8 +1426,9 @@ def lista_filtrable(maestro, df_platos, en_ventana=False):
     # desde la gráfica de cocinas del Perfil con una cocina ya elegida).
     estado = st.session_state
     activos = sum([bool(estado.get("ml_cocinas")), bool(estado.get("ml_nota")), bool(estado.get("ml_plato", "").strip()),
-                   bool(estado.get("ml_cerrados")),
+                   bool(estado.get("ml_cerrados")), bool(estado.get("ml_anadido")),
                    tuple(estado.get("ml_presupuesto", (0, PRESUPUESTO_SIN_LIMITE))) != (0, PRESUPUESTO_SIN_LIMITE)])
+    dias = fecha_anadido(maestro).dropna()
     with st.expander(f"Filtros ({activos})" if activos else "Filtros", icon=":material/tune:"):
         cocinas = st.multiselect("Cocina", cocinas_disponibles(maestro), key="ml_cocinas", placeholder="Cualquiera")
         presupuesto_min, presupuesto_max = st.slider(
@@ -1433,20 +1437,26 @@ def lista_filtrable(maestro, df_platos, en_ventana=False):
         nota_min = st.slider("Nota mínima en Google", 0.0, 5.0, 0.0, step=0.5, format="%.1f ⭐", key="ml_nota")
         plato = st.text_input("Plato que destaquen", placeholder="Ej. croquetas", key="ml_plato")
         ocultar_cerrados = st.toggle("Ocultar los cerrados", key="ml_cerrados")
+        anadido_entre = ()
+        if not dias.empty:   # sin supabase/016 (o en modo local) no hay fechas: no sale
+            anadido_entre = st.date_input("Añadidos a tu lista entre", (), min_value=dias.min().date(),
+                                          max_value=max(dias.max().date(), date.today()), format="DD/MM/YYYY",
+                                          key="ml_anadido")
     orden = st.segmented_control("Ordenar", [ORDEN_PUNTUACION, ORDEN_RESENAS, ORDEN_NOMBRE], default=ORDEN_PUNTUACION,
                                  key="ml_orden", label_visibility="collapsed", required=True, width="stretch",
                                  format_func=lambda o: "Mejor nota" if o == ORDEN_PUNTUACION else o)   # cabe en una fila
 
     df = filtrar_lista(maestro, df_platos, texto, cocinas, presupuesto_min,
                        None if presupuesto_max == PRESUPUESTO_SIN_LIMITE else presupuesto_max,
-                       nota_min, plato, ocultar_cerrados, orden)
+                       nota_min, plato, ocultar_cerrados, orden, tuple(anadido_entre or ()))
     st.caption(f"{len(df)} de {len(maestro)} restaurantes")
     if df.empty:
         st.info("Ninguno cumple esos filtros.")
         return
 
     # Se pintan de 20 en 20: cada tarjeta lleva su foto.
-    filtros = (texto, tuple(cocinas), presupuesto_min, presupuesto_max, nota_min, plato, ocultar_cerrados, orden)
+    filtros = (texto, tuple(cocinas), presupuesto_min, presupuesto_max, nota_min, plato, ocultar_cerrados, orden,
+               tuple(anadido_entre or ()))
     if st.session_state.get("ml_filtros") != filtros:
         st.session_state["ml_filtros"], st.session_state["ml_mostrados"] = filtros, MI_LISTA_POR_PAGINA
     top = df.head(st.session_state["ml_mostrados"])

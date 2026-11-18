@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 import datos as bd
-from logica import (cocina_favorita, compatibilidad, en_comun, hace_cuanto, mejores_visitas, semana_cerrada,
+from logica import (COL_ANADIDO, cocina_favorita, compatibilidad, en_comun, hace_cuanto, mejores_visitas, semana_cerrada,
                     sugerir_personas)
 from servicios import haversine_km
 
@@ -129,7 +129,7 @@ def cargar_mis_visitas(_bd, usuario):
 @st.cache_data(ttl=300, show_spinner=False)
 def cargar_lista_de(_bd, usuario):
     """La lista de restaurantes de otra persona (solo se usa para comparar: en común, cocina favorita...)."""
-    return _bd.restaurantes_de(usuario)[0]
+    return _bd.restaurantes_de(usuario)[0].drop(columns=[COL_ANADIDO], errors="ignore")   # su ficha no diría «en tu lista»
 
 
 @st.cache_data(ttl=300, show_spinner=False)

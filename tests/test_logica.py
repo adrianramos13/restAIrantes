@@ -389,6 +389,20 @@ def test_mismo_gusto_ordena_por_comidas_juntos_y_cuenta_el_resto():
     assert mas == 3
 
 
+def test_filtrar_lista_por_fecha_en_que_se_anadio():
+    from datetime import date
+    from logica import COL_ANADIDO
+    m = pd.DataFrame({"ID": [1, 2, 3], "Nombre": ["a", "b", "c"], "Rango de precios": ["10-20 €"] * 3,
+                      "Puntuación": [4.0] * 3, "Nº Reseñas": [1] * 3,
+                      COL_ANADIDO: ["2026-11-01T23:30:00+00:00", "2026-10-01T10:00:00+00:00", None]})
+    vacio = pd.DataFrame()
+    # 23:30 UTC del 1 de noviembre ya es día 2 en Madrid; los que no tienen fecha no pasan
+    assert filtrar_lista(m, vacio, anadido_entre=(date(2026, 11, 2), date(2026, 11, 30)))["ID"].tolist() == [1]
+    assert filtrar_lista(m, vacio, anadido_entre=(date(2026, 10, 1),))["ID"].tolist() == [2]   # un solo día
+    assert len(filtrar_lista(m, vacio)) == 3
+    assert filtrar_lista(m.drop(columns=[COL_ANADIDO]), vacio, anadido_entre=(date(2026, 10, 1),)).empty
+
+
 def test_mismo_gusto_con_pocos_y_sin_comidas():
     primeros, mas = mismo_gusto([_amigo("b", None, "Álvaro"), _amigo("a", None, "Bea")], {})
     assert [p["usuario"] for p in primeros] == ["b", "a"] and mas == 0   # por nombre, sin tildes
