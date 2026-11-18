@@ -481,8 +481,9 @@ def test_fotos_galeria_trabajar(monkeypatch):
             for i, n in enumerate(["Con fotos", "Sin galería", "No existe", "Rompe"], 1)]
     asyncio.run(g.trabajar([], cola))
     assert guardadas == {1: [f"restaurantes/1/{i}.jpg" for i in range(1, 6)],   # principal + 3 comida + 1 ambiente
+                         2: ["restaurantes/2/1.jpg"],                            # sin galería (sitio pequeño): la principal
                          3: []}                                                  # no está en Google: no se repite
-    assert g.saltados == {2, 4} and g.hechos == 1   # sin galería o con error: se reintentan al reiniciar
+    assert g.saltados == {4} and g.hechos == 2   # con error: se reintenta al reiniciar
 
     parar = asyncio.Event()
     parar.set()

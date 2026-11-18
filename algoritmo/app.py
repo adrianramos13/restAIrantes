@@ -321,8 +321,10 @@ def contenido_ficha(fila, df_platos, plato=None, modo_transporte=None):
     imagen_local = IMAGENES_DIR / str(valor_o(fila, "Imagen archivo", ""))
     foto = str(imagen_local) if BD is None and imagen_local.is_file() else foto_restaurante(fila, ancho=800)
     extra = fotos_extra(int(fila["ID"])) if BD is not None and pd.notna(fila.get("ID")) else []
-    if extra:
+    if len(extra) > 1:
         st.html(carrusel_fotos(extra))
+    elif extra:   # sitio sin galería en Google: solo su foto principal, a 800 px
+        st.image(extra[0], width="stretch")
     elif foto:
         st.image(foto, width="stretch")
     if BD is not None and usuario:

@@ -25,7 +25,7 @@ POR_TANDA = 20             # restaurantes por tanda cuando el procesador está l
 PESTANAS_TANDA = 2
 DESCANSO_MIN = 4           # entre tandas propias (el análisis ya tiene sus descansos)
 ESPERA_S = (3, 8)          # entre uno y otro, para no parecer un robot ante Google
-MAX_VACIOS_SEGUIDOS = 8    # sin ninguna foto tantas veces seguidas: ¿se ha perdido la sesión? -> se deja para luego
+MAX_VACIOS_SEGUIDOS = 25   # sin galería tantas veces seguidas (~la mitad no tiene): ¿se ha perdido la sesión? -> se para
 
 
 def url_grande(url, lado=LADO):
@@ -74,13 +74,13 @@ class Galeria:
         await extraer_resenas.abrir_ficha_desde_resultados(page, r["nombre"])
         g = await extraer_resenas.obtener_fotos_galeria(page)
         urls = [g["principal"]] + g["comida"] + g["ambiente"]
-        if not g["comida"] and not g["ambiente"]:   # sin galería: puede ser un fallo pasajero o la sesión
-            self.saltados.add(r["id"])
-            self.vacios_seguidos += 1
-            return
+        # Sin pestañas «Comida»/«Ambiente»: lo normal en sitios pequeños (~la mitad de la cola) -> solo la principal.
+        # ponytail: si se pierde la sesión, hasta MAX_VACIOS_SEGUIDOS sitios se quedan con 1 foto; para repetirlos,
+        # poner fotos_en = null donde jsonb_array_length(fotos) = 1.
+        vacio = not g["comida"] and not g["ambiente"]
         archivos = await asyncio.to_thread(subir, self.bd, r["id"], urls)   # sin bloquear las pestañas de reseñas
         self.bd.guardar_fotos(r["id"], archivos)
-        self.vacios_seguidos, self.hechos = 0, self.hechos + 1
+        self.vacios_seguidos, self.hechos = (self.vacios_seguidos + 1 if vacio else 0), self.hechos + 1
 
     async def trabajar(self, page, cola, parar=None):
         """Va sacando de `cola` hasta vaciarla o hasta que `parar` (asyncio.Event) se active. Nunca lanza: un fallo
