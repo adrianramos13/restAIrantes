@@ -1408,14 +1408,11 @@ def seccion_mi_lista(maestro, df_platos):
                      lista=lista_de_lugares, mapa=mapa_de_lugares)
 
 
-def cuando_anadido(fila, ahora):
-    """Línea de la tarjeta con cuándo entró en tu lista: «Añadido hoy», «… hace 3 días», «… el 12/10/2025»."""
+def cuando_anadido(fila):
+    """Línea de la tarjeta con cuándo entró en tu lista: «Añadido el 12/10/2025» (fecha de Madrid)."""
     if pd.isna(fila.get(COL_ANADIDO)):
         return {}   # de antes de supabase/016: no se sabe
-    cuando = hace_cuanto(str(fila[COL_ANADIDO]), ahora)
-    if "/" in cuando:   # hace más de una semana: con el año
-        cuando = "el " + _hora_local(str(fila[COL_ANADIDO])).strftime("%d/%m/%Y")
-    return {"cuando": f"añadido {cuando}"}
+    return {"cuando": f"añadido el {_hora_local(str(fila[COL_ANADIDO])).strftime('%d/%m/%Y')}"}
 
 
 def lista_filtrable(maestro, df_platos, en_ventana=False):
@@ -1476,8 +1473,7 @@ def lista_filtrable(maestro, df_platos, en_ventana=False):
         st.session_state["ml_filtros"], st.session_state["ml_mostrados"] = filtros, MI_LISTA_POR_PAGINA
     top = df.head(st.session_state["ml_mostrados"])
     mostrar_lista(top, key="lista_mi_lista", en_ventana=en_ventana,
-                  extra=(lambda f, ahora=_hora_local(datetime.now(timezone.utc).isoformat()): cuando_anadido(f, ahora))
-                  if not dias.empty else None)
+                  extra=cuando_anadido if not dias.empty else None)
     if len(df) > len(top):
         if st.button(f"Ver más ({len(df) - len(top)} restantes)", width="stretch", key="ml_ver_mas"):
             st.session_state["ml_mostrados"] += MI_LISTA_POR_PAGINA
