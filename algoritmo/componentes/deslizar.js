@@ -3,6 +3,8 @@
 // trigger «decision» = {id, gusta}. La pila vive aquí: las tarjetas nuevas se meten por debajo sin redibujar las
 // que ya están, así que no hay parpadeos mientras Python guarda y manda la siguiente tanda.
 const UMBRAL_PX = 100;   // lo que hay que arrastrar para que cuente
+const TOQUE_PX = 8;      // moverse menos que esto al soltar = tocar la foto (pasa a la siguiente)
+const ANADIDO_MS = 4000; // lo que dura el aviso «Añadido a tu lista» (y la barrita .dz-anadido-tiempo de deslizar.css)
 const ZOOM_MAPA = 16;
 const ZOOM_PREVIA = 14;
 const AMPLIAR_MS = 260;   // lo que dura la animación de .dz-mapa en deslizar.css
@@ -69,20 +71,59 @@ function inicial(nombre) {
   return texto('div', 'dz-sin-foto', (nombre || '?').trim().charAt(0).toUpperCase());
 }
 
+// Fotos de la tarjeta: las de su galería (r.fotos) o, si aún no tiene, la de siempre (r.foto). Se ve una; tocarla
+// pasa a la siguiente (el tercio izquierdo, a la anterior) y las rayitas de arriba dicen en cuál estás.
+function fotos(t, r) {
+  const urls = r.fotos && r.fotos.length ? r.fotos : (r.foto ? [r.foto] : []);
+  if (!urls.length) { t.append(inicial(r.nombre)); return; }
+  t.append(...urls.map((url, i) => {
+    const img = document.createElement('img');
+    img.className = 'dz-foto'; img.alt = ''; img.draggable = false; img.hidden = i > 0;
+    if (i === 0) img.src = url; else img.dataset.src = url;   // la primera ya; el resto, al llegar arriba (cargarFotos)
+    img.onerror = () => quitarFoto(t, img, r.nombre);
+    return img;
+  }), texto('div', 'dz-barras', ''));
+  pintarBarras(t);
+}
+
+const fotosDe = (t) => [...t.querySelectorAll('.dz-foto')];
+
+function pintarBarras(t) {
+  const imgs = fotosDe(t), actual = imgs.findIndex((img) => !img.hidden);
+  const barras = t.querySelector('.dz-barras');
+  barras.replaceChildren(...(imgs.length > 1 ? imgs.map((img, i) => texto('span', i === actual ? 'dz-actual' : '', '')) : []));
+  barras.setAttribute('aria-label', imgs.length > 1 ? `Foto ${actual + 1} de ${imgs.length}` : '');
+}
+
+function cargarFotos(t) {
+  for (const img of t.querySelectorAll('.dz-foto[data-src]')) { img.src = img.dataset.src; delete img.dataset.src; }
+}
+
+function mostrarFoto(t, paso) {
+  const imgs = fotosDe(t);
+  if (imgs.length < 2) return;
+  const siguiente = (imgs.findIndex((img) => !img.hidden) + paso + imgs.length) % imgs.length;
+  imgs.forEach((img, i) => { img.hidden = i !== siguiente; });
+  pintarBarras(t);
+}
+
+function quitarFoto(t, img, nombre) {   // no carga: fuera, y si era la que se veía, se enseña otra
+  const seVeia = !img.hidden;
+  img.remove();
+  const imgs = fotosDe(t);
+  if (!imgs.length) { t.querySelector('.dz-barras').remove(); t.prepend(inicial(nombre)); return; }
+  if (seVeia) imgs[0].hidden = false;
+  pintarBarras(t);
+}
+
 function tarjeta(r, base) {
   const t = document.createElement('div');
   t.className = 'dz-tarjeta';
   t.dataset.id = String(r.id);
+  t.__datos = r;
   t.setAttribute('role', 'group');
   t.setAttribute('aria-label', r.nombre);
-  if (r.foto) {
-    const img = document.createElement('img');
-    img.className = 'dz-foto'; img.alt = ''; img.draggable = false; img.src = r.foto;   // se descargan ya: precarga
-    img.onerror = () => img.replaceWith(inicial(r.nombre));
-    t.append(img);
-  } else {
-    t.append(inicial(r.nombre));
-  }
+  fotos(t, r);
   if (r.lat != null && r.lon != null) {
     t.__r = r; t.__base = base;
     const previa = texto('div', 'dz-mapa', '');
@@ -105,6 +146,58 @@ function tarjeta(r, base) {
   return t;
 }
 
+// Foto de perfil de un amigo (o su inicial sobre su color) con su @usuario debajo
+function perfil(p, i) {
+  const caja = texto('div', 'dz-perfil', '');
+  caja.style.animationDelay = `${0.35 + i * 0.15}s`;
+  const circulo = texto('span', 'dz-avatar', p.inicial || '?');
+  circulo.style.background = p.color || '#888';
+  if (p.foto) {
+    const img = Object.assign(document.createElement('img'), { alt: '', referrerPolicy: 'no-referrer', src: p.foto });
+    img.onerror = () => img.remove();
+    circulo.append(img);
+  }
+  caja.append(circulo, texto('span', 'dz-perfil-nombre', p.nombre || ''));
+  return caja;
+}
+
+// Al dar «me gusta»: la tarjeta del restaurante, «Añadido a tu lista» y, si algún amigo también lo tiene en su lista,
+// «Tienes el mismo gusto que» con dos perfiles como mucho (+X el resto). Se va sola a los ANADIDO_MS o al tocarla.
+function mostrarAnadido(r) {
+  document.querySelector('.dz-anadido')?.remove();
+  const capa = texto('div', 'dz-anadido', '');
+  capa.setAttribute('role', 'status');
+  const caja = texto('div', 'dz-anadido-caja', '');
+  const marco = texto('div', 'dz-anadido-tarjeta', '');
+  const t = tarjeta({ ...r, lat: null, lon: null }, {});   // la misma tarjeta, sin mapa ni arrastre
+  marco.append(t);
+  cargarFotos(t);
+  caja.append(marco, texto('div', 'dz-anadido-ok', '✓ Añadido a tu lista'));
+  const gusto = r.gusto;
+  if (gusto && gusto.perfiles && gusto.perfiles.length) {
+    const bloque = texto('div', 'dz-gusto', '');
+    const titulo = texto('div', 'dz-gusto-titulo', 'Tienes el mismo gusto que');
+    titulo.prepend(texto('span', 'dz-latido', '❤'));
+    const fila = texto('div', 'dz-gusto-perfiles', '');
+    gusto.perfiles.forEach((p, i) => fila.append(perfil(p, i)));
+    if (gusto.mas > 0) {
+      const mas = texto('div', 'dz-perfil', '');
+      mas.style.animationDelay = `${0.35 + gusto.perfiles.length * 0.15}s`;
+      mas.append(texto('span', 'dz-avatar dz-mas', `+${gusto.mas}`));
+      mas.setAttribute('aria-label', `y ${gusto.mas} más`);
+      fila.append(mas);
+    }
+    bloque.append(titulo, fila);
+    caja.append(bloque);
+  }
+  caja.append(texto('div', 'dz-anadido-tiempo', ''));
+  capa.append(caja);
+  const cerrar = () => capa.remove();
+  capa.addEventListener('click', cerrar);
+  setTimeout(cerrar, ANADIDO_MS);
+  document.body.append(capa);   // fuera del mazo: no le afecta que llegue una tanda nueva
+}
+
 export default function (component) {
   const { parentElement, data, setTriggerValue } = component;
   const mazo = parentElement.querySelector('.dz-mazo');
@@ -114,7 +207,8 @@ export default function (component) {
   const arriba = () => [...mazo.children].reverse().find((t) => !estado.decididos.has(t.dataset.id));
   const botones = () => {
     botonNo.disabled = botonSi.disabled = !arriba();
-    [...mazo.children].filter((t) => !estado.decididos.has(t.dataset.id)).slice(-2).forEach(prepararMapa);
+    [...mazo.children].filter((t) => !estado.decididos.has(t.dataset.id)).slice(-2)
+      .forEach((t) => { prepararMapa(t); cargarFotos(t); });
   };
 
   function decidir(t, gusta) {
@@ -125,6 +219,7 @@ export default function (component) {
     setTimeout(() => { if (t.__mapa) t.__mapa.remove(); t.remove(); }, 260);
     botones();
     setTriggerValue('decision', { id: Number(t.dataset.id), gusta });
+    if (gusta) mostrarAnadido(t.__datos);
   }
 
   function arrastrable(t) {
@@ -143,12 +238,16 @@ export default function (component) {
       si.style.opacity = String(Math.max(0, Math.min(1, dx / UMBRAL_PX)));
       no.style.opacity = String(Math.max(0, Math.min(1, -dx / UMBRAL_PX)));
     });
-    const soltar = () => {
+    const soltar = (e) => {
       if (x0 === null) return;
       x0 = null;
       t.classList.remove('dz-arrastrando');
       if (Math.abs(dx) >= UMBRAL_PX) { decidir(t, dx > 0); return; }
       t.style.transform = ''; si.style.opacity = '0'; no.style.opacity = '0';   // vuelve a su sitio
+      if (e.type === 'pointerup' && Math.abs(dx) < TOQUE_PX) {   // un toque, no un arrastre: cambia de foto
+        const caja = t.getBoundingClientRect();
+        mostrarFoto(t, e.clientX - caja.left < caja.width / 3 ? -1 : 1);
+      }
     };
     t.addEventListener('pointerup', soltar);
     t.addEventListener('pointercancel', soltar);

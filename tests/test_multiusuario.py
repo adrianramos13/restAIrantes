@@ -868,6 +868,21 @@ def test_relaciones_traen_la_foto_si_es_valida(monkeypatch):
     assert eva["foto"] is None and not eva["enviada"]
 
 
+def test_en_listas_de_y_comidas_juntos(monkeypatch):
+    def respuestas(m, t, p):
+        if t == "listas":
+            return [{"id": 7, "usuario": "luis@x.com"}, {"id": 8, "usuario": "eva@x.com"}]
+        if t == "lista_restaurantes":
+            return [{"lista_id": 7, "restaurante_id": 1}, {"lista_id": 8, "restaurante_id": 1},
+                    {"lista_id": 8, "restaurante_id": 2}]
+        return [{"usuario": "luis@x.com", "anadido_por": "ana@x.com"}, {"usuario": "ana@x.com", "anadido_por": "luis@x.com"},
+                {"usuario": "ana@x.com", "anadido_por": "eva@x.com"}]
+    bd_, _ = _supabase_falso(monkeypatch, respuestas)
+    assert bd_.en_listas_de(["luis@x.com", "eva@x.com"], [1, 2, 3]) == {1: ["luis@x.com", "eva@x.com"], 2: ["eva@x.com"]}
+    assert bd_.en_listas_de([], [1]) == {} and bd_.en_listas_de(["luis@x.com"], []) == {}
+    assert bd_.comidas_juntos("ana@x.com") == {"luis@x.com": 2, "eva@x.com": 1}   # en los dos sentidos
+
+
 
 # ---------------------------------------------------------------- amigos más visuales
 
@@ -1751,15 +1766,39 @@ def test_no_tengo_ni_idea_desliza_y_anade_a_tu_lista(multiusuario, monkeypatch):
     multiusuario["deslizar"] = True
     multiusuario["deslizados"] = {10_001: False}   # ya lo descartó otro día: no vuelve a salir
     catalogo = _catalogo_para_deslizar(monkeypatch)
+    fotos_pedidas = []   # las de la galería: los pares tienen 2, los impares ninguna (solo la de siempre)
+    monkeypatch.setattr(datos.Supabase, "fotos_de_varios", lambda self, ids: (
+        fotos_pedidas.append(list(ids)) or {i: [f"restaurantes/{i}/1.jpg", f"restaurantes/{i}/2.jpg"]
+                                            for i in ids if i % 2 == 0}))
+    # «Tienes el mismo gusto que…»: amigos aceptados que lo tienen en su lista (la pendiente no cuenta)
+    multiusuario["relaciones"] = [
+        {"usuario": u, "nombre": n, "alias": n.lower(), "foto": None, "estado": e, "enviada": True}
+        for u, n, e in (("luis@x.com", "Luis", "aceptada"), ("eva@x.com", "Eva", "aceptada"),
+                        ("bea@x.com", "Bea", "aceptada"), ("pepe@x.com", "Pepe", "pendiente"))]
+    monkeypatch.setattr(datos.Supabase, "en_listas_de", lambda self, usuarios, ids: (
+        {i: sorted(usuarios) + ["pepe@x.com"] for i in ids if i % 3 == 0}))
+    monkeypatch.setattr(datos.Supabase, "comidas_juntos", lambda self, u: {"luis@x.com": 4, "bea@x.com": 1})
     at = correr()
     at.button(key="boton_ni_idea").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert at.session_state["vista"] == "deslizar"
     pendientes = list(at.session_state["deslizar"]["pendientes"])
+    gustos = at.session_state["deslizar"]["gustos"]
+    assert any(i % 3 == 0 for i in pendientes)
+    for i in pendientes:
+        if i % 3:
+            assert gustos.get(i) is None
+            continue
+        assert [p["nombre"] for p in gustos[i]["perfiles"]] == ["@luis", "@bea"] and gustos[i]["mas"] == 1
+        assert "@" not in str({k: v for p in gustos[i]["perfiles"] for k, v in p.items() if k != "nombre"})   # sin correos
+        assert "x.com" not in str(gustos[i])
     assert len(pendientes) == 15 and 10_001 not in pendientes
     assert set(pendientes) <= set(catalogo["ID"])   # nada de lo que ya está en tu lista
     ciudades = at.session_state["deslizar"]["ciudades"]   # la localidad de cada tarjeta, pedida una vez
     assert all(ciudades[i] == ("Leganés" if i % 2 == 0 else None) for i in pendientes)
+    fotos = at.session_state["deslizar"]["fotos"]   # las URLs de la galería de cada tarjeta
+    assert all(len(fotos[i]) == (2 if i % 2 == 0 else 0) for i in pendientes)
+    assert all(u.endswith(f"restaurantes/{i}/2.jpg") for i in pendientes if i % 2 == 0 for u in fotos[i][1:])
 
     primero, segundo = pendientes[:2]
     at.session_state["deslizar_decision"] = {"id": primero, "gusta": True}
@@ -1777,6 +1816,7 @@ def test_no_tengo_ni_idea_desliza_y_anade_a_tu_lista(multiusuario, monkeypatch):
     est = at.session_state["deslizar"]
     assert len(est["pendientes"]) == 4 + 15 and len(set(est["pendientes"])) == len(est["pendientes"])
     assert len(multiusuario["ciudades_pedidas"]) == 2   # la primera tanda y la segunda: no una por decisión
+    assert len(fotos_pedidas) == 2 and len(fotos_pedidas[1]) == 15   # igual con las fotos: solo las nuevas
 
     at.button(key="deslizar_volver").click().run()
     assert at.session_state["vista"] == "buscador"

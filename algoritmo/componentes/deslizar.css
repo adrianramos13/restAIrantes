@@ -12,6 +12,12 @@
 .dz-tarjeta:nth-last-child(2) { transform: scale(0.96) translateY(10px); }
 .dz-tarjeta:nth-last-child(n+3) { transform: scale(0.92) translateY(20px); opacity: 0; }
 .dz-foto { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.dz-foto[hidden] { display: none; }
+/* una rayita por foto (tocar la foto pasa a la siguiente); la blanca es la que se ve */
+.dz-barras { position: absolute; z-index: 1; top: 8px; left: 10px; right: 10px; display: flex; gap: 4px; pointer-events: none; }
+.dz-barras span { flex: 1; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.45); box-shadow: 0 0 3px rgba(0, 0, 0, 0.3); }
+.dz-barras span.dz-actual { background: #FFFFFF; }
+.dz-con-mapa .dz-barras { display: none; }
 .dz-sin-foto {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font-size: 96px; font-weight: 700; background: var(--st-primary-color); color: var(--st-background-color); opacity: 0.85;
@@ -29,7 +35,7 @@
   background: rgba(255, 255, 255, 0.18);
 }
 .dz-sello {
-  position: absolute; top: 22px; padding: 4px 12px; border: 3px solid; border-radius: 10px; opacity: 0; pointer-events: none; z-index: 3;
+  position: absolute; top: 26px; padding: 4px 12px; border: 3px solid; border-radius: 10px; opacity: 0; pointer-events: none; z-index: 3;
   font-size: 1.5rem; font-weight: 800; letter-spacing: 0.06em; background: rgba(255, 255, 255, 0.85);
 }
 .dz-sello-si { left: 18px; color: #15803D; transform: rotate(-12deg); }
@@ -37,7 +43,7 @@
 /* mapa del sitio: vista previa en la esquina; al tocarla ocupa la tarjeta y abajo queda una barra con el nombre
    (arrastrándola se desliza). La duración de la animación es AMPLIAR_MS en deslizar.js. */
 .dz-mapa {
-  position: absolute; z-index: 1; top: 12px; right: 12px; width: 96px; height: 96px; cursor: zoom-in;
+  position: absolute; z-index: 1; top: 22px; right: 12px; width: 96px; height: 96px; cursor: zoom-in;
   border-radius: 14px; overflow: hidden; border: 2px solid #FFFFFF; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   background: var(--st-secondary-background-color);
   transition: top 0.25s ease-out, right 0.25s ease-out, width 0.25s ease-out, height 0.25s ease-out, border-radius 0.25s ease-out;
@@ -70,4 +76,46 @@
 .dz-no { color: #DC2626; border-color: #DC2626; }
 .dz-si { color: #16A34A; border-color: #16A34A; }
 .dz-boton:disabled { opacity: 0.4; cursor: default; }
-@media (prefers-reduced-motion: reduce) { .dz-tarjeta, .dz-mapa { transition: none; } }
+/* aviso al dar «me gusta» (deslizar.js, mostrarAnadido): dura ANADIDO_MS = 4 s, como la barrita de abajo */
+.dz-anadido {
+  position: fixed; inset: 0; z-index: 1000100; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0, 0, 0, 0.6); animation: dz-aparecer 0.2s ease-out; cursor: pointer;
+  font-family: var(--st-font, sans-serif);
+}
+.dz-anadido-caja { width: min(340px, 100%); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.dz-anadido-tarjeta { position: relative; width: 100%; aspect-ratio: 3 / 4; max-height: 52svh; animation: dz-bote 0.45s ease-out; }
+.dz-anadido-tarjeta .dz-tarjeta { cursor: pointer; transform: none; opacity: 1; }
+.dz-anadido-ok {
+  padding: 6px 16px; border-radius: 999px; font-weight: 700; color: #FFFFFF; background: #16A34A;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.dz-gusto {
+  width: 100%; box-sizing: border-box; padding: 12px 16px 14px; border-radius: 18px; text-align: center;
+  background: var(--st-background-color, #FFFFFF); color: var(--st-text-color, #111111);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); animation: dz-bote 0.5s 0.2s ease-out both;
+}
+.dz-gusto-titulo { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.dz-latido { color: #E11D48; display: inline-block; animation: dz-latir 0.9s 0.5s ease-in-out 2; }
+.dz-gusto-perfiles { display: flex; justify-content: center; align-items: flex-start; gap: 16px; margin-top: 10px; }
+.dz-perfil { display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 88px; animation: dz-crecer 0.4s ease-out both; }
+.dz-avatar {
+  position: relative; width: 56px; height: 56px; border-radius: 50%; overflow: hidden; flex: none;
+  display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 700; color: #FFFFFF;
+  box-shadow: 0 0 0 3px var(--st-background-color, #FFFFFF), 0 0 0 5px #E11D48;
+}
+.dz-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.dz-mas { background: var(--st-secondary-background-color, #EEEEEE); color: var(--st-text-color, #111111); font-size: 18px; }
+.dz-perfil-nombre { font-size: 0.8rem; max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dz-anadido-tiempo {
+  width: 60%; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.85); transform-origin: left;
+  animation: dz-vaciar 4s linear forwards;
+}
+@keyframes dz-aparecer { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dz-bote { 0% { transform: scale(0.85); opacity: 0; } 70% { transform: scale(1.03); opacity: 1; } 100% { transform: scale(1); } }
+@keyframes dz-crecer { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes dz-latir { 0%, 100% { transform: scale(1); } 40% { transform: scale(1.35); } }
+@keyframes dz-vaciar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .dz-tarjeta, .dz-mapa { transition: none; }
+  .dz-anadido, .dz-anadido *, .dz-anadido-tarjeta { animation: none !important; }
+}

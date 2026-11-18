@@ -1537,10 +1537,14 @@ def contexto_deslizar():
         visitas = amigos.cargar_mis_visitas(BD, usuario)
     except bd.ErrorSupabase:
         visitas = pd.DataFrame()
+    try:   # «Tienes el mismo gusto que…» al dar «me gusta»: solo amigos aceptados
+        amigos_aceptados = [r for r in amigos.cargar_relaciones(BD, usuario) if r["estado"] == "aceptada"]
+    except bd.ErrorSupabase:
+        amigos_aceptados = []
     zona = ((perfil or {}).get("zona_lat"), (perfil or {}).get("zona_lon"))
     zona = zona if None not in zona else st.session_state.get("ubicacion_actual")
     return {
-        "bd": BD, "usuario": usuario, "lista": mi_lista, "zona": zona,
+        "bd": BD, "usuario": usuario, "lista": mi_lista, "zona": zona, "amigos": amigos_aceptados,
         "fuentes": [(mi_lista_df, PESO_GUSTO_LISTA), (eatlist, PESO_GUSTO_EATLIST), (visitas, None)],
         "excluir": {int(i) for df in (mi_lista_df, eatlist, visitas) for i in df.get("ID", [])},
         "cargar_zona": _zona_deslizar, "cargar_todo": lambda: cargar_catalogo()[0],

@@ -697,10 +697,41 @@ class Supabase:
 
     def fotos_de(self, restaurante_id):
         """Archivos de las fotos extra de un restaurante ([] si no tiene o sin la 015)."""
-        if not self.con_fotos_extra():
-            return []
-        filas = self._rest("GET", "restaurantes", params={"id": f"eq.{int(restaurante_id)}", "select": "fotos"})
-        return (filas[0].get("fotos") or []) if filas else []
+        return self.fotos_de_varios([restaurante_id]).get(int(restaurante_id), [])
+
+    def fotos_de_varios(self, ids):
+        """{id: archivos} de las fotos extra de esos restaurantes, en una petición (los que no tienen no salen)."""
+        if not ids or not self.con_fotos_extra():
+            return {}
+        filas = self._rest("GET", "restaurantes", params={"id": f"in.({','.join(str(int(i)) for i in set(ids))})",
+                                                          "select": "id,fotos"})
+        return {int(f["id"]): f["fotos"] for f in filas if f.get("fotos")}
+
+    def en_listas_de(self, usuarios, ids):
+        """{restaurante_id: [usuario]}: cuáles de esos restaurantes tiene en su lista cada uno de esos usuarios."""
+        if not usuarios or not ids:
+            return {}
+        listas = self._rest("GET", "listas", params={"usuario": f"in.{_filtro_in(sorted(usuarios))}",
+                                                     "select": "id,usuario"})
+        dueno = {f["id"]: f["usuario"] for f in listas}
+        if not dueno:
+            return {}
+        filas = self._rest("GET", "lista_restaurantes", params={
+            "lista_id": f"in.({','.join(str(int(i)) for i in dueno)})",
+            "restaurante_id": f"in.({','.join(str(int(i)) for i in set(ids))})", "select": "lista_id,restaurante_id"})
+        resultado = {}
+        for f in filas:
+            resultado.setdefault(int(f["restaurante_id"]), []).append(dueno[f["lista_id"]])
+        return resultado
+
+    def comidas_juntos(self, usuario):
+        """{otro: veces} que habéis ido juntos a comer: visitas que uno confirmó por invitación del otro
+        (visitas.anadido_por, supabase/011_comensales.sql), en los dos sentidos."""
+        u = _comillas(usuario)
+        filas = self._rest("GET", "visitas", params={"or": f"(usuario.eq.{u},anadido_por.eq.{u})",
+                                                     "anadido_por": "not.is.null", "select": "usuario,anadido_por",
+                                                     "limit": 5000})
+        return dict(Counter(f["anadido_por"] if f["usuario"] == usuario else f["usuario"] for f in filas))
 
     def con_deslizar(self):
         """¿Está ya supabase/014_deslizar.sql? (se mira una vez): sin ella, el botón no sale."""

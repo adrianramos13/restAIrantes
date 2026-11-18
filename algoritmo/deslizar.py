@@ -19,7 +19,8 @@ import pandas as pd
 import streamlit as st
 
 import datos as bd
-from logica import (PESO_GUSTO_DESLIZADO, PESO_NO_GUSTA, intercalar, motivo_gusto, perfil_de_gustos,
+from amigos import datos_avatar
+from logica import (PESO_GUSTO_DESLIZADO, PESO_NO_GUSTA, intercalar, mismo_gusto, motivo_gusto, perfil_de_gustos,
                     ranking_por_gustos)
 
 ESTADO = "deslizar"              # session_state: el mazo de esta visita a la pantalla
@@ -31,7 +32,6 @@ CENTRO_MADRID = (40.4169, -3.7035)   # Puerta del Sol
 # (radio de tu zona, radio de Madrid) en km; None = el catálogo entero. Se pasa a la siguiente al acabarse.
 FASES = ((3.0, 5.0), (12.0, 12.0), (None, None))
 CLAVE_MAZO = "mazo_deslizar"     # key del componente (app.mazo_deslizar)
-AVISO_SEGUNDOS = 3               # lo que dura «X añadido a tu lista»
 
 
 def salir():
@@ -53,7 +53,7 @@ def preparar(ctx):
 
 def pantalla(ctx):
     """`ctx`: bd, usuario, lista (fila de listas o None), zona ((lat, lon) o None), fuentes ([(DataFrame, peso)] de
-    tus gustos), excluir (ids que ya conoces), cargar_zona(lat, lon, radio) y cargar_todo() -> maestro,
+    tus gustos), amigos (tus amigos aceptados: relaciones_de), excluir (ids que ya conoces), cargar_zona(lat, lon, radio) y cargar_todo() -> maestro,
     tarjeta(fila) -> {foto, meta}, al_cambiar_lista() (borra la caché de tu lista) y mazo(tarjetas, al_decidir)
     (dibuja el componente: se registra en app.py, como los de explorar.py)."""
     st.button("Volver", icon=":material/arrow_back:", type="tertiary", on_click=salir, key="deslizar_volver")
@@ -120,9 +120,9 @@ def rellenar(est, ctx):
 
 
 def decidir(est, ctx, restaurante_id, gusta):
-    """Guarda una decisión: en deslizados y, si te gusta, en tu lista. Devuelve el aviso para el usuario."""
+    """Guarda una decisión: en deslizados y, si te gusta, en tu lista (el aviso lo enseña el navegador)."""
     if restaurante_id not in est["pendientes"]:   # repetida (doble toque) o de otra visita a la pantalla
-        return None
+        return
     est["pendientes"].remove(restaurante_id)
     (est["gustados"] if gusta else est["descartados"]).append(restaurante_id)
     est["decisiones"] += 1
@@ -130,13 +130,11 @@ def decidir(est, ctx, restaurante_id, gusta):
         _ordenar(est, ctx)
     ctx["bd"].guardar_deslizado(ctx["usuario"], restaurante_id, gusta)
     if not gusta:
-        return None
+        return
     if est["lista"] is None:   # aún no tenía lista: se le crea una sin enlace de Google Maps
         est["lista"] = ctx["bd"].crear_lista_vacia(ctx["usuario"])
     ctx["bd"].anadir_a_lista(est["lista"]["id"], restaurante_id)
     ctx["al_cambiar_lista"]()
-    nombre = est["pool"].loc[est["pool"]["ID"] == restaurante_id, "Nombre"]
-    return f"«{nombre.iloc[0]}» añadido a tu lista" if not nombre.empty else "Añadido a tu lista"
 
 
 def _al_decidir():
@@ -151,9 +149,7 @@ def mazo(ctx):
     decision = st.session_state.pop(DECISION, None)
     try:
         if decision:
-            aviso = decidir(est, ctx, int(decision["id"]), bool(decision["gusta"]))
-            if aviso:
-                st.toast(aviso, icon=":material/favorite:", duration=AVISO_SEGUNDOS)
+            decidir(est, ctx, int(decision["id"]), bool(decision["gusta"]))
         rellenar(est, ctx)
     except bd.ErrorSupabase:
         st.toast("No se ha podido guardar ahora mismo. Prueba en un momento.", icon=":material/error:")
@@ -161,11 +157,57 @@ def mazo(ctx):
         st.info("¡Has visto todos los restaurantes que tenemos! Cada día se analizan sitios nuevos: vuelve en unos días.")
         return
     pool = est["pool"].set_index("ID", drop=False)
-    ciudades = _ciudades(est, ctx, pool)
+    ciudades, fotos, gustos = _ciudades(est, ctx, pool), _fotos(est, ctx), _gustos(est, ctx)
     tarjetas = [{"id": int(i), "nombre": str(pool.at[i, "Nombre"]), "localidad": ciudades.get(i) or "",
-                 **ctx["tarjeta"](pool.loc[i]), "motivo": motivo_gusto(pool.loc[i], est["perfil"])}
+                 **ctx["tarjeta"](pool.loc[i]), "fotos": fotos.get(int(i)) or [],
+                 "gusto": gustos.get(int(i)),
+                 "motivo": motivo_gusto(pool.loc[i], est["perfil"])}
                 for i in est["pendientes"] if i in pool.index]
     ctx["mazo"](tarjetas, _al_decidir)
+
+
+def _fotos(est, ctx):
+    """URLs de las fotos de la galería de cada tarjeta (supabase/015_fotos_extra.sql), pedidas una vez por tanda
+    nueva. Sin ellas, la tarjeta enseña solo su foto de siempre."""
+    fotos = est.setdefault("fotos", {})
+    faltan = [int(i) for i in est["pendientes"] if int(i) not in fotos]
+    if faltan:
+        try:
+            archivos = ctx["bd"].fotos_de_varios(faltan)
+            fotos.update({i: [ctx["bd"].url_foto(a) for a in archivos.get(i, [])] for i in faltan})
+        except bd.ErrorSupabase:
+            pass   # se vuelve a pedir con la siguiente decisión
+    return fotos
+
+
+def _gustos(est, ctx):
+    """De cada tarjeta, los amigos que también la tienen en su lista: los que salen en «Tienes el mismo gusto que…»
+    (logica.mismo_gusto: los que más veces han ido a comer contigo) y cuántos más hay. Se pide una vez por tanda
+    nueva; al navegador solo llega su foto, inicial, color y @usuario o nombre (nunca el correo)."""
+    gustos = est.setdefault("gustos", {})
+    faltan = [int(i) for i in est["pendientes"] if int(i) not in gustos]
+    amigos = {a["usuario"]: a for a in ctx.get("amigos") or []}
+    if not faltan or not amigos:
+        return gustos
+    try:
+        quienes = ctx["bd"].en_listas_de(list(amigos), faltan)
+    except bd.ErrorSupabase:
+        return gustos   # se vuelve a pedir con la siguiente decisión
+    if "comidas" not in est:
+        est["comidas"] = _comidas(ctx)
+    for i in faltan:
+        primeros, mas = mismo_gusto([amigos[u] for u in quienes.get(i, []) if u in amigos], est["comidas"])
+        gustos[i] = {"perfiles": [{**datos_avatar(p), "nombre": f"@{p['alias']}" if p.get("alias")
+                                   else (p.get("nombre") or "Alguien")} for p in primeros],
+                     "mas": mas} if primeros else None
+    return gustos
+
+
+def _comidas(ctx):
+    try:
+        return ctx["bd"].comidas_juntos(ctx["usuario"])
+    except bd.ErrorSupabase:
+        return {}   # p. ej. sin supabase/011_comensales.sql: salen por nombre
 
 
 def _ciudades(est, ctx, pool):

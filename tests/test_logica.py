@@ -372,3 +372,24 @@ def test_localidad_empate_lo_decide_el_mas_cercano_y_se_unifican_mayusculas():
     assert localidad_por_vecinos(*SOL, lugares, radio_m=250) == "Torrelodones"   # 2-2: gana el más cercano
     assert nombre_localidad(" San Lorenzo De El Escorial ") == "San Lorenzo de El Escorial"
     assert nombre_localidad("Villanueva De La Cañada") == "Villanueva de la Cañada"
+
+
+# ----------------------- «Tienes el mismo gusto que…» (aviso de Food match) ----------------------- #
+from logica import mismo_gusto  # noqa: E402
+
+
+def _amigo(usuario, alias=None, nombre=None):
+    return {"usuario": usuario, "alias": alias, "nombre": nombre}
+
+
+def test_mismo_gusto_ordena_por_comidas_juntos_y_cuenta_el_resto():
+    quienes = [_amigo("a", "zoe"), _amigo("b", "bea"), _amigo("c", "carla"), _amigo("d", "dani"), _amigo("e", "eva")]
+    primeros, mas = mismo_gusto(quienes, {"a": 1, "c": 5, "e": 1})
+    assert [p["usuario"] for p in primeros] == ["c", "e"]   # 5 comidas; luego empate a 1: «eva» antes que «zoe»
+    assert mas == 3
+
+
+def test_mismo_gusto_con_pocos_y_sin_comidas():
+    primeros, mas = mismo_gusto([_amigo("b", None, "Álvaro"), _amigo("a", None, "Bea")], {})
+    assert [p["usuario"] for p in primeros] == ["b", "a"] and mas == 0   # por nombre, sin tildes
+    assert mismo_gusto([], {"a": 3}) == ([], 0)

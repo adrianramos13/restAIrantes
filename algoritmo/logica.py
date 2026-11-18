@@ -565,6 +565,17 @@ def motivo_gusto(fila, perfil):
     return None
 
 
+MAX_PERFILES_GUSTO = 2   # «Tienes el mismo gusto que…»: los que se ven; el resto, «+X»
+
+
+def mismo_gusto(quienes, comidas, maximo=MAX_PERFILES_GUSTO):
+    """De los amigos que también tienen el restaurante (`quienes`: perfiles con «usuario»), los `maximo` con los que
+    más veces has ido a comer (`comidas`: {usuario: veces}; empate, por nombre) y cuántos más hay."""
+    orden = sorted(quienes, key=lambda p: (-comidas.get(p["usuario"], 0),
+                                           _sin_tildes(p.get("alias") or p.get("nombre") or "")))
+    return orden[:maximo], max(0, len(orden) - maximo)
+
+
 # ----------------------- LOCALIDAD (tarjetas de Food match) ----------------------- #
 VECINOS_LOCALIDAD = 7
 METROS_POR_GRADO = 111_320
