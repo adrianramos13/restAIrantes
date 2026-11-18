@@ -20,6 +20,7 @@ ORDEN_PUNTUACION = "Mejor valorados"
 ORDEN_CERCANOS = "Más cerca"
 ORDEN_RESENAS = "Más reseñas"   # solo en "Mi lista"
 ORDEN_NOMBRE = "Nombre"
+ORDEN_RECIENTES = "Recientes"   # solo en tu lista: los últimos que añadiste primero (los sin fecha, al final)
 COL_ANADIDO = "Añadido a tu lista"   # ISO con zona (lista_restaurantes.anadido_en, supabase/016); vacío si no se sabe
 PRESUPUESTO_SIN_LIMITE = 100   # el máximo del slider de presupuesto significa "sin tope"
 # Categoría de cocina calculada con Jev (columnas que trae clasificacion_jev.xlsx).
@@ -195,6 +196,10 @@ def filtrar_lista(maestro, df_platos, texto="", cocinas=(), presupuesto_min=0, p
         df = df[(dias >= pd.Timestamp(anadido_entre[0])) & (dias <= pd.Timestamp(anadido_entre[-1]))]
     if orden == ORDEN_NOMBRE:
         return df.sort_values("Nombre", key=lambda s: s.map(_sin_tildes))
+    if orden == ORDEN_RECIENTES:
+        momento = pd.to_datetime(df[COL_ANADIDO] if COL_ANADIDO in df.columns else pd.Series(None, index=df.index),
+                                 utc=True, errors="coerce")
+        return df.loc[momento.sort_values(ascending=False, na_position="last", kind="stable").index]
     if orden == ORDEN_RESENAS:
         return df.sort_values(["Nº Reseñas", "Puntuación"], ascending=False)
     return df.sort_values(["Puntuación", "Nº Reseñas"], ascending=False)

@@ -59,6 +59,7 @@ if "PYTEST_CURRENT_TEST" not in os.environ:
             importlib.reload(_modulo)
 
 from logica import (COL_ANADIDO, COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
+                    ORDEN_RECIENTES,
                     ORDEN_RESENAS, PRESUPUESTO_SIN_LIMITE, VOTOS_MIN_SECUNDARIA, fecha_anadido, filtrar_lista, filtrar_y_puntuar,
                     ordenar_resultados, sugerencia_plato, tiene_categorias_jev, insights_perfil,
                     insertar_en_orden, vista_previa_posicion, PESO_GUSTO_EATLIST, PESO_GUSTO_LISTA)
@@ -1407,6 +1408,16 @@ def seccion_mi_lista(maestro, df_platos):
                      lista=lista_de_lugares, mapa=mapa_de_lugares)
 
 
+def cuando_anadido(fila, ahora):
+    """Línea de la tarjeta con cuándo entró en tu lista: «Añadido hoy», «… hace 3 días», «… el 12/10/2025»."""
+    if pd.isna(fila.get(COL_ANADIDO)):
+        return {}   # de antes de supabase/016: no se sabe
+    cuando = hace_cuanto(str(fila[COL_ANADIDO]), ahora)
+    if "/" in cuando:   # hace más de una semana: con el año
+        cuando = "el " + _hora_local(str(fila[COL_ANADIDO])).strftime("%d/%m/%Y")
+    return {"cuando": f"añadido {cuando}"}
+
+
 def lista_filtrable(maestro, df_platos, en_ventana=False):
     """Restaurantes con buscador por nombre, filtros y orden: en Buscar (modo local) o, con `en_ventana`, en las
     ventanas «en tu lista» e «idos» del Perfil, donde la ficha del que se toque sale en la misma ventana."""
@@ -1442,9 +1453,13 @@ def lista_filtrable(maestro, df_platos, en_ventana=False):
             anadido_entre = st.date_input("Añadidos a tu lista entre", (), min_value=dias.min().date(),
                                           max_value=max(dias.max().date(), date.today()), format="DD/MM/YYYY",
                                           key="ml_anadido")
-    orden = st.segmented_control("Ordenar", [ORDEN_PUNTUACION, ORDEN_RESENAS, ORDEN_NOMBRE], default=ORDEN_PUNTUACION,
+    ordenes = [ORDEN_PUNTUACION, ORDEN_RESENAS, ORDEN_NOMBRE] + ([ORDEN_RECIENTES] if not dias.empty else [])
+    if st.session_state.get("ml_orden") not in ordenes:   # p. ej. «Recientes» en la lista de idos, que no tiene fechas
+        st.session_state.pop("ml_orden", None)
+    orden = st.segmented_control("Ordenar", ordenes, default=ORDEN_PUNTUACION,
                                  key="ml_orden", label_visibility="collapsed", required=True, width="stretch",
-                                 format_func=lambda o: "Mejor nota" if o == ORDEN_PUNTUACION else o)   # cabe en una fila
+                                 format_func=lambda o: ({ORDEN_PUNTUACION: "Nota", ORDEN_RESENAS: "Reseñas"} if len(ordenes) > 3
+                                                        else {ORDEN_PUNTUACION: "Mejor nota"}).get(o, o))   # cabe en una fila
 
     df = filtrar_lista(maestro, df_platos, texto, cocinas, presupuesto_min,
                        None if presupuesto_max == PRESUPUESTO_SIN_LIMITE else presupuesto_max,
@@ -1460,7 +1475,9 @@ def lista_filtrable(maestro, df_platos, en_ventana=False):
     if st.session_state.get("ml_filtros") != filtros:
         st.session_state["ml_filtros"], st.session_state["ml_mostrados"] = filtros, MI_LISTA_POR_PAGINA
     top = df.head(st.session_state["ml_mostrados"])
-    mostrar_lista(top, key="lista_mi_lista", en_ventana=en_ventana)
+    mostrar_lista(top, key="lista_mi_lista", en_ventana=en_ventana,
+                  extra=(lambda f, ahora=_hora_local(datetime.now(timezone.utc).isoformat()): cuando_anadido(f, ahora))
+                  if not dias.empty else None)
     if len(df) > len(top):
         if st.button(f"Ver más ({len(df) - len(top)} restantes)", width="stretch", key="ml_ver_mas"):
             st.session_state["ml_mostrados"] += MI_LISTA_POR_PAGINA

@@ -401,6 +401,10 @@ def test_filtrar_lista_por_fecha_en_que_se_anadio():
     assert filtrar_lista(m, vacio, anadido_entre=(date(2026, 10, 1),))["ID"].tolist() == [2]   # un solo día
     assert len(filtrar_lista(m, vacio)) == 3
     assert filtrar_lista(m.drop(columns=[COL_ANADIDO]), vacio, anadido_entre=(date(2026, 10, 1),)).empty
+    from logica import ORDEN_RECIENTES
+    assert filtrar_lista(m, vacio, orden=ORDEN_RECIENTES)["ID"].tolist() == [1, 2, 3]   # sin fecha, al final
+    assert filtrar_lista(m.iloc[::-1], vacio, orden=ORDEN_RECIENTES)["ID"].tolist() == [1, 2, 3]
+    assert len(filtrar_lista(m.drop(columns=[COL_ANADIDO]), vacio, orden=ORDEN_RECIENTES)) == 3
 
 
 def test_mismo_gusto_con_pocos_y_sin_comidas():

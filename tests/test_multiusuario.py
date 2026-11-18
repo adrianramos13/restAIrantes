@@ -1202,6 +1202,15 @@ def test_en_tu_lista_se_filtra_por_fecha_en_que_se_anadio(multiusuario, monkeypa
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert any(c.value == f"1 de {total} restaurantes" for c in at.caption)
+    at.date_input(key="ml_anadido").set_value(())
+    at.button_group(key="ml_orden").set_value("Recientes")   # los últimos añadidos primero, con su fecha
+    at.session_state["abrir_lista"] = "tu_lista"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    tarjetas = [c for c in at.get("bidi_component") if "adido el 01/06/2026" in str(c.proto)]
+    assert tarjetas, "falta la fecha de adición en las tarjetas"
+    texto = str(tarjetas[0].proto)
+    assert texto.index("01/06/2026") < texto.index("10/03/2026")   # el de junio, antes que el de marzo
 
 
 def test_diario_por_meses(multiusuario):
