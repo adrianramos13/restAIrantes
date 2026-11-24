@@ -24,6 +24,40 @@ def test_mismo_sitio(nuestro, de_google, mismo):
     assert vl.mismo_sitio(nuestro, de_google) is mismo
 
 
+@pytest.mark.parametrize("nuestro, de_google, metros, mismo", [
+    ("La Piparra", "La Piparra CC Carrefour Alcobendas", 40, True),   # casos reales de Overture / Google
+    ("Lionheart", "Lionheart Shisha Lounge & Cocktail Bar", 120, True),
+    ("Arequepay", "Restaurante Arequepay", 7, True),
+    ("El CEPO", "BAR EL CEPO - CASA DE COMIDAS RESTAURANTE", 3, True),
+    ("Paddys Madrid", "Paddy's Bar Irlandés", 11, True),
+    ("Tambayan Cafe Bar", "Bar Tambayan", 2, True),
+    ("Restaurante The Captain", "Jewelry Bar Acorazada", 16, False),   # al lado, pero otro sitio
+    ("El Meteorito", "BAR CAFETERÍA El FLAMENQUITO", 28, False),
+    ("Bar", "Bar Manolo", 10, False),                                 # solo palabras genéricas
+    ("La Piparra", "La Piparra CC Carrefour Alcobendas", 600, False),   # ni cerca ni nombre casi igual
+    ("La Piparra", "La Piparra CC Carrefour Alcobendas", None, False),  # sin coordenadas: como antes
+    ("Zaga", "Reformas Zaga S L", 600, False),
+    ("Sanabria", "Sanabria", 323_646, False),                         # se llama igual, pero en otra ciudad
+    ("Sanabria", "Sanabria", 300, True),
+])
+def test_mismo_sitio_cerca(nuestro, de_google, metros, mismo):
+    assert vl.mismo_sitio(nuestro, de_google, metros) is mismo
+
+
+def test_coordenadas_ficha():
+    url = "https://www.google.com/maps/place/X/@40.40,-3.70,17z/data=!3m1!4b1!4m6!3m5!8m2!3d40.4312!4d-3.7012!16s"
+    assert vl.coordenadas_ficha(url) == (40.4312, -3.7012)                    # el sitio, no el centro del mapa
+    assert vl.coordenadas_ficha("https://www.google.com/maps/@40.5,-3.6,15z") == (40.5, -3.6)
+    assert vl.coordenadas_ficha(None) == (None, None)
+
+
+def test_veredicto_por_cercania():
+    lugar = {"nombre": "La Piparra", "lat": 40.5, "lon": -3.6}
+    leido = {"nombre_google": "La Piparra CC Carrefour", "estado": "", "lat": 40.5003, "lon": -3.6}   # ~33 m
+    assert vl.veredicto(lugar, leido) == "abierto"
+    assert vl.veredicto(lugar, {**leido, "lat": 40.51}) == "no_coincide"   # ~1,1 km
+
+
 def test_veredicto():
     lugar = {"nombre": "Margarito Bar"}
     assert vl.veredicto(lugar, {"nombre_google": "Margarito Bar", "estado": "Cerrado permanentemente"}) == "cerrado"

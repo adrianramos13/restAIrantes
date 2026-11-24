@@ -29,29 +29,60 @@ import requests
 
 import extraer_resenas
 from conexion_supabase import cliente, datos
+from servicios import haversine_km
 
 PESTANAS = 3       # sitios a la vez
 POR_LOTE = 60      # sitios que se piden a la base de datos de una vez
 PARECIDO = 0.75    # de los nombres (0-1) para dar por hecho que Google ha encontrado el mismo sitio
+CERCA_M = 250      # m: a esta distancia basta con compartir una palabra distintiva ("Arequepay" / "Restaurante Arequepay")
+LEJOS_M = 1000     # m: más lejos nunca es el mismo sitio, aunque se llame igual (otro local u otra ciudad)
+# Palabras que no distinguen un sitio de otro (en minúsculas y sin tildes, como datos.texto_busqueda)
+GENERICAS = set("""restaurante restaurant bar bares cafeteria cafe coffee taberna meson cerveceria tapas madrid
+    pizzeria bistro cocina casa grill kebab lounge cocktail cocteleria express food comida comidas asador sushi
+    burger hamburgueseria brasa pollos bocateria churreria panaderia pasteleria heladeria vinoteca tasca house
+    club gastrobar gastro plaza calle centro mercado local tienda shop store espana spain the and""".split())
 LADO_FOTO = 240    # px: la foto de la ficha rápida, pequeña (~10 KB) para que quepan todas en el almacenamiento
 LADO_FOTO_RESTAURANTE = 320   # px: la de un restaurante analizado, algo mayor porque la ficha la enseña grande
 
 
-def mismo_sitio(nombre, nombre_google):
+def mismo_sitio(nombre, nombre_google, metros=None):
     """¿El sitio que ha abierto Google es el nuestro? Mismo nombre salvo detalles ("Cecibakery Madrid" /
-    "Ceci Bakery"), pero no uno que solo lo contiene ("Zaga" / "Reformas Zaga S L")."""
+    "Ceci Bakery"), pero no uno que solo lo contiene ("Zaga" / "Reformas Zaga S L"). Con `metros` (distancia
+    entre los dos): a <= CERCA_M basta una palabra distintiva en común ("El CEPO" / "Bar El Cepo - Casa de
+    comidas"); a > LEJOS_M, nunca."""
     a, b = datos.texto_busqueda(nombre), datos.texto_busqueda(nombre_google)
-    if not a or not b:
+    if not a or not b or (metros is not None and metros > LEJOS_M):
         return False
-    corto, largo = sorted((a.replace(" ", ""), b.replace(" ", "")), key=len)
+    juntos_a, juntos_b = a.replace(" ", ""), b.replace(" ", "")
+    corto, largo = sorted((juntos_a, juntos_b), key=len)
     if corto in largo and len(corto) >= len(largo) / 2:
+        return True
+    if metros is not None and metros <= CERCA_M and (
+            any(p in juntos_b for p in _distintivas(a)) or any(p in juntos_a for p in _distintivas(b))):
         return True
     return difflib.SequenceMatcher(None, a, b).ratio() >= PARECIDO
 
 
+def _distintivas(texto):
+    return {p for p in texto.split() if len(p) >= 4 and p not in GENERICAS}
+
+
+def metros_entre(lugar, leido):
+    """Distancia entre nuestro sitio y el que ha abierto Google (None si falta alguna coordenada)."""
+    if None in (lugar.get("lat"), lugar.get("lon"), leido.get("lat"), leido.get("lon")):
+        return None
+    return haversine_km(lugar["lat"], lugar["lon"], leido["lat"], leido["lon"]) * 1000
+
+
+def coordenadas_ficha(url):
+    """(lat, lon) del sitio de la URL de su ficha: el !3d…!4d… es el sitio exacto; el @… es el centro del mapa."""
+    m = re.search(r"!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)", url or "")
+    return (float(m.group(1)), float(m.group(2))) if m else extraer_resenas.extraer_lat_lon(url)
+
+
 def veredicto(lugar, leido):
     """'cerrado', 'abierto' o 'no_coincide' (Google ha abierto otro sitio, o ninguno: no se toca)."""
-    if not leido or not mismo_sitio(lugar["nombre"], leido["nombre_google"]):
+    if not leido or not mismo_sitio(lugar["nombre"], leido["nombre_google"], metros_entre(lugar, leido)):
         return "no_coincide"
     return "cerrado" if "permanentemente" in (leido["estado"] or "").lower() else "abierto"
 
@@ -61,8 +92,9 @@ async def leer_ficha(page, lugar):
     await extraer_resenas.abrir_ficha_desde_resultados(page, lugar["nombre"])
     ficha = await extraer_resenas.obtener_datos_ficha(page)
     extra = await extraer_resenas.obtener_datos_extra(page)
+    lat, lon = coordenadas_ficha(ficha.get("url_google"))
     return {"nombre_google": ficha["nombre_google"], "estado": extra["estado"], "nota": ficha["rating_google"],
-            "cocina": extra["cocina"], "foto": extra["foto"]}
+            "cocina": extra["cocina"], "foto": extra["foto"], "lat": lat, "lon": lon}
 
 
 def foto_pequena(url):

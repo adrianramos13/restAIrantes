@@ -66,7 +66,7 @@ def datos_actualizados(existente, fila_lista):
     return nuevos
 
 
-PESTANAS = 3   # restaurantes a la vez al sacar reseñas (--pestanas); si Google pone pegas, bajar a 1
+PESTANAS = 4   # restaurantes a la vez al sacar reseñas (--pestanas); si Google pone pegas, bajar a 1
 MAPS = "https://www.google.com/maps?hl=es"
 GALERIA = None   # fotos_galeria.Galeria con --vigilar, R2 y la 015: saca fotos extra a la vez que se analiza
 
@@ -308,9 +308,9 @@ def procesar_explorar(bd):
 # ----------------------------- Análisis por adelantado (--lote) -----------------------------
 
 GASTO_JEV = Path(__file__).resolve().parent.parent / "origen" / "gasto_jev.json"   # lo gastado en el lote (en .gitignore)
-POR_LOTE = 10                  # sitios que se analizan juntos (un Chrome, reseñas en paralelo): mucho más rápido que de 1 en 1
-POR_TANDA = 40                 # sitios seguidos antes de descansar
-PAUSA_MIN = 12                 # descanso entre tandas, para no parecer un robot ante Google
+POR_LOTE = 20                  # sitios que se analizan juntos (un Chrome, reseñas en paralelo): mucho más rápido que de 1 en 1
+POR_TANDA = 80                 # sitios seguidos antes de descansar
+PAUSA_MIN = 8                  # descanso entre tandas, para no parecer un robot ante Google
 ESPERA_ENTRE_S = (5, 20)       # espera al azar entre uno y otro
 RESCATE_CADA_S = 600          # cada cuánto se rescata lo que se quedó en "procesando" (p. ej. se cortó la red al guardarlo)
 MAX_ERRORES_SEGUIDOS = 5       # más seguidos: Google pone pegas o se ha perdido la sesión -> se para el lote
