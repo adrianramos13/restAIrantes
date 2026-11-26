@@ -1,28 +1,52 @@
-// Perfil de otra persona (desde tus amigos, el buscador o un enlace compartido por WhatsApp). Si sois amigos:
-// gustos en común, sus cifras, sus últimas valoraciones y los restaurantes que tenéis los dos en la lista.
+// Perfil de un amigo, copia de amigos._mini_perfil: «Volver», su foto con nombre y @usuario, «🤝 N % de gustos en
+// común», Nota media | Ha ido a, cocina favorita, «Sus últimas valoraciones» y «En común» en carrusel y «Quitar de
+// amigos» en rojo. Si aún no sois amigos (p. ej. llega por un enlace compartido): añadir, aceptar o cancelar.
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 
 import { Avatar } from '@/components/persona';
-import { formatoNota, TarjetaRestaurante } from '@/components/tarjeta';
-import { Boton, Caja, Cargando, Pantalla, Seccion, Texto } from '@/components/ui';
-import { api, mensaje, PerfilPersona } from '@/lib/api';
+import { TarjetaRestaurante } from '@/components/tarjeta';
+import { Boton, Cargando, Info, Pantalla, Texto } from '@/components/ui';
+import { api, mensaje, PerfilPersona, Tarjeta } from '@/lib/api';
 import { useCarga } from '@/lib/carga';
 import { compartirPerfil } from '@/lib/compartir';
+import { LETRA, useColores } from '@/lib/tema';
+
+/** st.metric: la etiqueta pequeña y la cifra grande. */
+function Cifra({ etiqueta, valor }: { etiqueta: string; valor: string }) {
+  const c = useColores();
+  return (
+    <View style={{ flex: 1 }}>
+      <Text style={{ fontFamily: LETRA.normal, fontSize: 13.125, lineHeight: 21, color: c.texto }}>{etiqueta}</Text>
+      <Text style={{ fontFamily: LETRA.normal, fontSize: 33.75, lineHeight: 40.5, color: c.texto }}>{valor}</Text>
+    </View>
+  );
+}
+
+function Carrusel({ tarjetas }: { tarjetas: Tarjeta[] }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} snapToInterval={170} decelerationRate="fast"
+      contentContainerStyle={{ gap: 10, padding: 2, paddingBottom: 10 }}>
+      {tarjetas.map((t, i) => <TarjetaRestaurante key={`${t.id}-${i}`} tarjeta={t} variante="carrusel" />)}
+    </ScrollView>
+  );
+}
 
 export default function PerfilDePersona() {
+  const c = useColores();
   const { alias } = useLocalSearchParams<{ alias: string }>();
   const perfil = useCarga(() => api<PerfilPersona>('GET', `/personas/${encodeURIComponent(alias)}`), [alias]);
   const [error, setError] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
 
-  async function hacer(metodo: 'POST' | 'DELETE', ruta: string) {
+  async function hacer(metodo: 'POST' | 'DELETE', ruta: string, volver = false) {
     setError(null);
     setOcupado(true);
     try {
       await api(metodo, ruta);
-      perfil.recargar();
+      if (volver) router.back();
+      else perfil.recargar();
     } catch (e) {
       setError(mensaje(e));
     } finally {
@@ -30,66 +54,87 @@ export default function PerfilDePersona() {
     }
   }
 
-  function quitarAmigo(nombre: string) {
-    Alert.alert('Quitar de amigos', `${nombre} dejará de ver tus valoraciones y tú las suyas.`, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Quitar', style: 'destructive', onPress: () => hacer('DELETE', `/personas/${alias}/amistad`) },
-    ]);
-  }
-
   const p = perfil.datos;
-  if (perfil.cargando && !p) return <Pantalla><Cargando /></Pantalla>;
-  if (!p) return <Pantalla><Texto tipo="error">{perfil.error ?? 'No se ha encontrado.'}</Texto></Pantalla>;
-  const amigo = p.estado === 'amigo';
+  const volver = router.canGoBack()
+    ? <Boton texto="Volver" tipo="texto" icono="arrow_back" ancho="contenido" alPulsar={() => router.back()} />
+    : <Boton texto="Ir al inicio" tipo="texto" icono="arrow_back" ancho="contenido" alPulsar={() => router.replace('/')} />;
+  if (!p) {
+    return (
+      <Pantalla>
+        <Stack.Screen options={{ headerShown: false }} />
+        {volver}
+        {perfil.error ? <Info tipo="error">{perfil.error}</Info> : <Cargando />}
+      </Pantalla>
+    );
+  }
+  const valoraciones = p.valoraciones ?? [];
+  const comunes = p.en_comun_total ?? 0;
 
   return (
     <Pantalla recargando={perfil.cargando} alRecargar={perfil.recargar}>
-      <Stack.Screen options={{ title: `@${p.alias}` }} />
-      <View style={{ alignItems: 'center', gap: 6 }}>
-        <Avatar persona={p} tam={88} />
-        <Texto tipo="titulo">{p.nombre}</Texto>
-        <Texto tipo="suave">@{p.alias}</Texto>
+      <Stack.Screen options={{ headerShown: false }} />
+      {volver}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
+        <Avatar persona={p} tam={72} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontFamily: LETRA.titulo, fontSize: 20.25, lineHeight: 24.3, color: c.texto }}>{p.nombre}</Text>
+          <Text style={{ fontFamily: LETRA.normal, fontSize: 14.25, lineHeight: 18.5, opacity: 0.7, color: c.texto }}>{`@${p.alias}`}</Text>
+        </View>
       </View>
-      {error ? <Texto tipo="error">{error}</Texto> : null}
+      {error ? <Info tipo="error">{error}</Info> : null}
 
-      {p.estado === 'nuevo' ? <Boton texto="Añadir a amigos" cargando={ocupado} alPulsar={() => hacer('POST', `/personas/${alias}/amistad`)} /> : null}
+      {p.estado === 'nuevo' ? (
+        <Boton texto="Añadir" tipo="primario" icono="person_add" cargando={ocupado} alPulsar={() => hacer('POST', `/personas/${alias}/amistad`)} />
+      ) : null}
       {p.estado === 'recibida' ? (
-        <Caja>
-          <Texto>{`${p.nombre} quiere ser tu amigo.`}</Texto>
-          <Boton texto="Aceptar" cargando={ocupado} alPulsar={() => hacer('POST', `/personas/${alias}/aceptar`)} />
-          <Boton texto="Rechazar" tipo="texto" alPulsar={() => hacer('DELETE', `/personas/${alias}/amistad`)} />
-        </Caja>
+        <>
+          <Texto>quiere ser tu amigo</Texto>
+          <View style={{ flexDirection: 'row', gap: 15 }}>
+            <Boton texto="Aceptar" tipo="primario" icono="check" style={{ flex: 1 }} cargando={ocupado}
+              alPulsar={() => hacer('POST', `/personas/${alias}/aceptar`)} />
+            <Boton texto="Rechazar" icono="close" style={{ flex: 1 }} alPulsar={() => hacer('DELETE', `/personas/${alias}/amistad`)} />
+          </View>
+        </>
       ) : null}
       {p.estado === 'enviada' ? (
-        <Caja>
-          <Texto tipo="suave">Solicitud enviada: cuando la acepte, verás aquí sus valoraciones.</Texto>
-          <Boton texto="Cancelar solicitud" tipo="texto" alPulsar={() => hacer('DELETE', `/personas/${alias}/amistad`)} />
-        </Caja>
-      ) : null}
-
-      {amigo ? (
         <>
-          {p.afinidad !== null && p.afinidad !== undefined ? (
-            <Texto tipo="subtitulo" style={{ textAlign: 'center' }}>{`🤝 ${p.afinidad} % de gustos en común`}</Texto>
-          ) : null}
-          <Caja>
-            <Texto>{`Nota media: ${p.nota_media ? formatoNota(p.nota_media) : '–'} · Ha ido a ${p.ha_ido ?? 0} sitios`}</Texto>
-            {p.cocina_favorita ? <Texto>{`🍽️ Cocina favorita: ${p.cocina_favorita}`}</Texto> : null}
-          </Caja>
-          <Seccion titulo="Sus últimas valoraciones">
-            {!p.valoraciones?.length ? <Texto tipo="suave">Todavía no ha marcado ningún sitio con «Ya he ido».</Texto> : null}
-            {p.valoraciones?.map((t) => <TarjetaRestaurante key={`${t.id}-${t.visita?.fecha}`} tarjeta={t} />)}
-          </Seccion>
-          <Seccion titulo={`En común · ${p.en_comun_total ?? 0} en vuestras listas`}>
-            {p.idos_los_dos ? <Texto tipo="suave">{`Habéis ido los dos a ${p.idos_los_dos}.`}</Texto> : null}
-            {p.en_comun?.map((t) => <TarjetaRestaurante key={t.id} tarjeta={t} />)}
-          </Seccion>
-          <Boton texto="Quitar de amigos" tipo="texto" alPulsar={() => quitarAmigo(p.nombre)} />
+          <Texto tipo="suave">Solicitud enviada: cuando la acepte, verás aquí sus valoraciones.</Texto>
+          <Boton texto="Cancelar" tipo="texto" ancho="contenido" alPulsar={() => hacer('DELETE', `/personas/${alias}/amistad`)} />
         </>
       ) : null}
 
-      <Boton texto="Compartir su perfil" tipo="secundario" alPulsar={() => compartirPerfil(p.alias)} />
-      {router.canGoBack() ? null : <Boton texto="Ir al inicio" tipo="texto" alPulsar={() => router.replace('/')} />}
+      {p.estado === 'amigo' ? (
+        <>
+          {p.afinidad !== null && p.afinidad !== undefined ? (
+            <Texto tipo="negrita" style={{ fontFamily: LETRA.negrita }}>{`🤝 ${p.afinidad} % de gustos en común`}</Texto>
+          ) : null}
+          <View style={{ flexDirection: 'row', gap: 15 }}>
+            <Cifra etiqueta="Nota media" valor={p.nota_media ? `${p.nota_media.toFixed(1).replace('.', ',')} ★` : '–'} />
+            <Cifra etiqueta="Ha ido a" valor={String(p.ha_ido ?? 0)} />
+          </View>
+          {p.cocina_favorita ? (
+            <Texto>{'🍽️ Cocina favorita: '}<Text style={{ fontFamily: LETRA.negrita }}>{p.cocina_favorita}</Text></Texto>
+          ) : null}
+
+          <Texto tipo="negrita" style={{ fontFamily: LETRA.negrita }}>Sus últimas valoraciones</Texto>
+          {valoraciones.length ? <Carrusel tarjetas={valoraciones} />
+            : <Texto tipo="suave">Todavía no ha marcado ningún sitio con «He ido».</Texto>}
+
+          <Texto>
+            <Text style={{ fontFamily: LETRA.negrita }}>En común</Text>
+            {` · ${comunes} restaurante${comunes !== 1 ? 's' : ''} en vuestras listas`}
+            {p.idos_los_dos ? ` · habéis ido los dos a ${p.idos_los_dos}` : ''}
+          </Texto>
+          {/* desde «En común» la ficha no lleva su reseña: solo la tuya */}
+          {p.en_comun?.length ? <Carrusel tarjetas={p.en_comun.map((t) => ({ ...t, visita: undefined }))} /> : null}
+
+          {/* global.css .st-key-quitar_amigo: en rojo, que se vea que es serio */}
+          <Boton texto="Quitar de amigos" icono="person_remove" alPulsar={() => hacer('DELETE', `/personas/${alias}/amistad`, true)}
+            style={{ backgroundColor: 'rgba(220, 38, 38, 0.08)', borderColor: '#DC2626' }}
+            colorTexto={c.texto === '#1F1A14' ? '#B91C1C' : '#F87171'} />
+        </>
+      ) : null}
+      <Boton texto="Compartir su perfil" tipo="texto" icono="share" alPulsar={() => compartirPerfil(p.alias)} />
     </Pantalla>
   );
 }

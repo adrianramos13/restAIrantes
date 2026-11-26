@@ -176,6 +176,12 @@ def test_yo(cliente):
     assert yo["preferencias"]["transporte"] == "En coche"
 
 
+def test_inicio_fotos_de_la_cinta_y_sin_idea_con_pocas_menciones(cliente):
+    r = cliente.get("/inicio").json()
+    assert sorted(r["portada"]) == ["https://fotos.ejemplo/restaurantes/1.jpg", "https://fotos.ejemplo/restaurantes/2.jpg"]
+    assert r["idea"] is None   # cada plato sale una vez: sugerencia_plato pide al menos 2 menciones buenas
+
+
 def test_buscar_solo_los_que_cumplen_todo(cliente):
     r = cliente.post("/buscar", json={"lat": 40.42, "lon": -3.70, "minutos": 20}).json()
     assert [x["nombre"] for x in r["resultados"]] == ["Casa Pepe"]   # Sushi Ya está a 40 min
@@ -248,6 +254,41 @@ def test_ids_fuera_de_rango_y_lugares_raros(cliente):
     assert cliente.get("/restaurantes/0").status_code == 422
     assert cliente.post("/lugares/a,b)/analizar").status_code in (404, 422)
     assert cliente.get("/lugares", params={"lat": "nan", "lon": 3}).status_code == 422
+
+
+def test_avisar_cerrado(cliente, monkeypatch):
+    avisados = []
+    monkeypatch.setattr(cliente.bd, "lugar_por_id", lambda i: {"id": i} if i == "a" else None, raising=False)
+    monkeypatch.setattr(cliente.bd, "avisar_cerrado", avisados.append, raising=False)
+    assert cliente.post("/lugares/zz/cerrado").status_code == 404
+    assert cliente.post("/lugares/a/cerrado").json() == {"ok": True} and avisados == ["a"]
+
+
+def test_tus_datos_cabecera_y_tarjetas(cliente):
+    cliente.put("/visitas/1", json={"nota": 4.5})
+    d = cliente.get("/yo/datos").json()
+    assert (d["idos"], d["en_lista"], d["amigos"]) == (1, 2, 0)
+    textos = [t["texto"] for t in d["tarjetas"]]
+    assert "De tu lista ya probado" in textos and "Tu nota media" in textos
+    assert next(t for t in d["tarjetas"] if t["texto"] == "De tu lista ya probado")["valor"] == "50 %"
+
+
+def test_lugares_en_zona_con_filtro_de_cocina_e_icono(cliente, monkeypatch):
+    pedidos = []
+    sitios = [{"id": "a", "nombre": "Sushi Uno", "lat": 40.42, "lon": -3.70, "categoria": "Japonesa", "estado_analisis": None},
+              {"id": "b", "nombre": "Bar Pepe", "lat": 40.421, "lon": -3.70, "categoria": "Bar", "estado_analisis": None}]
+
+    def buscar_lugares(texto="", cerca=None, radio_km=2.0, limite=200):
+        pedidos.append(radio_km)
+        return sitios
+    monkeypatch.setattr(cliente.bd, "buscar_lugares", buscar_lugares, raising=False)
+    import explorar
+    explorar._en_zona.clear()
+    r = cliente.get("/lugares", params={"lat": 40.42, "lon": -3.70, "zona": True, "cocinas": ["Japonesa"]}).json()
+    assert pedidos == [explorar.RADIO_ZONA_KM]            # zona: todo lo que hay a ~1 km
+    assert [l["id"] for l in r["lugares"]] == ["a"] and r["lugares"][0]["icono"] == "🍣"
+    assert r["cocinas"] == ["Bar", "Japonesa"] and r["total"] == 2   # las opciones salen de todo lo encontrado
+    assert cliente.get("/lugares", params={"zona": True}).json()["lugares"] == []   # zona sin punto: nada
 
 
 # ----------------------- amigos, notificaciones, perfil y cuenta (api/social.py) ----------------------- #

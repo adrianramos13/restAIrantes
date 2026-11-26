@@ -1,5 +1,6 @@
 // Cliente de la API (api/principal.py). La app nunca ve claves de Supabase: solo el token de tu sesión.
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 // En desarrollo: http://<IP del PC>:8787 (ver movil/.env). Al publicar, la URL de la API en internet.
 const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8787';
@@ -34,7 +35,14 @@ export interface Visita {
   nota: number | null;
   comentario: string | null;
   fecha: string | null;
+  cuando: string | null;   // «hoy», «ayer», «hace 3 días», «12/10» (logica.hace_cuanto)
   quien: string | null;
+}
+
+/** GET /inicio: fotos de la cinta de la portada y «Una idea para hoy». */
+export interface InicioDatos {
+  portada: string[];
+  idea: { plato: string; menciones: number; restaurante: Tarjeta } | null;
 }
 
 export interface Ficha extends Tarjeta {
@@ -62,6 +70,7 @@ export interface Lugar {
   lat: number;
   lon: number;
   cocina: string | null;
+  categoria?: string | null;
   direccion: string | null;
   ciudad: string | null;
   telefono: string | null;
@@ -70,6 +79,7 @@ export interface Lugar {
   restaurante_id: number | null;
   nota: number | null;
   foto: string | null;
+  icono?: string;   // emoji de su cocina (explorar._icono), en las listas
 }
 
 export interface Preferencias {
@@ -85,7 +95,8 @@ export interface Yo {
   foto: string | null;
   zona: string | null;
   preferencias: Preferencias;
-  lista: { estado: string | null; mensaje: string | null; total: number };
+  foto_propia?: boolean;
+  lista: { estado: string | null; mensaje: string | null; total: number; enlace?: string | null; actualizado_en?: string | null };
   solicitudes: number;
   notificaciones: number;
   food_match: boolean;
@@ -152,15 +163,21 @@ export class ErrorApi extends Error {
 let sesionActual: Sesion | null = null;
 let alCaducar: (() => void) | null = null;
 
+// En la web (npx expo start --web, para probar en el PC) no hay llavero: se usa localStorage.
+const WEB = Platform.OS === 'web';
+
 export async function cargarSesion(): Promise<Sesion | null> {
-  const guardada = await SecureStore.getItemAsync(CLAVE_SESION);
+  const guardada = WEB ? localStorage.getItem(CLAVE_SESION) : await SecureStore.getItemAsync(CLAVE_SESION);
   sesionActual = guardada ? (JSON.parse(guardada) as Sesion) : null;
   return sesionActual;
 }
 
 export async function guardarSesion(sesion: Sesion | null): Promise<void> {
   sesionActual = sesion;
-  if (sesion) await SecureStore.setItemAsync(CLAVE_SESION, JSON.stringify(sesion));
+  if (WEB) {
+    if (sesion) localStorage.setItem(CLAVE_SESION, JSON.stringify(sesion));
+    else localStorage.removeItem(CLAVE_SESION);
+  } else if (sesion) await SecureStore.setItemAsync(CLAVE_SESION, JSON.stringify(sesion));
   else await SecureStore.deleteItemAsync(CLAVE_SESION);
 }
 

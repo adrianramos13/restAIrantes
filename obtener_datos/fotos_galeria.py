@@ -113,10 +113,10 @@ class Galeria:
         cola = self.siguientes(POR_TANDA)
         if not cola:
             return False
-        antes = self.hechos
+        antes, total = self.hechos, len(cola)   # la cola se vacía al trabajar
         asyncio.run(self._tanda(cola))
         self.descanso_hasta = time.monotonic() + DESCANSO_MIN * 60
-        print(f"Fotos: {self.hechos - antes} de {len(cola)} restaurantes con fotos nuevas.")
+        print(f"Fotos: {self.hechos - antes} de {total} restaurantes con fotos nuevas.")
         if self.vacios_seguidos >= MAX_VACIOS_SEGUIDOS:
             print(f"Fotos: PARADO tras {MAX_VACIOS_SEGUIDOS} restaurantes seguidos sin galería (¿se ha perdido la "
                   "sesión de Google?). Se reintenta al reiniciar el procesador.")

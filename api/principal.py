@@ -12,6 +12,7 @@ USO (desde la raíz del proyecto):
 """
 
 import logging
+import random
 import sys
 from datetime import date
 from pathlib import Path as Ruta
@@ -34,9 +35,10 @@ import explorar  # noqa: E402
 import social  # noqa: E402
 import tarjetas  # noqa: E402
 from cuentas import ErrorCuenta  # noqa: E402
-from logica import (COL_ANADIDO, ORDEN_NOMBRE, ORDEN_PUNTUACION, ORDEN_RECIENTES, ORDEN_RESENAS,  # noqa: E402
-                    PRESUPUESTO_SIN_LIMITE, estadisticas_lista, etiqueta_cocina, filtrar_lista, filtrar_y_puntuar,
-                    ordenar_resultados, radio_busqueda_km, resumen_mencion_plato)
+from logica import (COL_ANADIDO, COL_CATEGORIA, ORDEN_NOMBRE, ORDEN_PUNTUACION, ORDEN_RECIENTES,  # noqa: E402
+                    ORDEN_RESENAS, PRESUPUESTO_SIN_LIMITE, estadisticas_lista, filtrar_lista,
+                    filtrar_y_puntuar, ordenar_resultados, radio_busqueda_km, resumen_mencion_plato, sugerencia_plato,
+                    tiene_categorias_jev)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche  # noqa: E402
 
 MAX_RESULTADOS = 50        # de una búsqueda: la app enseña 5 y «Ver más» hasta 10, en el orden que elija
@@ -123,8 +125,10 @@ def yo(u=Depends(usuario_actual), bd=Depends(obtener_bd)):
         "nombre": perfil.get("nombre") or u.get("nombre") or u["correo"].split("@")[0],
         "alias": perfil.get("alias"), "foto": datos.foto_valida(perfil.get("foto")),
         "preferencias": datos.preferencias_validas(perfil.get("preferencias")),
+        "foto_propia": datos.es_foto_propia(perfil.get("foto")),   # «Quitar foto» solo para la subida
         "lista": {"estado": (lista or {}).get("estado"), "mensaje": (lista or {}).get("mensaje"),
-                  "total": len(maestro)},
+                  "total": len(maestro), "enlace": (lista or {}).get("enlace"),
+                  "actualizado_en": (lista or {}).get("actualizado_en")},
         "zona": perfil.get("zona"),   # «De dónde eres»: solo la ve él
         "solicitudes": amigos.solicitudes_pendientes(bd, u["correo"]),
         "notificaciones": len(social.invitaciones_de_amigos(bd, u["correo"])[0]),
@@ -135,14 +139,25 @@ def yo(u=Depends(usuario_actual), bd=Depends(obtener_bd)):
 
 # ----------------------- Comer hoy ----------------------- #
 
+def cocinas_disponibles(maestro):
+    """app.cocinas_disponibles: las categorías de Jev o, si la lista no las tiene, la cocina de Google."""
+    if maestro.empty:
+        return []
+    if tiene_categorias_jev(maestro):
+        return sorted(str(c) for c in maestro[COL_CATEGORIA].dropna().unique())
+    return sorted(str(c) for c in maestro["Tipo de cocina"].dropna().unique()) if "Tipo de cocina" in maestro else []
+
+
 @app.get("/cocinas")
 def cocinas(fuente: Literal["lista", "todos"] = "lista", u=Depends(usuario_actual), bd=Depends(obtener_bd)):
+    """Las cocinas para el desplegable y cuántos sitios hay (la portada: «… · N sitios»)."""
     if fuente == "todos":
-        return {"cocinas": bd.cocinas_del_catalogo()[0]}
+        cocinas_todos, total = bd.cocinas_del_catalogo()
+        return {"cocinas": cocinas_todos, "total": total}
     maestro = mi_lista(bd, u["correo"])[0]
     if maestro.empty:
-        return {"cocinas": []}
-    return {"cocinas": sorted({etiqueta_cocina(f).split(" · ")[0] for _, f in maestro.iterrows()} - {"N/D"})}
+        return {"cocinas": [], "total": 0}
+    return {"cocinas": cocinas_disponibles(maestro), "total": len(maestro)}
 
 
 @app.get("/geocodificar", dependencies=[Depends(limite("geocodificar", 30, 60))])
@@ -202,15 +217,24 @@ def lista(texto: str = Query("", max_length=60), cocina: list[str] = Query([], m
           presupuesto_min: int = 0, presupuesto_max: int = PRESUPUESTO_SIN_LIMITE, nota_min: float = 0.0,
           plato: str = Query("", max_length=60), ocultar_cerrados: bool = False,
           orden: Literal["nota", "nombre", "recientes", "resenas"] = "nota",
+          de: Literal["lista", "idos"] = "lista", desde: date | None = None, hasta: date | None = None,
           u=Depends(usuario_actual), bd=Depends(obtener_bd)):
+    """app.lista_filtrable: tu lista o, con de=idos, los restaurantes a los que has ido (app.restaurantes_a_los_que_has_ido).
+    `desde`/`hasta`: «Añadidos a tu lista entre». `cocinas`: las opciones del filtro (app.cocinas_disponibles)."""
     maestro, df_platos, _ = mi_lista(bd, u["correo"])
+    if de == "idos":
+        visitas = amigos.cargar_mis_visitas(bd, u["correo"])
+        maestro = visitas.drop(columns=["Amigo", "Nota visita", "Comentario visita", "Fecha visita"],
+                               errors="ignore").drop_duplicates("ID") if not visitas.empty else visitas
+    anadido_entre = tuple(d for d in (desde, hasta) if d) if desde else ()
     df = filtrar_lista(maestro, df_platos, texto, tuple(c[:60] for c in cocina), presupuesto_min,
                        None if presupuesto_max >= PRESUPUESTO_SIN_LIMITE else presupuesto_max, nota_min,
-                       plato, ocultar_cerrados, ORDENES[orden])
+                       plato, ocultar_cerrados, ORDENES[orden], anadido_entre) if not maestro.empty else maestro
     resumen = estadisticas_lista(maestro)
     if resumen:
         resumen = {**resumen, "cocinas": {str(k): int(v) for k, v in resumen["cocinas"].items()}}
-    return {"restaurantes": tarjetas.tarjetas(df, bd), "total": len(maestro), "resumen": resumen}
+    return {"restaurantes": tarjetas.tarjetas(df, bd), "total": len(maestro), "resumen": resumen,
+            "cocinas": cocinas_disponibles(maestro)}
 
 
 class Enlace(BaseModel):
@@ -333,12 +357,28 @@ def guardar_eatlist(o: Orden, u=Depends(usuario_actual), bd=Depends(obtener_bd))
 
 @app.get("/lugares")
 def lugares(q: str = Query("", max_length=100), lat: float | None = Query(None, ge=-90, le=90), lon: float | None = Query(None, ge=-180, le=180),
+            zona: bool = False,
+            cocinas: Annotated[list[str] | None, Query(max_length=30)] = None,
+            pmin: int = Query(0, ge=0, le=PRESUPUESTO_SIN_LIMITE), pmax: int = Query(PRESUPUESTO_SIN_LIMITE, ge=0, le=PRESUPUESTO_SIN_LIMITE),
+            nota: float = Query(0.0, ge=0, le=5), plato: str = Query("", max_length=60),
             u=Depends(usuario_actual), bd=Depends(obtener_bd)):
+    """Descubrir (explorar.seccion): por nombre, cerca de ti o, con `zona`, todo lo que hay a ~1 km de ese punto; con
+    los filtros de «Filtros» (explorar.filtrar_lugares). `cocinas` = las opciones del filtro, de lo encontrado."""
     cerca = (lat, lon) if lat is not None and lon is not None else None
-    if not datos.texto_busqueda(q) and not cerca:
-        return {"lugares": []}
-    encontrados = explorar._ordenar(explorar._buscar(bd, q, cerca), cerca)[:explorar.MAX_RESULTADOS]
-    return {"lugares": [tarjetas.lugar(l, bd) for l in encontrados]}
+    if not cerca and (zona or not datos.texto_busqueda(q)):
+        return {"lugares": [], "cocinas": [], "total": 0}
+    encontrados = explorar._en_zona(bd, q, cerca) if zona else explorar._buscar(bd, q, cerca)
+    encontrados = explorar._ordenar(encontrados, cerca)
+    opciones = sorted({explorar._cocina(l) for l in encontrados} - {""} | set(cocinas or ()))
+    presupuesto = (pmin, max(pmin, pmax))
+    catalogo = None
+    if presupuesto != (0, PRESUPUESTO_SIN_LIMITE) or plato.strip() or nota:
+        ids = tuple(sorted({int(l["restaurante_id"]) for l in encontrados if l.get("restaurante_id")}))
+        catalogo = explorar._catalogo(bd, ids) if ids else None
+    filtrados = explorar.filtrar_lugares(encontrados, catalogo, cocinas or (), presupuesto, nota, plato)
+    # ponytail: como mucho MAX_RESULTADOS (200) también en el mapa; la web enseña hasta 3000 agrupados en burbujas
+    return {"lugares": [{**tarjetas.lugar(l, bd), "icono": explorar._icono(l)} for l in filtrados[:explorar.MAX_RESULTADOS]],
+            "cocinas": opciones, "total": len(encontrados)}
 
 
 @app.get("/lugares/{lugar_id}")
@@ -356,6 +396,35 @@ def analizar(lugar_id: str = Path(min_length=1, max_length=100, pattern=r"^[\w.:
         raise HTTPException(404, "Ese sitio no existe.")
     bd.pedir_analisis(u["correo"], lugar_id)
     return {"ok": True}
+
+
+@app.post("/lugares/{lugar_id}/cerrado", dependencies=[Depends(limite("cerrado", 10, 3600))])
+def avisar_cerrado(lugar_id: str = Path(min_length=1, max_length=100, pattern=r"^[\w.:-]+$"), u=Depends(usuario_actual), bd=Depends(obtener_bd)):
+    """«¿Ha cerrado? Avísanos» (explorar._avisar_cerrado): deja de salir en Descubrir para todos."""
+    if not bd.lugar_por_id(lugar_id):
+        raise HTTPException(404, "Ese sitio no existe.")
+    bd.avisar_cerrado(lugar_id)
+    explorar._buscar.clear()
+    return {"ok": True}
+
+
+FOTOS_PORTADA = 14   # como app.FOTOS_PORTADA
+
+
+@app.get("/inicio")
+def inicio(evitar: Annotated[str | None, Query(max_length=80)] = None,
+           u=Depends(usuario_actual), bd=Depends(obtener_bd)):
+    """Inicio de Streamlit: fotos de la cinta (de tu lista, al azar) y «Una idea para hoy» (app.idea_del_dia)."""
+    maestro, df_platos, _ = mi_lista(bd, u["correo"])
+    archivos = maestro["Imagen archivo"].dropna().tolist() if "Imagen archivo" in maestro else []
+    portada = [bd.url_foto(a) for a in random.sample(archivos, min(FOTOS_PORTADA, len(archivos)))]
+    sugerida = sugerencia_plato(maestro, df_platos, random.Random(), evitar=evitar)
+    idea = None
+    if sugerida:
+        plato, rid, menciones = sugerida
+        idea = {"plato": plato, "menciones": int(menciones),
+                "restaurante": tarjetas.tarjeta(maestro[maestro["ID"] == rid].iloc[0], bd)}
+    return {"portada": portada, "idea": idea}
 
 
 @app.get("/destacados")

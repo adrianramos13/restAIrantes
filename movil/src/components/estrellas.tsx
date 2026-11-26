@@ -1,6 +1,7 @@
-// Nota en medias estrellas (0,5 a 5), como en la app de Streamlit: tocar una estrella la llena entera;
-// tocarla otra vez la deja a media (estrella hueca).
-import { Pressable, Text, View } from 'react-native';
+// La nota de «He ido» (componentes/estrellas.*): cinco estrellas grandes grises con las doradas encima hasta la
+// nota. Se toca donde se quiera: la mitad izquierda de una estrella es media (de 0,5 a 5).
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useColores } from '@/lib/tema';
 
@@ -9,27 +10,30 @@ interface Props {
   alCambiar: (valor: number) => void;
 }
 
+const TAM = 32;
+
 export function Estrellas({ valor, alCambiar }: Props) {
   const c = useColores();
+  const [ancho, setAncho] = useState(0);
+  const desdeX = (x: number) => Math.min(5, Math.max(0.5, Math.ceil((x / Math.max(ancho, 1)) * 10) / 2));
   return (
-    <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-      {[1, 2, 3, 4, 5].map((n) => {
-        const llena = valor !== null && valor >= n;
-        const media = valor !== null && valor === n - 0.5;
-        return (
-          <Pressable
-            key={n}
-            accessibilityRole="button"
-            accessibilityLabel={`${n} estrellas`}
-            hitSlop={6}
-            onPress={() => alCambiar(valor === n ? n - 0.5 : n)}>
-            <Text style={{ fontSize: 32, color: llena || media ? c.primario : c.borde }}>{media ? '☆' : '★'}</Text>
-          </Pressable>
-        );
-      })}
-      <Text style={{ color: c.textoSuave, marginLeft: 4 }}>
-        {valor === null ? 'Sin nota' : String(valor).replace('.', ',')}
-      </Text>
+    <View style={{ flexDirection: 'row' }}>
+      <Pressable
+        accessibilityRole="adjustable"
+        accessibilityLabel="Tu nota"
+        accessibilityValue={{ text: valor ? `${String(valor).replace('.', ',')} de 5 estrellas` : 'Sin nota' }}
+        accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+        onAccessibilityAction={(e) => {
+          const paso = e.nativeEvent.actionName === 'increment' ? 0.5 : -0.5;
+          alCambiar(Math.min(5, Math.max(0.5, (valor ?? 0) + paso)));
+        }}
+        onLayout={(e) => setAncho(e.nativeEvent.layout.width)}
+        onPress={(e) => alCambiar(desdeX(e.nativeEvent.locationX))}>
+        <Text style={{ fontSize: TAM, lineHeight: TAM + 2, color: c.borde }}>★★★★★</Text>
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { width: `${((valor ?? 0) / 5) * 100}%`, overflow: 'hidden' }]}>
+          <Text style={{ fontSize: TAM, lineHeight: TAM + 2, color: c.estrella, width: ancho || TAM * 5 }}>★★★★★</Text>
+        </View>
+      </Pressable>
     </View>
   );
 }

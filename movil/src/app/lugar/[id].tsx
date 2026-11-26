@@ -1,28 +1,50 @@
-// Ficha de un sitio de Descubrir aún sin analizar: sus datos básicos (y ficha rápida) y el botón «Analizar».
-// Mientras se analiza, pregunta cada 5 s; al terminar, abre la ficha completa del restaurante.
-import { Image } from 'expo-image';
+// Ficha de un sitio de Descubrir, copia de explorar._ficha_lugar: si está analizado, la ficha completa del
+// restaurante; si no, la etiqueta de su estado, categoría/dirección/ciudad, «Google Maps» y «Web», el teléfono,
+// «Analizar este restaurante» (mientras se analiza, mira cada 5 s y se abre sola con el resultado) y
+// «¿Ha cerrado? Avísanos».
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Linking, Platform } from 'react-native';
+import { Linking, Text, View } from 'react-native';
 
-import { formatoNota } from '@/components/tarjeta';
-import { Boton, Caja, Cargando, Pantalla, Texto } from '@/components/ui';
+import { Icono, NombreIcono } from '@/components/icono';
+import { Boton, Cargando, Info, Pantalla, Texto, TituloVentana, useAvisoBreve } from '@/components/ui';
 import { api, Lugar, mensaje } from '@/lib/api';
 import { useCarga } from '@/lib/carga';
 import { ESTADOS } from '@/lib/lugares';
-import { RADIO } from '@/lib/tema';
+import { LETRA, TAM_PEQUENO, useColores } from '@/lib/tema';
 
 const SEGUNDOS_ENTRE_COMPROBACIONES = 5;
+const MARGEN = 22.5;
+
+// explorar.ESTADOS: color e icono de la etiqueta (st.badge)
+const ETIQUETA: Record<string, { color: 'green' | 'orange' | 'red' | 'gray'; icono: NombreIcono }> = {
+  analizado: { color: 'green', icono: 'verified' },
+  pendiente: { color: 'orange', icono: 'hourglass_top' },
+  procesando: { color: 'orange', icono: 'hourglass_top' },
+  error: { color: 'red', icono: 'error' },
+  sin_analizar: { color: 'gray', icono: 'info' },
+  cerrado: { color: 'red', icono: 'block' },
+};
+const COLORES_ETIQUETA = {
+  green: { fondo: 'rgba(33, 195, 84, 0.1)', claro: '#158237', oscuro: '#5CE488' },
+  orange: { fondo: 'rgba(255, 164, 33, 0.1)', claro: '#E2660C', oscuro: '#FFBD45' },
+  red: { fondo: 'rgba(255, 43, 43, 0.09)', claro: '#BD4043', oscuro: '#FF6C6C' },
+  gray: { fondo: 'rgba(128, 132, 149, 0.1)', claro: '#555867', oscuro: '#BFC5D3' },
+};
 
 export default function FichaLugar() {
+  const c = useColores();
   const { id } = useLocalSearchParams<{ id: string }>();
   const lugar = useCarga(() => api<Lugar>('GET', `/lugares/${encodeURIComponent(id)}`), [id]);
   const [error, setError] = useState<string | null>(null);
   const [pidiendo, setPidiendo] = useState(false);
+  const [avisado, setAvisado] = useState(false);
+  const [aviso, avisar] = useAvisoBreve();
   const l = lugar.datos;
-  const enCamino = l?.estado === 'pendiente' || l?.estado === 'procesando';
+  const estado = l?.estado ?? 'sin_analizar';
+  const enCamino = estado === 'pendiente' || estado === 'procesando';
 
-  useEffect(() => {
+  useEffect(() => {   // analizado: su ficha completa en lugar de esta
     if (l?.estado === 'analizado' && l.restaurante_id) {
       router.replace({ pathname: '/restaurante/[id]', params: { id: String(l.restaurante_id) } });
     }
@@ -39,6 +61,7 @@ export default function FichaLugar() {
     setPidiendo(true);
     try {
       await api('POST', `/lugares/${encodeURIComponent(id)}/analizar`);
+      avisar('¡Pedido! En un par de minutos tendrá su ficha completa.');
       lugar.recargar();
     } catch (e) {
       setError(mensaje(e));
@@ -47,37 +70,70 @@ export default function FichaLugar() {
     }
   }
 
-  if (lugar.cargando && !l) return <Pantalla><Cargando /></Pantalla>;
-  if (!l) return <Pantalla><Texto tipo="error">{lugar.error ?? 'No se ha encontrado.'}</Texto></Pantalla>;
+  async function avisarCerrado() {
+    setError(null);
+    try {
+      await api('POST', `/lugares/${encodeURIComponent(id)}/cerrado`);
+      setAvisado(true);
+      avisar('Gracias: ya no saldrá en Explorar.');
+    } catch (e) {
+      setError(mensaje(e));
+    }
+  }
 
-  const destino = `${l.lat},${l.lon}`;
+  if (!l) {
+    return (
+      <Pantalla margen={MARGEN}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <TituloVentana titulo="" alCerrar={() => router.back()} />
+        {lugar.error ? <Info tipo="error">{lugar.error}</Info> : <Cargando />}
+      </Pantalla>
+    );
+  }
+
+  const etiqueta = ETIQUETA[estado] ?? ETIQUETA.sin_analizar;
+  const color = COLORES_ETIQUETA[etiqueta.color];
+  const colorTexto = c.texto === '#1F1A14' ? color.claro : color.oscuro;
+  const consulta = encodeURIComponent(`${l.nombre} ${l.lat},${l.lon}`);
+  const datos = [l.categoria ?? l.cocina, l.direccion, l.ciudad].filter(Boolean).join('\n');
+
   return (
-    <Pantalla>
-      <Stack.Screen options={{ title: l.nombre }} />
-      {l.foto ? <Image source={l.foto} style={{ width: '100%', aspectRatio: 1.5, borderRadius: RADIO }} contentFit="cover" /> : null}
-      <Texto tipo="titulo">{l.nombre}</Texto>
-      <Texto tipo="suave">{[l.cocina, l.nota !== null ? formatoNota(l.nota) : null].filter(Boolean).join(' · ')}</Texto>
-      {l.direccion ? <Texto tipo="suave">{[l.direccion, l.ciudad].filter(Boolean).join(', ')}</Texto> : null}
-      <Texto tipo="suave">{l.estado ? ESTADOS[l.estado] : ''}</Texto>
-
-      {l.estado === 'sin_analizar' || l.estado === 'error' ? (
-        <Caja>
-          <Texto>¿Quieres su ficha completa? La analizamos con sus reseñas: tipo de cocina, platos que destacan y precio.</Texto>
-          <Boton texto="Analizar" cargando={pidiendo} alPulsar={analizar} />
-        </Caja>
-      ) : null}
-      {enCamino ? (
-        <Caja>
-          <Cargando />
-          <Texto>Analizando… En un par de minutos tendrá su ficha completa. Puedes salir y volver luego.</Texto>
-        </Caja>
-      ) : null}
-      {error ? <Texto tipo="error">{error}</Texto> : null}
-
-      <Boton texto="Cómo llegar" tipo="secundario" alPulsar={() => Linking.openURL(
-        Platform.OS === 'ios' ? `https://maps.apple.com/?daddr=${destino}` : `https://www.google.com/maps/dir/?api=1&destination=${destino}`)} />
-      {l.web ? <Boton texto="Web" tipo="texto" alPulsar={() => Linking.openURL(l.web as string)} /> : null}
-      {l.telefono ? <Boton texto={`Llamar: ${l.telefono}`} tipo="texto" alPulsar={() => Linking.openURL(`tel:${l.telefono}`)} /> : null}
-    </Pantalla>
+    <View style={{ flex: 1, backgroundColor: c.fondo }}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <Pantalla margen={MARGEN}>
+        <TituloVentana titulo={l.nombre} alCerrar={() => router.back()} />
+        <View style={{ flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 4, paddingHorizontal: 6,
+          paddingVertical: 1, borderRadius: 6, backgroundColor: color.fondo }}>
+          <Icono nombre={etiqueta.icono} tam={13} color={colorTexto} />
+          <Text style={{ fontFamily: LETRA.normal, fontSize: TAM_PEQUENO, lineHeight: 21, color: colorTexto }}>{ESTADOS[estado]}</Text>
+        </View>
+        {datos ? <Texto>{datos}</Texto> : null}
+        <View style={{ flexDirection: 'row', gap: 15 }}>
+          <Boton texto="Google Maps" icono="map" ancho="contenido"
+            alPulsar={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${consulta}`)} />
+          {l.web ? <Boton texto="Web" icono="language" ancho="contenido" alPulsar={() => Linking.openURL(l.web as string)} /> : null}
+        </View>
+        {l.telefono ? <Texto tipo="suave">{`Teléfono: ${l.telefono}`}</Texto> : null}
+        {error ? <Info tipo="error">{error}</Info> : null}
+        {avisado ? <Info tipo="exito">Gracias por avisar: ya no sale en Explorar.</Info>
+          : estado === 'cerrado' ? <Info tipo="aviso">Según Google Maps ha cerrado, así que ya no sale en Explorar.</Info> : (
+            <>
+              {enCamino ? (
+                <Info>Analizando (nota, precio, foto y lo que dicen sus reseñas). Suele tardar uno o dos minutos: esta ventana se actualiza sola.</Info>
+              ) : (
+                <>
+                  <Texto tipo="suave">
+                    Aún no sabemos qué dicen sus reseñas. Al analizarlo tendrá su ficha completa (nota, precio, lo que destacan) y
+                    podrás añadirlo a tu eatlist o marcar «He ido».
+                  </Texto>
+                  <Boton texto="Analizar este restaurante" tipo="primario" icono="auto_awesome" cargando={pidiendo} alPulsar={analizar} />
+                </>
+              )}
+              <Boton texto="¿Ha cerrado? Avísanos" tipo="texto" icono="storefront" ancho="contenido" alPulsar={avisarCerrado} />
+            </>
+          )}
+      </Pantalla>
+      {aviso}
+    </View>
   );
 }

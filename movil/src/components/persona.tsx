@@ -6,7 +6,7 @@ import { Pressable, View } from 'react-native';
 
 import { Texto } from '@/components/ui';
 import { Persona } from '@/lib/api';
-import { RADIO, useColores } from '@/lib/tema';
+import { LETRA, RADIO, useColores } from '@/lib/tema';
 
 interface AvatarProps {
   persona: { inicial: string; color: string; foto: string | null };
@@ -18,7 +18,7 @@ export function Avatar({ persona: p, tam = 44 }: AvatarProps) {
   if (p.foto) return <Image source={p.foto} style={redondo} contentFit="cover" />;
   return (
     <View style={[redondo, { backgroundColor: p.color, alignItems: 'center', justifyContent: 'center' }]}>
-      <Texto style={{ color: '#fff', fontWeight: '700', fontSize: tam * 0.42 }}>{p.inicial}</Texto>
+      <Texto style={{ color: '#fff', fontFamily: LETRA.negrita, fontSize: tam * 0.42, lineHeight: tam * 0.55 }}>{p.inicial}</Texto>
     </View>
   );
 }

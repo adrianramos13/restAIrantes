@@ -4,10 +4,11 @@ solo se ven por nombre y @alias.
 """
 
 import re
+from datetime import datetime, timezone
 
 import pandas as pd
 
-from logica import COL_ANADIDO, etiqueta_cocina, platos_destacados
+from logica import COL_ANADIDO, etiqueta_cocina, hace_cuanto, platos_destacados
 
 
 def texto(valor):
@@ -60,8 +61,10 @@ def ficha(fila, bd):
 
 def visita(fila):
     """Una visita ("He ido") de un DataFrame de datos.visitas_a_dataframe, sin el correo de nadie."""
+    fecha = texto(fila.get("Fecha visita"))
     return {"restaurante_id": int(fila["ID"]), "nota": numero(fila.get("Nota visita")),
-            "comentario": texto(fila.get("Comentario visita")), "fecha": texto(fila.get("Fecha visita")),
+            "comentario": texto(fila.get("Comentario visita")), "fecha": fecha,
+            "cuando": hace_cuanto(fecha, datetime.now(timezone.utc)) if fecha else None,   # como en Streamlit
             "quien": texto(fila.get("Amigo"))}
 
 
@@ -70,7 +73,7 @@ def lugar(l, bd):
     web = l.get("web")
     return {
         "id": l["id"], "nombre": l["nombre"], "lat": l["lat"], "lon": l["lon"],
-        "cocina": l.get("cocina_google") or l.get("categoria"), "direccion": l.get("direccion"),
+        "cocina": l.get("cocina_google") or l.get("categoria"), "categoria": l.get("categoria"), "direccion": l.get("direccion"),
         "ciudad": l.get("ciudad"), "telefono": l.get("telefono"),
         "web": web if isinstance(web, str) and web.startswith(("https://", "http://")) else None,
         "estado": l.get("estado_analisis"), "restaurante_id": l.get("restaurante_id"),

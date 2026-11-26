@@ -6,7 +6,7 @@ perfil y borrar tu cuenta. A los demás se les nombra por su @alias: su correo s
 
 import threading
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -18,7 +18,8 @@ import deslizar
 import tarjetas
 from base import (Id, limite, mi_lista, obtener_bd, obtener_cuentas, olvidar_lista, olvidar_tokens_de, usuario_actual,
                   validado)
-from logica import PESO_GUSTO_EATLIST, PESO_GUSTO_LISTA, cocina_favorita, compatibilidad, en_comun, motivo_gusto
+from logica import (PESO_GUSTO_EATLIST, PESO_GUSTO_LISTA, cocina_favorita, compatibilidad, en_comun, insights_perfil,
+                    motivo_gusto)
 from servicios import geocodificar_direccion
 
 rutas = APIRouter()
@@ -253,6 +254,39 @@ def quitar_comensal(restaurante_id: Id, alias: Alias, u=Depends(usuario_actual),
     """Quita una invitación que aún no ha contestado."""
     bd.borrar_invitacion(u["correo"], correos_de_amigos(bd, u["correo"], [alias])[0], restaurante_id)
     return {"ok": True}
+
+
+# ----------------------- Perfil: la cabecera y «Tus datos» ----------------------- #
+
+def _coma(x):
+    return f"{x:.1f}".replace(".", ",")
+
+
+def tarjetas_tus_datos(i):
+    """app.bloque_insights: (icono, valor, texto) de cada tarjeta de «Tus datos», en el mismo orden."""
+    filas = []
+    if i["cocina_favorita"]:
+        filas.append(("🍽️", i["cocina_favorita"], f"Tu cocina favorita · {i['sitios_cocina_favorita']} sitios"))
+    if i["probado"] is not None:
+        filas.append(("✅", f"{round(100 * i['probado'])} %", "De tu lista ya probado"))
+    filas.append(("📅", str(i["este_mes"]), "Sitios este mes"))
+    if i["nota_media"] is not None:
+        filas.append(("⭐", _coma(i["nota_media"]), "Tu nota media"))
+    if i["favorito"]:
+        filas.append(("🏆", i["favorito"][0], f"Tu favorito · {_coma(i['favorito'][1])} ★"))
+    if i["precio_medio"] is not None:
+        filas.append(("💶", f"{i['precio_medio']:.0f} €", "Precio medio de tu lista"))
+    return [{"icono": a, "valor": b, "texto": c} for a, b, c in filas]
+
+
+@rutas.get("/yo/datos")
+def tus_datos(u=Depends(usuario_actual), bd=Depends(obtener_bd)):
+    """La cabecera del Perfil (idos, en tu lista, amigos) y las tarjetas de «Tus datos» (logica.insights_perfil)."""
+    maestro = mi_lista(bd, u["correo"])[0]
+    visitas = amigos.cargar_mis_visitas(bd, u["correo"])
+    n_amigos = sum(1 for r in amigos.cargar_relaciones(bd, u["correo"]) if r["estado"] == "aceptada")
+    i = insights_perfil(maestro, visitas, datetime.now(timezone.utc))
+    return {"idos": len(visitas), "en_lista": len(maestro), "amigos": n_amigos, "tarjetas": tarjetas_tus_datos(i)}
 
 
 # ----------------------- Diario ----------------------- #
