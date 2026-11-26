@@ -1,0 +1,4 @@
+# API para la app móvil (api/principal.py). Además de estas, usa las de la app: ../requirements.txt
+-r ../requirements.txt
+fastapi
+uvicorn

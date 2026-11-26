@@ -21,10 +21,11 @@ from conexion_supabase import datos
 from verificar_lugares import reducir_foto
 
 LADO = 800                 # px: ~80 KB por foto; 5 por restaurante caben de sobra en los 10 GB gratis de R2
-POR_TANDA = 20             # restaurantes por tanda cuando el procesador está libre
-PESTANAS_TANDA = 2
-DESCANSO_MIN = 4           # entre tandas propias (el análisis ya tiene sus descansos)
-ESPERA_S = (3, 8)          # entre uno y otro, para no parecer un robot ante Google
+POR_TANDA = 40             # restaurantes por tanda cuando el procesador está libre
+PESTANAS_TANDA = 3
+PESTANAS_MIENTRAS = 2      # a la vez que el análisis
+DESCANSO_MIN = 2           # entre tandas propias (el análisis ya tiene sus descansos)
+ESPERA_S = (2, 5)          # entre uno y otro, para no parecer un robot ante Google
 MAX_VACIOS_SEGUIDOS = 25   # sin galería tantas veces seguidas (~la mitad no tiene): ¿se ha perdido la sesión? -> se para
 
 
@@ -94,14 +95,14 @@ class Galeria:
                 print(f"  Fotos: error con {r['nombre']}: {str(e)[:120]}")
             await asyncio.sleep(random.uniform(*ESPERA_S))
 
-    async def mientras(self, page, parar):
-        """En una pestaña más del Chrome del análisis, hasta que el análisis acabe (`parar`)."""
+    async def mientras(self, paginas, parar):
+        """En pestañas más del Chrome del análisis (comparten la cola), hasta que el análisis acabe (`parar`)."""
         try:
             cola = await asyncio.to_thread(self.siguientes, POR_TANDA)
         except datos.ErrorSupabase:
             return
         antes = self.hechos
-        await self.trabajar(page, cola, parar)
+        await asyncio.gather(*(self.trabajar(pagina, cola, parar) for pagina in paginas))
         if self.hechos > antes:
             print(f"  Fotos: {self.hechos - antes} restaurantes con fotos nuevas (a la vez que el análisis).")
 

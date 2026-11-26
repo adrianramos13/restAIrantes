@@ -60,7 +60,8 @@ if "PYTEST_CURRENT_TEST" not in os.environ:
 
 from logica import (COL_ANADIDO, COL_CATEGORIA, COL_CATEGORIA_2, COL_VOTOS_2, ORDEN_CERCANOS, ORDEN_NOMBRE, ORDEN_PUNTUACION,
                     ORDEN_RECIENTES,
-                    ORDEN_RESENAS, PRESUPUESTO_SIN_LIMITE, VOTOS_MIN_SECUNDARIA, fecha_anadido, filtrar_lista, filtrar_y_puntuar,
+                    ORDEN_RESENAS, PRESUPUESTO_SIN_LIMITE, VOTOS_MIN_SECUNDARIA, etiqueta_cocina, fecha_anadido, filtrar_lista,
+                    filtrar_y_puntuar, radio_busqueda_km, resumen_mencion_plato,
                     ordenar_resultados, sugerencia_plato, tiene_categorias_jev, insights_perfil,
                     insertar_en_orden, vista_previa_posicion, PESO_GUSTO_EATLIST, PESO_GUSTO_LISTA)
 from servicios import geocodificar_direccion, obtener_minutos_a_pie, obtener_minutos_coche
@@ -158,18 +159,6 @@ def cargar_datos_usuario(usuario):
 
 
 
-def etiqueta_cocina(fila):
-    """Cocina que se muestra en la tarjeta: la de Jev (con la segunda si pesa lo suficiente, para
-    explicar por qué sale al buscar esa cocina) o, si no hay, la de Google."""
-    principal = fila.get(COL_CATEGORIA)
-    if isinstance(principal, str) and principal.strip():
-        segunda, v2 = fila.get(COL_CATEGORIA_2), fila.get(COL_VOTOS_2)
-        if isinstance(segunda, str) and segunda.strip() and pd.notna(v2) and v2 >= VOTOS_MIN_SECUNDARIA:
-            return f"{principal} · también {segunda}"
-        return principal
-    return valor_o(fila, "Tipo de cocina")
-
-
 
 
 
@@ -233,28 +222,6 @@ def mejorar_resolucion_imagen(url, ancho=600, alto=400):
     if not isinstance(url, str) or not url.strip():
         return url
     return re.sub(r"=w\d+-h\d+", f"=w{ancho}-h{alto}", url)
-
-
-def resumen_mencion_plato(id_restaurante, plato_deseado, df_platos):
-    if df_platos.empty or "ID_Restaurante" not in df_platos.columns:
-        return "(Sin datos de reseñas analizadas)"
-    menciones = df_platos[
-        (df_platos["ID_Restaurante"] == id_restaurante) &
-        (df_platos["Plato"].astype(str).str.contains(plato_deseado, case=False, na=False))
-    ]
-    if menciones.empty:
-        return "No se menciona explícitamente en las reseñas analizadas"
-    buenas = (menciones["Sentimiento"] == "Buena").sum()
-    malas = (menciones["Sentimiento"] == "Mala").sum()
-    neutras = (menciones["Sentimiento"] == "Neutra").sum()
-    partes = []
-    if buenas:
-        partes.append(f"{buenas} bien")
-    if malas:
-        partes.append(f"{malas} mal")
-    if neutras:
-        partes.append(f"{neutras} neutra")
-    return f"Mencionado {len(menciones)} veces en reseñas ({', '.join(partes)})"
 
 
 @st.cache_data(show_spinner=False)
@@ -1573,11 +1540,6 @@ def contexto_deslizar():
         "cargar_zona": _zona_deslizar, "cargar_todo": lambda: cargar_catalogo()[0],
         "tarjeta": tarjeta_deslizar, "al_cambiar_lista": cargar_datos_usuario.clear, "mazo": mazo_deslizar,
     }
-
-
-def radio_busqueda_km(modo_transporte, minutos):
-    """Hasta dónde se puede llegar en ese tiempo, con margen: en coche ~1 km por minuto y andando ~0,1."""
-    return max(1.0, minutos * (1.0 if modo_transporte == "En coche" else 0.1) * 1.3)
 
 
 @st.cache_data(ttl=300, show_spinner=False)

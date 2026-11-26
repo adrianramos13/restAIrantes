@@ -109,6 +109,22 @@ class Cuentas:
         return _sesion(self._pedir("POST", "/token", params={"grant_type": "refresh_token"},
                                    json={"refresh_token": token_renovacion}))
 
+    def usuario(self, token_acceso):
+        """{correo, nombre} del dueño de un token de acceso (la app móvil lo manda en cada petición a la API).
+        ErrorCuenta si ha caducado, no es válido o el correo no está confirmado."""
+        usuario = self._pedir("GET", "/user", token=token_acceso)
+        if not usuario.get("email") or not usuario.get("email_confirmed_at"):
+            raise ErrorCuenta(_MENSAJES["email_not_confirmed"])
+        return {"id": usuario.get("id"), "correo": usuario["email"].lower(),
+                "nombre": (usuario.get("user_metadata") or {}).get("nombre")}
+
+    def borrar_usuario(self, id_usuario):
+        """Borra la cuenta de Supabase Auth (API de administración, con la clave de servicio). Sus datos de la app
+        se borran antes con datos.Supabase.borrar_usuario."""
+        if not id_usuario:
+            raise ErrorCuenta("No se ha podido borrar la cuenta ahora mismo. Inténtalo en un momento.")
+        self._pedir("DELETE", f"/admin/users/{id_usuario}")
+
     def salir(self, token_acceso):
         try:
             self._pedir("POST", "/logout", token=token_acceso)

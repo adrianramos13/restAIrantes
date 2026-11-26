@@ -1,1 +1,2 @@
 pytest
+fastapi   # tests/test_api.py (la API de la app móvil)

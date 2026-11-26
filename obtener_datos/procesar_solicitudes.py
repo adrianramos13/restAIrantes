@@ -101,7 +101,9 @@ async def _resenas_de(nombres, pestanas=None, cercas=None):
 
         tareas = [analisis()]
         if GALERIA:   # a la vez, en otra pestaña: fotos de los restaurantes que aún no las tienen
-            tareas.append(GALERIA.mientras(await contexto.new_page(), acabado))
+            from fotos_galeria import PESTANAS_MIENTRAS
+            fotos = [await contexto.new_page() for _ in range(PESTANAS_MIENTRAS)]
+            tareas.append(GALERIA.mientras(fotos, acabado))
         await asyncio.gather(*tareas)
         await contexto.close()
     return [fila for i in sorted(por_indice) for fila in por_indice[i]]
@@ -333,11 +335,13 @@ class Lote:
         self.tope_usd, self.por_tanda, self.pausa_min = tope_usd, por_tanda, pausa_min
         self.por_lote = por_lote or POR_LOTE
         self.en_tanda, self.pausa_hasta, self.errores_seguidos, self.parado = 0, 0.0, 0, False
+        self.mirar_hasta = 0.0   # sin nada que analizar: no es descanso anti-robot, las fotos pueden seguir
 
     def toca(self):
         import clasificar_restaurantes_jev as clasif   # con el clasificador local no se gasta: sin tope
         sin_tope = clasif.MOTOR == "local" or gastado_en_lote() < self.tope_usd
-        return not self.parado and time.monotonic() >= self.pausa_hasta and sin_tope
+        ahora = time.monotonic()
+        return not self.parado and ahora >= self.pausa_hasta and ahora >= self.mirar_hasta and sin_tope
 
     def uno(self, bd):
         """Analiza el siguiente. Devuelve si ha hecho algo (si no, toca esperar: descanso, tope o nada que hacer)."""
@@ -346,7 +350,7 @@ class Lote:
         siguientes = bd.lugares_para_analizar(self.por_lote)
         if not siguientes:
             print("Por adelantado: no queda ninguno con ficha rápida por analizar. Se vuelve a mirar en 1 h.")
-            self.pausa_hasta = time.monotonic() + 3600   # el comprobador de GitHub va añadiendo fichas rápidas
+            self.mirar_hasta = time.monotonic() + 3600   # el comprobador de GitHub va añadiendo fichas rápidas
             return False
         import clasificar_restaurantes_jev as clasif   # para contar los tokens de Jev
         antes = clasif._tokens_entrada

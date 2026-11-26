@@ -486,6 +486,30 @@ class Supabase:
                            prefer="resolution=merge-duplicates,return=representation")
         return filas[0]
 
+    def borrar_usuario(self, usuario):
+        """Borra todo lo de un usuario que elimina su cuenta: lista, perfil (y su foto propia), amigos, visitas,
+        eatlist, deslizados, invitaciones y peticiones de análisis. El catálogo compartido no se toca. Las tablas de
+        migraciones que aún no se hayan ejecutado se saltan."""
+        u = _comillas(usuario)
+        perfil = self.perfil_de(usuario) or {}
+        pasos = [("visitas", {"usuario": f"eq.{usuario}"}, False), ("eatlist", {"usuario": f"eq.{usuario}"}, False),
+                 ("amistades", {"or": f"(solicitante.eq.{u},destinatario.eq.{u})"}, False),
+                 ("deslizados", {"usuario": f"eq.{usuario}"}, True),
+                 ("solicitudes_analisis", {"usuario": f"eq.{usuario}"}, True),
+                 ("invitaciones_visita", {"or": f"(de.eq.{u},para.eq.{u})"}, True),
+                 ("listas", {"usuario": f"eq.{usuario}"}, False), ("perfiles", {"usuario": f"eq.{usuario}"}, False)]
+        for tabla, filtro, opcional in pasos:
+            try:
+                self._rest("DELETE", tabla, params=filtro)
+            except ErrorSupabase:
+                if not opcional:
+                    raise
+        try:   # en las visitas de sus amigos ya no consta que fueron con él (011_comensales.sql)
+            self._rest("PATCH", "visitas", params={"anadido_por": f"eq.{usuario}"}, json={"anadido_por": None})
+        except ErrorSupabase:
+            pass
+        self._borrar_foto_propia(perfil.get("foto"))
+
     # ---------------- amigos y "He ido" ----------------
     # Los usuarios son correos: se usan en las consultas, pero a la app solo le llegan nombre y @alias.
 

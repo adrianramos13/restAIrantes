@@ -3,6 +3,7 @@ memoria y sin navegador: descarga y análisis sustituidos. Necesita las dependen
 de datos (bs4, playwright); si no están, se salta."""
 
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -286,6 +287,12 @@ def test_lote_sin_tope_con_el_clasificador_local(lote, monkeypatch):
     monkeypatch.setattr(ClasifFalso, "MOTOR", "local")
     ps.GASTO_JEV.write_text('{"usd": 99}', encoding="utf-8")   # lo ya gastado en Jev no frena el análisis gratis
     assert ps.Lote(tope_usd=10, por_lote=1).uno(bd) and estado["analizados"] == ["l0"]
+
+
+def test_lote_sin_nada_que_analizar_no_bloquea_las_fotos(lote):
+    l = ps.Lote(tope_usd=10, por_lote=1)
+    assert not l.uno(types.SimpleNamespace(lugares_para_analizar=lambda n: []))
+    assert not l.toca() and l.pausa_hasta == 0   # espera para volver a mirar, pero no es descanso anti-robot
 
 
 def test_lote_descansa_tras_cada_tanda(lote):

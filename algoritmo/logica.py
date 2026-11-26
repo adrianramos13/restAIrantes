@@ -71,7 +71,8 @@ def puntuacion_plato(id_restaurante, plato_deseado, df_platos):
         return 0.0
     menciones = df_platos[
         (df_platos["ID_Restaurante"] == id_restaurante) &
-        (df_platos["Plato"].astype(str).str.contains(plato_deseado, case=False, na=False))
+        # regex=False: el plato lo escribe el usuario ("(" rompería la búsqueda; "(a+)+$" la colgaría)
+        (df_platos["Plato"].astype(str).str.contains(plato_deseado, case=False, na=False, regex=False))
     ]
     if menciones.empty:
         return 0.0
@@ -310,6 +311,26 @@ def filtrar_y_puntuar(maestro, df_platos, r, minutos):
     return df
 
 
+def radio_busqueda_km(modo_transporte, minutos):
+    """Hasta dónde se puede llegar en ese tiempo, con margen: en coche ~1 km por minuto y andando ~0,1."""
+    return max(1.0, minutos * (1.0 if modo_transporte == "En coche" else 0.1) * 1.3)
+
+
+def resumen_mencion_plato(id_restaurante, plato_deseado, df_platos):
+    if df_platos.empty or "ID_Restaurante" not in df_platos.columns:
+        return "(Sin datos de reseñas analizadas)"
+    menciones = df_platos[
+        (df_platos["ID_Restaurante"] == id_restaurante) &
+        (df_platos["Plato"].astype(str).str.contains(plato_deseado, case=False, na=False, regex=False))
+    ]
+    if menciones.empty:
+        return "No se menciona explícitamente en las reseñas analizadas"
+    partes = [f"{n} {texto}" for texto, n in (("bien", (menciones["Sentimiento"] == "Buena").sum()),
+                                               ("mal", (menciones["Sentimiento"] == "Mala").sum()),
+                                               ("neutra", (menciones["Sentimiento"] == "Neutra").sum())) if n]
+    return f"Mencionado {len(menciones)} veces en reseñas ({', '.join(partes)})"
+
+
 def ordenar_resultados(df, orden):
     """El orden se elige ya en la vista de resultados: cambiarlo no repite la búsqueda."""
     if orden == ORDEN_CERCANOS:
@@ -476,6 +497,19 @@ def cocina_de(fila):
         if isinstance(valor, str) and valor.strip():
             return valor.strip()
     return None
+
+
+def etiqueta_cocina(fila):
+    """Cocina que se muestra en la tarjeta: la de Jev (con la segunda si pesa lo suficiente, para
+    explicar por qué sale al buscar esa cocina) o, si no hay, la de Google ("N/D" si tampoco)."""
+    principal = fila.get(COL_CATEGORIA)
+    if isinstance(principal, str) and principal.strip():
+        segunda, v2 = fila.get(COL_CATEGORIA_2), fila.get(COL_VOTOS_2)
+        if isinstance(segunda, str) and segunda.strip() and pd.notna(v2) and v2 >= VOTOS_MIN_SECUNDARIA:
+            return f"{principal} · también {segunda}"
+        return principal
+    google = fila.get("Tipo de cocina")
+    return google if isinstance(google, str) and google.strip() else "N/D"
 
 
 def platos_destacados(texto):
