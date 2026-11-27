@@ -14,6 +14,7 @@ por el trigger «decision»; solo se vuelve a ejecutar el fragmento, no la pági
 """
 
 import random
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 import streamlit as st
@@ -85,8 +86,10 @@ def _cargar_fase(est, ctx):
     if radio_zona is None:
         est["cerca"], est["lejos"] = ctx["cargar_todo"](), pd.DataFrame()
     else:
-        est["cerca"] = ctx["cargar_zona"](*(ctx["zona"] or CENTRO_MADRID), radio_zona)
-        est["lejos"] = ctx["cargar_zona"](*CENTRO_MADRID, radio_madrid)
+        with ThreadPoolExecutor(2) as hilos:   # las dos a la vez: cada una son varias páginas de Supabase
+            cerca = hilos.submit(ctx["cargar_zona"], *(ctx["zona"] or CENTRO_MADRID), radio_zona)
+            lejos = hilos.submit(ctx["cargar_zona"], *CENTRO_MADRID, radio_madrid)
+            est["cerca"], est["lejos"] = cerca.result(), lejos.result()
     nuevos = [df for df in (est["cerca"], est["lejos"]) if not df.empty]
     if nuevos:
         est["pool"] = pd.concat([est["pool"], *nuevos], ignore_index=True).drop_duplicates("ID")

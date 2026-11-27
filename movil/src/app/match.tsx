@@ -4,9 +4,8 @@
 // izquierda (✕, no vuelve a salir) con los sellos «ME GUSTA» / «PASO», y al dar «me gusta», «✓ Añadido a tu lista»
 // con los amigos que también lo tienen.
 import { Image } from 'expo-image';
-import * as Location from 'expo-location';
 import { router, Stack } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import {
   Animated, Modal, PanResponder, Pressable, StyleSheet, Text, useWindowDimensions, View,
 } from 'react-native';
@@ -15,22 +14,17 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import MapView, { Marker } from '@/components/mapa';
 import { Boton, Cargando, Info, Pantalla, Texto } from '@/components/ui';
 import { api, CartaMatch, mensaje, Mazo } from '@/lib/api';
+import { cogerMazo } from '@/lib/mazo';
 import { LETRA, useColores } from '@/lib/tema';
 import { olvidarVisitados } from '@/lib/visitados';
 
 const UMBRAL_PX = 100;   // lo que hay que arrastrar para que cuente
 const TOQUE_PX = 8;      // moverse menos al soltar = tocar la foto (pasa a la siguiente)
 const ANADIDO_MS = 4000; // lo que dura «Añadido a tu lista»
+const MAPA_MS = 400;     // el mapa pequeño se monta un poco después: montarlo a la vez que la tarjeta da tirones
+const PRECARGAR = 4;     // tarjetas cuyas fotos se bajan antes de que salgan
 
-async function ubicacionSinPreguntar(): Promise<{ lat: number; lon: number } | undefined> {
-  try {   // solo si ya diste permiso (en Comer hoy); si no, salen sitios de Madrid
-    if ((await Location.getForegroundPermissionsAsync()).status !== 'granted') return undefined;
-    const pos = await Location.getLastKnownPositionAsync();
-    return pos ? { lat: pos.coords.latitude, lon: pos.coords.longitude } : undefined;
-  } catch {
-    return undefined;
-  }
-}
+const fotosDe = (t: CartaMatch) => (t.fotos.length ? t.fotos : t.foto ? [t.foto] : []);
 
 /** app.tarjeta_deslizar: «Cocina · 20-30 € · ⭐ 4,5». */
 function meta(t: CartaMatch): string {
@@ -64,11 +58,17 @@ interface CartaProps {
 /** .dz-tarjeta: la foto (tocar el tercio izquierdo = la anterior; el resto = la siguiente), las rayitas, el mapa y la info. */
 function Carta({ carta: r, arriba = false, si, no, conMapa = true }: CartaProps) {
   const c = useColores();
-  const fotos = r.fotos.length ? r.fotos : r.foto ? [r.foto] : [];
+  const fotos = fotosDe(r);
   const [actual, setActual] = useState(0);
   const [mapaGrande, setMapaGrande] = useState(false);
+  const [mapaListo, setMapaListo] = useState(false);
   const [ancho, setAncho] = useState(1);
-  const hayMapa = conMapa && arriba && r.lat !== null && r.lon !== null;
+  useEffect(() => {
+    if (!arriba) return undefined;
+    const t = setTimeout(() => setMapaListo(true), MAPA_MS);
+    return () => clearTimeout(t);
+  }, [arriba]);
+  const hayMapa = conMapa && arriba && mapaListo && r.lat !== null && r.lon !== null;
 
   return (
     <View style={[estilos.tarjeta, { backgroundColor: c.fondo2, borderColor: c.borde }]} onLayout={(e) => setAncho(e.nativeEvent.layout.width)}>
@@ -188,11 +188,16 @@ export default function FoodMatch() {
   }
 
   useEffect(() => {
-    ubicacionSinPreguntar()
-      .then((u) => api<Mazo>('GET', '/deslizar', undefined, u))
-      .then((m) => aplicar(m, []))
-      .catch((e: unknown) => setError(mensaje(e)));
+    cogerMazo().then((m) => aplicar(m, [])).catch((e: unknown) => setError(mensaje(e)));
   }, []);
+
+  // las fotos de las próximas tarjetas, ya bajadas cuando les toque
+  const proximas = (cartas ?? []).slice(0, PRECARGAR).flatMap(fotosDe).join(' ');
+  useEffect(() => { if (proximas) Image.prefetch(proximas.split(' ')); }, [proximas]);
+
+  // la nueva de arriba (la que estaba debajo, sin volver a montarse) empieza en el centro, antes de pintarse
+  const idArriba = cartas?.[0]?.id;
+  useLayoutEffect(() => { pos.setValue(0); }, [idArriba, pos]);
 
   async function decidir(gusta: boolean) {
     const primera = cartas?.[0];
@@ -200,7 +205,6 @@ export default function FoodMatch() {
     const ahora = [...decididas, primera.id];
     setDecididas(ahora);
     setCartas((antes) => (antes ?? []).filter((t) => t.id !== primera.id));
-    pos.setValue(0);
     if (gusta) setAnadida(primera);
     try {
       aplicar(await api<Mazo>('POST', '/deslizar', { id: primera.id, gusta }), ahora);
@@ -214,14 +218,20 @@ export default function FoodMatch() {
     Animated.timing(pos, { toValue: gusta ? 600 : -600, duration: 250, useNativeDriver: true }).start(() => decidir(gusta));
   }
 
+  const [arrastrando, setArrastrando] = useState(false);
+  const volver = () => Animated.spring(pos, { toValue: 0, useNativeDriver: true }).start();   // vuelve a su sitio
   const arrastre = PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > TOQUE_PX && Math.abs(g.dx) > Math.abs(g.dy),
+    onPanResponderGrant: () => setArrastrando(true),
     onPanResponderMove: (_, g) => pos.setValue(g.dx),
+    onPanResponderTerminationRequest: () => false,   // una vez cogida, el scroll de la pantalla no se la lleva
     onPanResponderRelease: (_, g) => {
+      setArrastrando(false);
       if (Math.abs(g.dx) >= UMBRAL_PX) irse(g.dx > 0);
-      else Animated.spring(pos, { toValue: 0, useNativeDriver: true }).start();   // vuelve a su sitio
+      else volver();
     },
+    onPanResponderTerminate: () => { setArrastrando(false); volver(); },
   });
   const giro = pos.interpolate({ inputRange: [-180, 0, 180], outputRange: ['-10deg', '0deg', '10deg'] });
   const si = pos.interpolate({ inputRange: [0, UMBRAL_PX], outputRange: [0, 1], extrapolate: 'clamp' });
@@ -233,7 +243,7 @@ export default function FoodMatch() {
   return (
     <View style={{ flex: 1, backgroundColor: c.fondo }}>
       <Stack.Screen options={{ headerShown: false }} />
-      <Pantalla>
+      <Pantalla desplazable={!arrastrando}>
         <Boton texto="Volver" tipo="texto" icono="arrow_back" ancho="contenido" alPulsar={() => router.back()} />
         <Texto tipo="subtitulo">Food match</Texto>
         <Texto tipo="suave">
@@ -249,14 +259,17 @@ export default function FoodMatch() {
         {primera ? (
           <View style={{ alignItems: 'center', gap: 14 }}>
             <View style={{ width: '100%', maxWidth: 420, aspectRatio: 3 / 4, maxHeight: altoMazo, minHeight: 280 }}>
-              {segunda ? (
-                <View style={[StyleSheet.absoluteFill, { transform: [{ scale: 0.96 }, { translateY: 10 }] }]}>
-                  <Carta key={segunda.id} carta={segunda} />
-                </View>
-              ) : null}
-              <Animated.View {...arrastre.panHandlers} style={[StyleSheet.absoluteFill, { transform: [{ translateX: pos }, { rotate: giro }] }]}>
-                <Carta key={primera.id} carta={primera} arriba si={si} no={no} />
-              </Animated.View>
+              {/* las dos con su id como clave y en el mismo sitio: la de debajo, al subir, no se vuelve a montar */}
+              {(segunda ? [segunda, primera] : [primera]).map((t) => (t === primera ? (
+                <Animated.View key={t.id} {...arrastre.panHandlers}
+                  style={[StyleSheet.absoluteFill, { transform: [{ translateX: pos }, { rotate: giro }] }]}>
+                  <Carta carta={t} arriba si={si} no={no} />
+                </Animated.View>
+              ) : (
+                <Animated.View key={t.id} style={[StyleSheet.absoluteFill, { transform: [{ scale: 0.96 }, { translateY: 10 }] }]}>
+                  <Carta carta={t} />
+                </Animated.View>
+              )))}
             </View>
             <View style={{ flexDirection: 'row', gap: 28 }}>
               <Pressable accessibilityRole="button" accessibilityLabel="No me gusta" onPress={() => irse(false)}

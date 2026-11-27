@@ -110,7 +110,7 @@ def test_guardar_restaurantes_hace_upsert_por_clave(monkeypatch):
         llamadas.append((metodo, url, kw))
         return RespuestaFalsa([{"clave": f["clave"], "id": i} for i, f in enumerate(kw["json"], start=10)])
 
-    monkeypatch.setattr(datos.requests, "request", falso)
+    monkeypatch.setattr(datos._SESION, "request", falso)
     cliente = datos.Supabase("https://x.supabase.co/", "clave-secreta")
     ids = cliente.guardar_restaurantes([{"clave": "a", "datos": {}, "platos": [], "imagen": None},
                                         {"clave": "b", "datos": {}, "platos": [], "imagen": None}])
@@ -124,7 +124,7 @@ def test_guardar_restaurantes_hace_upsert_por_clave(monkeypatch):
 
 def test_reemplazar_lista_quita_repetidos(monkeypatch):
     llamadas = []
-    monkeypatch.setattr(datos.requests, "request",
+    monkeypatch.setattr(datos._SESION, "request",
                         lambda metodo, url, **kw: llamadas.append((metodo, kw)) or RespuestaFalsa(None))
     cliente = datos.Supabase("https://x.supabase.co", "k")
     cliente._con_fecha_en_lista = False   # sin supabase/016
@@ -180,14 +180,14 @@ def test_validar_nombre_no_valido(entrada):
 def test_error_de_red_es_error_supabase(monkeypatch):
     def sin_red(*a, **k):
         raise datos.requests.ConnectionError("sin red")
-    monkeypatch.setattr(datos.requests, "request", sin_red)
+    monkeypatch.setattr(datos._SESION, "request", sin_red)
     with pytest.raises(datos.ErrorSupabase):
         datos.Supabase("https://x.supabase.co", "k").perfil_de("ana@ejemplo.com")
 
 
 def test_guardar_perfil(monkeypatch):
     llamadas = []
-    monkeypatch.setattr(datos.requests, "request", lambda metodo, url, **kw: llamadas.append((metodo, url, kw))
+    monkeypatch.setattr(datos._SESION, "request", lambda metodo, url, **kw: llamadas.append((metodo, url, kw))
                         or RespuestaFalsa([{"usuario": "ana@ejemplo.com", "nombre": "Ana"}]))
     fila = datos.Supabase("https://x.supabase.co", "k").guardar_perfil("ana@ejemplo.com", "Ana")
     metodo, url, kw = llamadas[0]
@@ -204,7 +204,7 @@ def test_cabeceras_segun_tipo_de_clave():
 
 
 def test_error_de_supabase(monkeypatch):
-    monkeypatch.setattr(datos.requests, "request", lambda *a, **k: RespuestaFalsa({"message": "no"}, 401))
+    monkeypatch.setattr(datos._SESION, "request", lambda *a, **k: RespuestaFalsa({"message": "no"}, 401))
     with pytest.raises(datos.ErrorSupabase):
         datos.Supabase("https://x.supabase.co", "k").lista_de("ana@ejemplo.com")
 
@@ -457,7 +457,7 @@ def test_preferencias_validas(guardadas, esperado):
 
 def test_guardar_perfil_con_preferencias(monkeypatch):
     llamadas = []
-    monkeypatch.setattr(datos.requests, "request", lambda metodo, url, **kw: llamadas.append(kw)
+    monkeypatch.setattr(datos._SESION, "request", lambda metodo, url, **kw: llamadas.append(kw)
                         or RespuestaFalsa([{"usuario": "ana@ejemplo.com", "nombre": "Ana"}]))
     datos.Supabase("https://x.supabase.co", "k").guardar_perfil(
         "ana@ejemplo.com", "Ana", {"transporte": "A pie", "tiempo": 999})

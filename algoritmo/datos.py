@@ -349,6 +349,11 @@ def _filtro_comida():
     return f"(cocina_google.is.null,and(or(cocina_google.not.ilike.*tienda*,cocina_google.ilike.*kebab*),{no}))"
 
 
+# Una sola conexión (keep-alive) para todas las consultas: abrir una nueva cada vez costaba ~0,7 s por consulta.
+_SESION = requests.Session()
+_SESION.mount("https://", requests.adapters.HTTPAdapter(pool_maxsize=32))   # la API atiende en varios hilos
+
+
 class Supabase:
     def __init__(self, url, clave_servicio, fotos_url=None, r2=None):
         """`fotos_url`: URL pública del bucket de R2 (las fotos de restaurantes y sitios se leen de ahí; sin ella,
@@ -369,8 +374,8 @@ class Supabase:
         if prefer:
             cabeceras["Prefer"] = prefer
         try:
-            r = requests.request(metodo, f"{self.url}/rest/v1/{tabla}", params=params, json=json,
-                                 headers=cabeceras, timeout=TIMEOUT_S)
+            r = _SESION.request(metodo, f"{self.url}/rest/v1/{tabla}", params=params, json=json,
+                                headers=cabeceras, timeout=TIMEOUT_S)
         except requests.RequestException as e:   # sin red, tiempo agotado...: la app ya sabe manejar ErrorSupabase
             raise ErrorSupabase(f"{metodo} {tabla}: sin respuesta de Supabase ({type(e).__name__})") from e
         if not r.ok:

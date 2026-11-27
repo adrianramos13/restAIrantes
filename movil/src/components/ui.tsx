@@ -31,13 +31,15 @@ interface PantallaProps {
   conCabecera?: boolean;   // dentro de una pantalla con barra de título (no hace falta dejar la zona de la hora)
   fondo?: string;          // otro fondo (la ficha abierta desde la valoración de otro)
   margen?: number;         // a los lados (las ventanas, st.dialog: 22,5)
+  desplazable?: boolean;   // false mientras se arrastra algo dentro (Food match), para que el scroll no se lo quite
 }
 
-export function Pantalla({ children, recargando = false, alRecargar, conCabecera = false, fondo, margen }: PantallaProps) {
+export function Pantalla({ children, recargando = false, alRecargar, conCabecera = false, fondo, margen, desplazable = true }: PantallaProps) {
   const c = useColores();
   const zona = useSafeAreaInsets();
   return (
     <ScrollView
+      scrollEnabled={desplazable}
       style={{ backgroundColor: fondo ?? c.fondo }}
       contentContainerStyle={[estilos.pantalla, { paddingTop: conCabecera ? ESPACIO : zona.top + ESPACIO },
         margen !== undefined && { paddingHorizontal: margen }]}

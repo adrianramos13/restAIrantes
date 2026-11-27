@@ -3,7 +3,7 @@
 // Resultados: «Cambiar» + Lista/Mapa, el resumen, el orden, las tarjetas y «Ver más». Solo los que cumplen todo.
 import * as Location from 'expo-location';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui';
 import { api, InicioDatos, mensaje, Tarjeta, Yo } from '@/lib/api';
 import { useCarga } from '@/lib/carga';
+import { precargarMazo } from '@/lib/mazo';
 import { HUECO, useColores } from '@/lib/tema';
 
 type Transporte = 'En coche' | 'A pie';
@@ -85,6 +86,8 @@ export default function ComerHoy() {
   const c = useColores();
   const params = useLocalSearchParams<{ plato?: string }>();
   const yo = useCarga(() => api<Yo>('GET', '/yo'), []);
+  const hayMatch = !!yo.datos?.food_match;
+  useEffect(() => { if (hayMatch) precargarMazo(); }, [hayMatch]);   // para que al tocar «Food match» ya esté
   const portada = useCarga(() => api<InicioDatos>('GET', '/inicio'), []);
   const [fuente, setFuente] = useState<Fuente>('Mi lista');
   const todos = fuente === 'Todos los restaurantes';
