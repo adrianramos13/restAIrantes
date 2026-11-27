@@ -13,6 +13,7 @@ USO (desde la raíz del proyecto):
 
 import logging
 import random
+import re
 import sys
 from datetime import date
 from pathlib import Path as Ruta
@@ -26,7 +27,7 @@ logging.getLogger("streamlit.runtime.caching.cache_data_api").setLevel(logging.E
 from base import (ID_MAX, NO_SE_PUEDE, Id, _listas, _tokens, configuracion, limite, mi_lista,  # noqa: E402,F401
                   obtener_bd, obtener_cuentas, olvidar_lista, usuario_actual)
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.responses import HTMLResponse, JSONResponse  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 import amigos  # noqa: E402
@@ -271,6 +272,28 @@ def quitar_de_mi_lista(restaurante_id: Id, u=Depends(usuario_actual), bd=Depends
 def _mis_visitas(bd, correo):
     df = amigos.cargar_mis_visitas(bd, correo)
     return {} if df.empty else {int(f["ID"]): tarjetas.visita(f) for _, f in df.iterrows()}
+
+
+# ----------------------- enlaces para compartir ----------------------- #
+# WhatsApp solo hace pulsables los enlaces http(s), no dondecomemos:// ni exp://: se comparte esta página, que
+# manda a la app. Solo acepta enlaces de la propia app (que nadie la use para llevar a otra web).
+# ponytail: con Expo Go solo va en la wifi del PC; al publicar, con la API en https, vale para todos.
+_ENLACE_APP = re.compile(r"(dondecomemos://|exp://[0-9.]{7,15}:[0-9]{2,5}/--/)(restaurante/[0-9]{1,9}|persona/[A-Za-z0-9_.]{1,30})")
+_PAGINA_ABRIR = """<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>¿Dónde comemos?</title></head>
+<body style="font-family:system-ui;text-align:center;padding:48px 16px">
+<p>Abriendo ¿Dónde comemos?…</p><p><a href="{0}" style="font-size:18px">Abrir en la app</a></p>
+<script>location.href = "{0}";</script></body></html>"""
+
+
+@app.get("/abrir/{tipo}/{valor}", include_in_schema=False)
+def abrir_en_la_app(tipo: Literal["restaurante", "persona"], valor: str = Path(max_length=30),
+                    app_url: str = Query("", alias="app", max_length=120)):
+    destino = f"{tipo}/{valor}"
+    enlace = app_url if (m := _ENLACE_APP.fullmatch(app_url)) and m.group(2) == destino else f"dondecomemos://{destino}"
+    if not _ENLACE_APP.fullmatch(enlace):
+        raise HTTPException(404, "Ese enlace no existe.")
+    return HTMLResponse(_PAGINA_ABRIR.replace("{0}", enlace))   # el patrón no deja pasar comillas ni < >
 
 
 @app.get("/restaurantes/{restaurante_id}")

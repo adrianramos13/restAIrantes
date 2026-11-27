@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
 // En desarrollo: http://<IP del PC>:8787 (ver movil/.env). Al publicar, la URL de la API en internet.
-const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8787';
+export const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8787';
 const CLAVE_SESION = 'sesion';
 
 export interface Sesion {

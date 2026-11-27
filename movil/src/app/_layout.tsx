@@ -35,18 +35,20 @@ function Navegacion() {
         ...base,
         colors: { ...base.colors, primary: c.primario, background: c.fondo, card: c.fondo, text: c.texto, border: c.borde },
       }}>
-      <Stack screenOptions={{ headerBackButtonDisplayMode: 'minimal', headerTintColor: c.primario,
-        headerTitleStyle: { fontFamily: 'Fraunces_600SemiBold', color: c.texto } }}>
+      {/* Ninguna pantalla lleva barra de título (cada una pinta su «Volver» o su ✕, como Streamlit). Va aquí y no
+          dentro de cada pantalla: cambiarlo desde dentro, al llegar los datos, en iOS la volvía a montar y lo pedía todo sin fin. */}
+      <Stack screenOptions={{ headerShown: false }}>
         <Stack.Protected guard={!!sesion}>
           <Stack.Screen name="(pestanas)" options={{ headerShown: false }} />
-          <Stack.Screen name="restaurante/[id]" options={{ title: '', presentation: 'modal' }} />
+          <Stack.Screen name="restaurante/[id]" options={{ title: '', presentation: 'fullScreenModal' }} />
           <Stack.Screen name="lugar/[id]" options={{ title: '', presentation: 'modal' }} />
           <Stack.Screen name="lista" options={{ title: '', presentation: 'modal' }} />
           <Stack.Screen name="persona/[alias]" options={{ title: '' }} />
           <Stack.Screen name="amigos" options={{ title: 'Amigos' }} />
           <Stack.Screen name="ajustes" options={{ title: '', presentation: 'modal' }} />
           <Stack.Screen name="notificaciones" options={{ title: 'Notificaciones', presentation: 'modal' }} />
-          <Stack.Screen name="match" options={{ title: 'Food match' }} />
+          {/* sin el gesto de iOS de deslizar para volver: se confundía con deslizar la tarjeta a la derecha («Volver» sigue) */}
+          <Stack.Screen name="match" options={{ title: 'Food match', gestureEnabled: false }} />
         </Stack.Protected>
         <Stack.Protected guard={!sesion}>
           <Stack.Screen name="entrar" options={{ headerShown: false }} />

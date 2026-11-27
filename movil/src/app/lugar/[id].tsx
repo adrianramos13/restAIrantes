@@ -2,7 +2,7 @@
 // restaurante; si no, la etiqueta de su estado, categoría/dirección/ciudad, «Google Maps» y «Web», el teléfono,
 // «Analizar este restaurante» (mientras se analiza, mira cada 5 s y se abre sola con el resultado) y
 // «¿Ha cerrado? Avísanos».
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Linking, Text, View } from 'react-native';
 
@@ -84,7 +84,6 @@ export default function FichaLugar() {
   if (!l) {
     return (
       <Pantalla margen={MARGEN}>
-        <Stack.Screen options={{ headerShown: false }} />
         <TituloVentana titulo="" alCerrar={() => router.back()} />
         {lugar.error ? <Info tipo="error">{lugar.error}</Info> : <Cargando />}
       </Pantalla>
@@ -99,7 +98,6 @@ export default function FichaLugar() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.fondo }}>
-      <Stack.Screen options={{ headerShown: false }} />
       <Pantalla margen={MARGEN}>
         <TituloVentana titulo={l.nombre} alCerrar={() => router.back()} />
         <View style={{ flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 4, paddingHorizontal: 6,

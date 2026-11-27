@@ -1,7 +1,7 @@
 // Notificaciones, copia de app.ventana_notificaciones: en cajas, «Ana · @ana dice que fuisteis juntos a X el
 // 20/11/2026.» con «Sí, fui» / «No». «Sí, fui» despliega tus estrellas, el día (el que puso quien te invitó, sin
 // cambiar) y lo que más te gustó; al guardar, ya te sale en tu perfil.
-import { router, Stack } from 'expo-router';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
 
@@ -91,7 +91,6 @@ export default function Notificaciones() {
   const c = useColores();
   return (
     <View style={{ flex: 1, backgroundColor: c.fondo }}>
-      <Stack.Screen options={{ headerShown: false }} />
       <Pantalla margen={22.5} recargando={lista.cargando && !!lista.datos} alRecargar={lista.recargar}>
         <TituloVentana titulo="Notificaciones" alCerrar={() => router.back()} />
         {lista.cargando && !lista.datos ? <Cargando /> : null}

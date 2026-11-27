@@ -4,7 +4,7 @@
 // izquierda (✕, no vuelve a salir) con los sellos «ME GUSTA» / «PASO», y al dar «me gusta», «✓ Añadido a tu lista»
 // con los amigos que también lo tienen.
 import { Image } from 'expo-image';
-import { router, Stack } from 'expo-router';
+import { router } from 'expo-router';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import {
   Animated, Modal, PanResponder, Pressable, StyleSheet, Text, useWindowDimensions, View,
@@ -242,7 +242,6 @@ export default function FoodMatch() {
   const altoMazo = Math.max(280, height - 440);
   return (
     <View style={{ flex: 1, backgroundColor: c.fondo }}>
-      <Stack.Screen options={{ headerShown: false }} />
       <Pantalla desplazable={!arrastrando}>
         <Boton texto="Volver" tipo="texto" icono="arrow_back" ancho="contenido" alPulsar={() => router.back()} />
         <Texto tipo="subtitulo">Food match</Texto>

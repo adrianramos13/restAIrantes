@@ -1,7 +1,7 @@
 // Tus amigos, copia de amigos.bloque_amigos: tu cabecera, «Volver», «Amigos», las solicitudes recibidas
 // destacadas (Aceptar / Rechazar), «Solicitudes enviadas (N)» que se despliega, y la lista estilo Instagram con su
 // buscador (componentes/lista_amigos.*). Al tocar a alguien, su perfil.
-import { router, Stack } from 'expo-router';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 
@@ -47,7 +47,6 @@ export default function Amigos() {
 
   return (
     <Pantalla recargando={mios.cargando && !!d} alRecargar={mios.recargar}>
-      <Stack.Screen options={{ headerShown: false }} />
       {yo.datos ? <Cabecera yo={yo.datos} datos={datos.datos} /> : null}
       <Boton texto="Volver" tipo="texto" icono="arrow_back" ancho="contenido" alPulsar={() => router.back()} />
       <Texto tipo="subtitulo">Amigos</Texto>

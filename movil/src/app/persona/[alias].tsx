@@ -1,7 +1,7 @@
 // Perfil de un amigo, copia de amigos._mini_perfil: «Volver», su foto con nombre y @usuario, «🤝 N % de gustos en
 // común», Nota media | Ha ido a, cocina favorita, «Sus últimas valoraciones» y «En común» en carrusel y «Quitar de
 // amigos» en rojo. Si aún no sois amigos (p. ej. llega por un enlace compartido): añadir, aceptar o cancelar.
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 
@@ -61,7 +61,6 @@ export default function PerfilDePersona() {
   if (!p) {
     return (
       <Pantalla>
-        <Stack.Screen options={{ headerShown: false }} />
         {volver}
         {perfil.error ? <Info tipo="error">{perfil.error}</Info> : <Cargando />}
       </Pantalla>
@@ -72,7 +71,6 @@ export default function PerfilDePersona() {
 
   return (
     <Pantalla recargando={perfil.cargando} alRecargar={perfil.recargar}>
-      <Stack.Screen options={{ headerShown: false }} />
       {volver}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
         <Avatar persona={p} tam={72} />

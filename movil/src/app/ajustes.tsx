@@ -3,7 +3,7 @@
 // y borrar la cuenta (lo pide la App Store).
 import * as ImagePicker from 'expo-image-picker';
 import { Image } from 'expo-image';
-import { router, Stack } from 'expo-router';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -221,7 +221,6 @@ export default function Ajustes() {
   const d = yo.datos;
   return (
     <View style={{ flex: 1, backgroundColor: c.fondo }}>
-      <Stack.Screen options={{ headerShown: false }} />
       <Pantalla margen={22.5}>
         <TituloVentana titulo="Ajustes de usuario" alCerrar={() => router.back()} />
         {!d ? (yo.error ? <Info tipo="error">{yo.error}</Info> : <Cargando />) : (

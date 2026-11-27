@@ -358,3 +358,14 @@ def test_limite_de_intentos_al_entrar(cliente):
 
 def test_food_match_sin_migracion_da_404(cliente):
     assert cliente.get("/deslizar").status_code == 404
+
+
+def test_abrir_en_la_app_solo_lleva_a_la_app(cliente):
+    expo = "exp://192.168.1.39:8081/--/restaurante/25"
+    assert f'location.href = "{expo}"' in cliente.get("/abrir/restaurante/25", params={"app": expo}).text
+    # otra web, otro restaurante o nada: el enlace de la app publicada
+    for app in ("https://malo.example/restaurante/25", "exp://192.168.1.39:8081/--/restaurante/26", ""):
+        assert '"dondecomemos://restaurante/25"' in cliente.get("/abrir/restaurante/25", params={"app": app}).text
+    assert "dondecomemos://persona/ana_1" in cliente.get("/abrir/persona/ana_1").text
+    assert cliente.get('/abrir/persona/a"b').status_code == 404
+    assert cliente.get("/abrir/otra/1").status_code == 422

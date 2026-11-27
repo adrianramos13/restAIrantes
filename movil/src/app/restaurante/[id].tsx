@@ -4,7 +4,7 @@
 // la eatlist (ventanita con el puesto), «Quitar de mi lista», Instagram | TikTok y «Buscar en Google».
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { Image } from 'expo-image';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
@@ -313,7 +313,6 @@ export default function FichaRestaurante() {
   if (!f) {
     return (
       <Pantalla margen={MARGEN} fondo={fondo}>
-        <Stack.Screen options={{ headerShown: false }} />
         <TituloVentana titulo="" alCerrar={cerrar} />
         {ficha.error ? <Info tipo="error">{ficha.error}</Info> : <Cargando />}
       </Pantalla>
@@ -350,11 +349,10 @@ export default function FichaRestaurante() {
 
   return (
     <View style={{ flex: 1, backgroundColor: fondo }}>
-      <Stack.Screen options={{ headerShown: false }} />
       <Pantalla margen={MARGEN} fondo={fondo}>
         <TituloVentana titulo={f.nombre} alCerrar={cerrar} extra={(
           <Pressable accessibilityRole="button" accessibilityLabel="Compartir" hitSlop={12} style={{ paddingTop: 8 }}
-            onPress={() => compartirRestaurante(f.nombre, f.lat, f.lon)}>
+            onPress={() => compartirRestaurante(f.id, f.nombre, f.lat, f.lon)}>
             <Icono nombre="share" tam={18} color={c.texto} />
           </Pressable>
         )} />
